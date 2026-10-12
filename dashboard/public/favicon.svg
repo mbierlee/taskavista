@@ -1,0 +1,6 @@
+<!-- The wordmark's "t" and "v", in its colours, on the board background: the same outlined Lexend glyphs from wordmark.svg, the "v" moved up next to the "t". -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-5.69 -54.9 70 70">
+  <rect x="-5.69" y="-54.9" width="70" height="70" rx="14" fill="#16181C"/>
+  <path fill="#F2F4F6" d="M7.31 0V-39.8H15.82V0ZM1.38 -24.1V-31.73H22.35V-24.1Z"/>
+  <path fill="#8FA6FF" transform="translate(-132.76 0)" d="M169.48 0 156.16 -31.73H165.51L173.96 -8.01L172.01 -7.68L180.84 -31.73H190L176.02 0Z"/>
+</svg>

@@ -1,0 +1,12 @@
+{
+	"bindAddresses": ["::1", "127.0.0.1"],
+	"port": 8080,
+	"database": {
+		"name": "taskavista-dev",
+		"host": "localhost",
+		"port": 5432,
+		"user": "taskavista",
+		"password": "taskavista",
+		"connectionPoolSize": 4
+	}
+}

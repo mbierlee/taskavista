@@ -1,0 +1,17 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/taskavista-dashboard
+taskavista-dashboard.so
+taskavista-dashboard.dylib
+taskavista-dashboard.dll
+libtaskavista-dashboard.a
+taskavista-dashboard.a
+taskavista-dashboard.lib
+taskavista-dashboard-test-*
+*.exe
+*.pdb
+*.o
+*.obj
+*.lst

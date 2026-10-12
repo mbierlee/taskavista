@@ -1,0 +1,24 @@
+<style>
+  :host {
+    display: inline-block;
+  }
+
+  tv-menu::part(menu) {
+    width: 260px;
+  }
+
+  .project[placeholder] {
+    color: var(--muted);
+    font-weight: 400;
+  }
+</style>
+
+<tv-menu label="Projects" heading="Projects" offset="8">
+  <span class="project"></span>
+  <a class="settings" slot="actions" role="menuitem" href="/"
+    >⚙ Project settings</a
+  >
+  <a class="new" slot="actions" role="menuitem" href="/projects/new"
+    >+ New project</a
+  >
+</tv-menu>

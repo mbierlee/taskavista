@@ -1,0 +1,169 @@
+<style>
+  /* The host sits in the page's flow just under the topbar, with no height of
+     its own, so where it is tells the layer where the topbar ends (see
+     #placeLayer in tv-task-details.js). */
+  :host {
+    display: block;
+    height: 0;
+  }
+
+  .layer {
+    position: fixed;
+    top: var(--top, 0);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 10;
+  }
+  :host(:not([open])) .layer {
+    display: none;
+  }
+
+  /* The board stays in view under the panel, dimmed: the mockup has it at
+     30% opacity, which this matches over the page background. */
+  .backdrop {
+    position: absolute;
+    inset: 0;
+    background: var(--backdrop);
+    transition: opacity 0.18s ease-out;
+    @starting-style {
+      opacity: 0;
+    }
+  }
+
+  .panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 420px;
+    max-width: 100%;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    padding: 22px 24px;
+    background: var(--surface-1);
+    border-left: 1px solid var(--border-soft);
+    box-shadow: var(--shadow-panel);
+    transition: transform 0.18s ease-out;
+    @starting-style {
+      transform: translateX(32px);
+    }
+  }
+  .panel:focus {
+    outline: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .backdrop,
+    .panel {
+      transition: none;
+    }
+  }
+
+  .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  /* Smaller than the project switcher's chip, as the mockup has it. */
+  .lane::part(chip) {
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+
+  .close {
+    margin-right: -6px;
+  }
+
+  section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  section.history {
+    gap: 12px;
+  }
+  h2 {
+    margin: 0;
+  }
+
+  .description::part(field) {
+    font-size: 17px;
+    cursor: text;
+  }
+  .description::part(field):hover {
+    border-color: var(--muted-2);
+  }
+  .description::part(field):focus {
+    border-color: var(--accent);
+  }
+  .hint {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .description:not(:focus-within) ~ .hint {
+    display: none;
+  }
+
+  /* Pinned to the foot of the panel however short the history is. */
+  .foot {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-soft);
+  }
+</style>
+
+<div class="layer">
+  <div class="backdrop"></div>
+  <div class="panel" role="dialog" aria-label="Task details" tabindex="-1">
+    <div class="head">
+      <tv-menu class="lane" label="Move to lane">
+        <span class="dot"></span>
+        <span class="lane-name"></span>
+      </tv-menu>
+      <button class="btn icon close" type="button" aria-label="Close">✕</button>
+    </div>
+
+    <section>
+      <h2 class="label">Description</h2>
+      <tv-text-box class="description" label="Description"></tv-text-box>
+      <div class="hint">
+        Enter to save · Shift+Enter for a new line · Esc to undo
+      </div>
+      <div class="field-error" role="alert" hidden></div>
+    </section>
+
+    <section class="history">
+      <h2 class="label">History</h2>
+      <tv-task-history></tv-task-history>
+    </section>
+
+    <div class="foot">
+      <button class="btn danger-subtle delete" type="button">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+        </svg>
+        Delete task
+      </button>
+      <div class="field-error delete-error" role="alert" hidden></div>
+    </div>
+  </div>
+</div>

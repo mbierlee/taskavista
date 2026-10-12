@@ -1,0 +1,1055 @@
+openapi: 3.1.0
+
+info:
+  title: Taskavista REST API
+  version: v1
+  summary: Projects, their lanes, the tasks in those lanes, and the AI agents.
+  description: |
+    The server exposes **projects**, their **lanes**, and the **tasks** in those lanes, each task
+    with its **history**, plus the **AI agents**, the **runtimes** and **models** they run on, and
+    the app-wide **defaults**. Everything is JSON in and JSON out.
+
+    Operations that are not plain CRUD, such as moving a task, are in the RPC API, under
+    `/api/rpc/v1`.
+
+    There is no authentication.
+
+    There is **no trailing slash** on any collection: `/projects/` is not a route and returns 404.
+
+    ## PUT is a full replacement
+
+    Every `PUT` replaces the whole resource rather than patching it. Anything left out of the body
+    falls back to its default, not to its current value — so send every field you want to keep.
+    The id in the path identifies the resource; an `id` in the body is ignored, and `PUT` never
+    creates anything.
+
+    ## Errors
+
+    Failures come back as a JSON object with a single `statusMessage`.
+
+    | Status | When |
+    |---|---|
+    | 400 | A body that is not a JSON object, blank or missing `name`, a project `name` with no letter or digit, a malformed `slug`, an unknown `taskAddRule`, a lane `position` below 0, a malformed `color` or a non-boolean `marksDone`, a missing lane field, a blank or missing task `description` or a task `position` below 0, a task moved to a lane of another project, a blank agent `name`, `runtime` or `model`, an unknown runtime or a model the runtime does not offer, a field of the wrong type, a malformed UUID |
+    | 404 | Nothing has that id — including the project or lane something is listed or created under, and the lane a task is moved to — or a path or method that is not a route |
+    | 409 | Another project already has that `slug`, or it is a reserved one, another lane of the project or task of the lane is at that `position`, a task created outside the first lane of a `"first_lane"` project, or another agent already has that `name` |
+    | 500 | An unexpected server error |
+
+servers:
+  - url: /api/rest/v1
+    description: The server serving this document
+
+tags:
+  - name: Projects
+    description: |
+      A project is the board itself: a name, a slug that identifies it readably, the rule that
+      decides where a new task lands, whether AI agents manage it, and whether those agents are
+      paused.
+  - name: Lanes
+    description: |
+      A lane is one column of a project's board: a name, where it sits, its colour, and whether
+      the tasks in it are done. Every lane belongs to exactly one project, and stays in it.
+
+      Gaps between positions are allowed — `1, 2, 5` is a good board — so a lane can be moved
+      into a free position between two others with a single `PUT`. Two lanes cannot share a
+      position, so **swapping two lanes takes three `PUT`s**.
+  - name: Tasks
+    description: |
+      A task is one piece of work on a board. It has a description and sits at a position in one
+      lane. Every task belongs to exactly one lane, and so to that lane's project; it can move
+      between the lanes of its project but never out of it.
+
+      A task has no done flag or status of its own: it is done when its lane has `marksDone` set.
+
+      Positions work as they do for lanes. **To move a task, use the `moveTask` call of the RPC
+      API instead**: it says where the task goes relative to the other tasks rather than by
+      number, and makes room itself. No request here changes the position of a task it was not
+      sent for.
+
+      **The project's `taskAddRule` decides which lanes a task can be created in.** With
+      `"first_lane"` only the project's first lane — the one with the lowest position — takes new
+      tasks; with `"any_lane"` every lane does. The rule is about creating tasks only: an existing
+      task can be moved to any lane of its project either way.
+  - name: Runtimes and models
+    description: |
+      A runtime is what an AI agent runs in, such as Claude Code, and a model is one a runtime
+      offers, with the effort levels it takes: how hard it works at a prompt. All three are fixed,
+      so they can only be read.
+  - name: Agents
+    description: |
+      An AI agent: a name, the runtime it runs in, the model it uses there and the effort level
+      it works at, its labels, and
+      whether it is a task scheduler, one that plans and assigns tasks to the other agents. Any
+      number of agents can be task schedulers.
+  - name: Defaults
+    description: |
+      The value each app-wide setting starts from, one per key: so far the `runtime`, `model` and
+      `effort` a new agent is offered, as the `id` of a runtime, a model and an effort level. A value is plain text and
+      is not checked against anything, so a client should fall back to something sensible when it
+      names nothing that exists. Defaults can only be read.
+
+paths:
+  /projects:
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      summary: Every project, ordered by name
+      description: Always an array, `[]` when there are no projects.
+      responses:
+        "200":
+          description: The projects, ordered by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Project" }
+              example:
+                - { id: 51ccc63c-4eba-4e65-a46d-b124ccf3a717, name: AI test, slug: ai-test, taskAddRule: first_lane, managedByAi: true, aiPaused: false }
+                - { id: 138cb919-a9da-42cf-bf90-b338d690f61d, name: Q3 finance, slug: q3-finance, taskAddRule: any_lane, managedByAi: false, aiPaused: true }
+                - { id: 0c21385d-81d5-4fe9-9667-d353e0a1fb71, name: Локализация сайта, slug: локализация-сайта, taskAddRule: any_lane, managedByAi: false, aiPaused: true }
+        "500": { $ref: "#/components/responses/ServerError" }
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Create a project
+      description: |
+        The body is a project without an id. `slug`, `taskAddRule` and `managedByAi` may be left
+        out. Whatever `aiPaused` the body has, the project's agents start running if it is
+        managed by AI, and paused otherwise. An `id` sent in the body is ignored.
+
+        A slug that was sent is named in a 409's message; when the slug was derived from the
+        name, the message refers to the name instead, and names the project that already has it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Project" }
+            examples:
+              derivedSlug:
+                summary: Slug derived from the name
+                value: { name: Zebra migration }
+              ownSlug:
+                summary: Slug sent
+                value: { name: Kite launch, slug: kite }
+      responses:
+        "200":
+          description: The stored project, including its assigned id and the slug.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+              example: { id: d7f4a87e-730c-42a7-a946-202d094dc4a1, name: Zebra migration, slug: zebra-migration, taskAddRule: first_lane, managedByAi: false, aiPaused: true }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Another project already has the slug, or it is a reserved one.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                slugTaken:
+                  value: { statusMessage: "Another project already has the slug 'website-relaunch'." }
+                slugReserved:
+                  value: { statusMessage: "The slug 'new' is reserved for a page of the web UI." }
+                derivedSlugTaken:
+                  value: { statusMessage: "A project called “Website relaunch” already exists. Pick another name." }
+                derivedSlugReserved:
+                  value: { statusMessage: "A project cannot be called “New”. Pick another name." }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /projects/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Projects]
+      operationId: readProject
+      summary: One project
+      description: |
+        Projects are looked up by id only; there is no endpoint that takes a slug — find it in
+        the list.
+      responses:
+        "200":
+          description: The project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+              example: { id: 138cb919-a9da-42cf-bf90-b338d690f61d, name: Q3 finance, slug: q3-finance, taskAddRule: any_lane, managedByAi: false, aiPaused: true }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    put:
+      tags: [Projects]
+      operationId: replaceProject
+      summary: Replace a project
+      description: |
+        A full replacement, not a patch. For `slug` the default is the one derived from the name,
+        so **renaming a project without sending its slug changes its URL**; send the slug to keep
+        it.
+
+        `aiPaused` is never taken from the body. A `PUT` that turns `managedByAi` on starts the
+        project's agents, one that turns it off pauses them, and one that leaves it as it was
+        leaves them as they were. The response gives the value stored.
+
+        The same 400s and 409 as `POST` apply, except that a project keeping its own slug is not
+        a conflict.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Project" }
+            example: { name: Kite launch v2, slug: kite, taskAddRule: first_lane, managedByAi: true, aiPaused: true }
+      responses:
+        "200":
+          description: The stored project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+              example: { id: 98359477-3b46-49be-9f29-135c7c2385a9, name: Kite launch v2, slug: kite, taskAddRule: first_lane, managedByAi: true, aiPaused: false }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Another project already has the slug, or it is a reserved one.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    delete:
+      tags: [Projects]
+      operationId: deleteProject
+      summary: Delete a project
+      description: Deleting a project deletes its lanes, and their tasks, with it.
+      responses:
+        "200": { $ref: "#/components/responses/Deleted" }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /projects/{projectId}/lanes:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Lanes]
+      operationId: listLanes
+      summary: Every lane of a project, in board order
+      description: Ordered by `position`. `[]` for a project with no lanes.
+      responses:
+        "200":
+          description: The project's lanes, ordered by position.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Lane" }
+              example:
+                - { id: bda1077e-20ea-4e62-a50e-abc48b002aba, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: To do, position: 0, color: "#8fa6ff", marksDone: false }
+                - { id: 13733f13-827d-47e1-8551-0f8d6b965542, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: In progress, position: 1, color: "#e8b154", marksDone: false }
+                - { id: d16c8467-ed1e-4a20-8812-282debdcb5f3, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: Done, position: 3, color: "#5fd6ab", marksDone: true }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    post:
+      tags: [Lanes]
+      operationId: createLane
+      summary: Create a lane in a project
+      description: |
+        The body is a lane without an id or project; the URL says which project it goes in. With
+        no `position` the lane goes after the project's last lane; send one to put it somewhere
+        specific.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Lane" }
+            example: { name: Blocked, color: "#e06c75" }
+      responses:
+        "200":
+          description: |
+            The stored lane, with its assigned id, its project, its position, and the colour as
+            stored — an uppercase colour comes back lowercased.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lane" }
+              example: { id: 29e870d6-5371-4062-baee-7ec40a312d28, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: Blocked, position: 4, color: "#e06c75", marksDone: false }
+        "400":
+          description: A blank name, a negative position, a malformed colour, or a `marksDone` that is not a boolean.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/LanePositionTaken" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /lanes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Lanes]
+      operationId: readLane
+      summary: One lane
+      responses:
+        "200":
+          description: The lane.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lane" }
+              example: { id: bda1077e-20ea-4e62-a50e-abc48b002aba, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: To do, position: 0, color: "#8fa6ff", marksDone: false }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    put:
+      tags: [Lanes]
+      operationId: replaceLane
+      summary: Replace a lane
+      description: |
+        A full replacement, not a patch — send `name`, `color`, `position` and `marksDone` every
+        time. **A `PUT` that leaves out `position` moves the lane to the end** (after every
+        *other* lane) rather than keeping it where it is, and **one that leaves out `marksDone`
+        sets it back to `false`**; send their current values to keep them.
+
+        An `id` or `projectId` in the body is ignored, so a lane cannot be moved to another
+        project. The same 400s and 409 as `POST` apply, except that a lane keeping its own
+        position is not a conflict.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Lane" }
+            example: { name: Blocked on vendor, position: 5, color: "#e06c75", marksDone: true }
+      responses:
+        "200":
+          description: The stored lane.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lane" }
+              example: { id: 29e870d6-5371-4062-baee-7ec40a312d28, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: Blocked on vendor, position: 5, color: "#e06c75", marksDone: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/LanePositionTaken" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    delete:
+      tags: [Lanes]
+      operationId: deleteLane
+      summary: Delete a lane
+      description: Deleting a lane deletes its tasks with it.
+      responses:
+        "200": { $ref: "#/components/responses/Deleted" }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /projects/{projectId}/tasks:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Tasks]
+      operationId: listProjectTasks
+      summary: Every task of a project, lane by lane
+      description: |
+        Ordered by the lanes' positions, then by each task's position within its lane — the order
+        a board reads in, column by column. Lanes with no tasks simply do not appear. `[]` for a
+        project with no tasks.
+      responses:
+        "200":
+          description: The project's tasks, in board order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Task" }
+              example:
+                - { id: 393e4c99-ca50-47a2-a72b-9d435c68a53f, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Collect Q3 invoices from the two vendors, position: 0 }
+                - { id: 59909ce8-7793-4c85-b42e-90bedf456073, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Chase the late invoice from Perrin, position: 1 }
+                - { id: 067cf57f-69f7-4b53-b998-b8187475e938, laneId: 13733f13-827d-47e1-8551-0f8d6b965542, description: Reconcile the vendor invoice log, position: 0 }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /lanes/{laneId}/tasks:
+    parameters:
+      - $ref: "#/components/parameters/LaneId"
+    get:
+      tags: [Tasks]
+      operationId: listLaneTasks
+      summary: Every task of a lane, in lane order
+      description: Ordered by `position`. `[]` for a lane with no tasks.
+      responses:
+        "200":
+          description: The lane's tasks, ordered by position.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Task" }
+              example:
+                - { id: 393e4c99-ca50-47a2-a72b-9d435c68a53f, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Collect Q3 invoices from the two vendors, position: 0 }
+                - { id: 59909ce8-7793-4c85-b42e-90bedf456073, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Chase the late invoice from Perrin, position: 1 }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    post:
+      tags: [Tasks]
+      operationId: createTask
+      summary: Create a task in a lane
+      description: |
+        The body is a task without an id or lane; the URL says which lane it goes in, and a
+        `laneId` in the body is ignored. With no `position` the task goes after the lane's last
+        task; send one to put it somewhere specific.
+
+        The project's `taskAddRule` applies: in a `"first_lane"` project only its first lane
+        takes new tasks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Task" }
+            example: { description: Draft the Q3 budget summary }
+      responses:
+        "200":
+          description: The stored task, with its assigned id, its lane and its position.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+              example: { id: 782ff922-1b35-4e2d-be28-2b11d2f58eda, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Draft the Q3 budget summary, position: 2 }
+        "400":
+          description: A blank description or a negative position.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            The project's `taskAddRule` is `"first_lane"` and this is not its first lane, or
+            another task of the lane is already at that position.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                notFirstLane:
+                  value: { statusMessage: The project only takes new tasks in its first lane. }
+                positionTaken:
+                  value: { statusMessage: Another task of the lane is already at position 0. }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /tasks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Tasks]
+      operationId: readTask
+      summary: One task
+      responses:
+        "200":
+          description: The task.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+              example: { id: 393e4c99-ca50-47a2-a72b-9d435c68a53f, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Collect Q3 invoices from the two vendors, position: 0 }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    put:
+      tags: [Tasks]
+      operationId: replaceTask
+      summary: Replace a task, or move it to another lane
+      description: |
+        A full replacement, not a patch — send `description` and `position` every time. **A `PUT`
+        that leaves out `position` moves the task to the end of its lane** rather than keeping it
+        where it is; send its current position to keep it. `laneId` is the exception: left out,
+        the task stays in its lane.
+
+        Moving a task to another lane is a `PUT` with the new `laneId` and `position` — though
+        the RPC API's `moveTask` is usually the better way. The project's `taskAddRule` does not
+        apply to a move.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Task" }
+            example: { description: Draft the Q3 budget summary, laneId: 13733f13-827d-47e1-8551-0f8d6b965542, position: 1 }
+      responses:
+        "200":
+          description: The stored task.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+              example: { id: 782ff922-1b35-4e2d-be28-2b11d2f58eda, laneId: 13733f13-827d-47e1-8551-0f8d6b965542, description: Draft the Q3 budget summary, position: 1 }
+        "400":
+          description: |
+            A blank description, a negative position, or a `laneId` that belongs to another
+            project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No task has that id, or no lane has the `laneId` sent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: |
+            Another task of the destination lane is at that position; a task keeping its own
+            position is not a conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    delete:
+      tags: [Tasks]
+      operationId: deleteTask
+      summary: Delete a task
+      description: The task's history goes with it.
+      responses:
+        "200": { $ref: "#/components/responses/Deleted" }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /tasks/{id}/history:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Tasks]
+      operationId: listTaskHistory
+      summary: What has happened to one task, newest first
+      description: |
+        The changes made to a task since it was created, newest first. The server records them
+        itself whenever a task is created, moved to another lane, or has its description changed;
+        a move within a lane is not recorded. History is read-only: there is no endpoint that
+        writes it, and it is deleted with its task.
+
+        Changes saved together, such as a `PUT` that moves a task and changes its description,
+        share one `changedAt`, and their order is not defined.
+      responses:
+        "200":
+          description: The task's history, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TaskHistoryEntry" }
+              example:
+                - { id: 5f4029b0-14da-499f-af84-674ed83db8e8, changedAt: "2026-10-03T14:43:49.26117Z", change: Description changed, laneColor: null }
+                - { id: 2053f5af-0e91-4e57-883a-e916bc18a6e8, changedAt: "2026-10-03T14:43:48.192609Z", change: 'Moved from "To do" to "In progress"', laneColor: "#e8b154" }
+                - { id: 681cf017-2788-4cd8-8c06-3005664a6a9b, changedAt: "2026-10-03T14:43:47.115254Z", change: 'Created in "To do"', laneColor: "#8fa6ff" }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /runtimes:
+    get:
+      tags: [Runtimes and models]
+      operationId: listRuntimes
+      summary: Every runtime, ordered by name
+      responses:
+        "200":
+          description: The runtimes, ordered by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Runtime" }
+              example:
+                - { id: claude-code, name: Claude Code }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /models:
+    get:
+      tags: [Runtimes and models]
+      operationId: listModels
+      summary: Every model, ordered by runtime, then by name
+      responses:
+        "200":
+          description: The models, ordered by runtime, then by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Model" }
+              example:
+                - id: claude-fable-5-1
+                  name: Claude Fable 5.1
+                  runtime: claude-code
+                  effortLevels: [{ id: default, name: Default }, { id: low, name: Low }, { id: medium, name: Medium }]
+                - id: sonnet
+                  name: Claude Sonnet (latest)
+                  runtime: claude-code
+                  effortLevels: [{ id: default, name: Default }, { id: low, name: Low }, { id: medium, name: Medium }]
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /agents:
+    get:
+      tags: [Agents]
+      operationId: listAgents
+      summary: Every agent
+      description: |
+        The task schedulers first, then the rest, each group by name. Always an array, `[]` when
+        there are no agents.
+      responses:
+        "200":
+          description: The agents.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Agent" }
+              example:
+                - { id: 70168ba0-e0e2-4248-b48d-4a3f8805b9a9, name: Probe agent 2, runtime: claude-code, model: haiku, effort: default, taskScheduler: true, labels: [] }
+                - { id: 0e41172d-9b6b-454c-89f8-882c3522e77c, name: Task Scheduler, runtime: claude-code, model: sonnet, effort: default, taskScheduler: true, labels: [] }
+        "500": { $ref: "#/components/responses/ServerError" }
+    post:
+      tags: [Agents]
+      operationId: createAgent
+      summary: Create an agent
+      description: |
+        The body is an agent without an id. `effort`, `taskScheduler` and `labels` may be left out.
+        An `id` sent in the body is ignored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Agent" }
+            example: { name: Probe agent, runtime: claude-code, model: opus, effort: high, labels: [weekly, reports] }
+      responses:
+        "200":
+          description: |
+            The stored agent, including its assigned id, with its labels lowercased
+            and in the order they were sent; a `GET` returns them in alphabetical order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+              example: { id: 70168ba0-e0e2-4248-b48d-4a3f8805b9a9, name: Probe agent, runtime: claude-code, model: opus, effort: high, taskScheduler: false, labels: [weekly, reports] }
+        "400": { $ref: "#/components/responses/AgentBadRequest" }
+        "409": { $ref: "#/components/responses/AgentNameTaken" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /agents/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      tags: [Agents]
+      operationId: readAgent
+      summary: One agent
+      responses:
+        "200":
+          description: The agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+              example: { id: 70168ba0-e0e2-4248-b48d-4a3f8805b9a9, name: Probe agent, runtime: claude-code, model: opus, effort: high, taskScheduler: false, labels: [reports, weekly] }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    put:
+      tags: [Agents]
+      operationId: replaceAgent
+      summary: Replace an agent
+      description: |
+        A full replacement, not a patch: an `effort` left out of the body becomes `default`, a
+        `taskScheduler` left out becomes `false`, and `labels` left out become `[]`, not the values
+        stored. The agent ends up with exactly
+        the labels in the body.
+
+        The same 400s and 409 as `POST` apply, except that an agent keeping its own name is not a
+        conflict.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Agent" }
+            example: { name: Probe agent 2, runtime: claude-code, model: haiku, taskScheduler: true }
+      responses:
+        "200":
+          description: The stored agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+              example: { id: 70168ba0-e0e2-4248-b48d-4a3f8805b9a9, name: Probe agent 2, runtime: claude-code, model: haiku, effort: default, taskScheduler: true, labels: [] }
+        "400": { $ref: "#/components/responses/AgentBadRequest" }
+        "404":
+          description: No agent has that id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: No agent has that id. }
+        "409": { $ref: "#/components/responses/AgentNameTaken" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    delete:
+      tags: [Agents]
+      operationId: deleteAgent
+      summary: Delete an agent
+      description: The agent's labels go with it.
+      responses:
+        "200": { $ref: "#/components/responses/Deleted" }
+        "400": { $ref: "#/components/responses/MalformedId" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /defaults:
+    get:
+      tags: [Defaults]
+      operationId: listDefaults
+      summary: Every default, ordered by key
+      description: Always an array.
+      responses:
+        "200":
+          description: The defaults, ordered by key.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Default" }
+              example:
+                - { key: effort, value: default }
+                - { key: model, value: sonnet }
+                - { key: runtime, value: claude-code }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      description: The resource's id. A malformed UUID is a 400.
+      schema: { type: string, format: uuid }
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      description: The project's id. A malformed UUID is a 400.
+      schema: { type: string, format: uuid }
+    LaneId:
+      name: laneId
+      in: path
+      required: true
+      description: The lane's id. A malformed UUID is a 400.
+      schema: { type: string, format: uuid }
+
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+      examples: [138cb919-a9da-42cf-bf90-b338d690f61d]
+
+    Position:
+      description: |
+        Where the item sits, from 0. Gaps are allowed, but no two siblings may share one. Left out
+        or `null`, the item goes one past the highest position among its siblings, or 0 when there
+        are none.
+      type: [integer, "null"]
+      minimum: 0
+
+    Color:
+      description: A web colour, `#` and six hex digits. Uppercase is accepted and returned lowercased; the three-digit short form is not.
+      type: string
+      pattern: "^#[0-9A-Fa-f]{6}$"
+      examples: ["#8fa6ff"]
+
+    Project:
+      type: object
+      required: [name]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+          readOnly: true
+          description: Assigned by the server. Omit it when creating; ignored in a body.
+        name:
+          type: string
+          minLength: 1
+          description: |
+            Required, with at least one letter or digit, in any script. A blank name and one of
+            only punctuation or symbols are refused, even when a slug is sent.
+          examples: [Q3 finance]
+        slug:
+          type: string
+          description: |
+            A URL-safe name for the project. Lowercase letters and digits, in any script and in Unicode NFC, in words joined by
+            single hyphens (`q3-finance`, `café-ü`, `日本-プロジェクト`), and unique across
+            projects. `new` is reserved.
+
+            Left out, it is derived from `name`: lowercased and NFC-normalized, with every run of
+            characters other than letters, digits and combining marks turned into a single hyphen.
+            A slug is never made unique by the server — if the derived one is taken the request
+            fails with 409, and the client has to send a slug of its own.
+          examples: [q3-finance]
+        taskAddRule:
+          type: string
+          enum: [first_lane, any_lane]
+          default: first_lane
+          description: |
+            Which lanes a task can be created in: only the first lane (lowest position), or any
+            lane. It applies to creating tasks only, not to moving them.
+        managedByAi:
+          type: boolean
+          default: false
+          description: Whether AI agents may add, edit and move the project's tasks.
+        aiPaused:
+          type: boolean
+          readOnly: true
+          description: |
+            Ignored in a `POST` or `PUT` body. Whether the project's AI agents are paused, which
+            they always are for a project with `managedByAi` false. It follows `managedByAi`: a
+            new project starts running if it is managed by AI and paused otherwise, and a project
+            starts running when `managedByAi` is turned on and is paused when it is turned off.
+            The `setAiPaused` RPC call pauses and resumes it in between.
+
+    Lane:
+      type: object
+      required: [name, color]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+          readOnly: true
+          description: Assigned by the server. Omit it when creating; ignored in a body.
+        projectId:
+          $ref: "#/components/schemas/Uuid"
+          readOnly: true
+          description: |
+            Set by the server from the URL a lane is created under. Ignored in a body, so a lane
+            cannot be moved to another project.
+        name:
+          type: string
+          minLength: 1
+          description: Required, and may not be blank or only whitespace.
+          examples: [In progress]
+        position:
+          $ref: "#/components/schemas/Position"
+          description: |
+            Where the lane sits on its board, from 0 on the left. No two lanes of a project may
+            share one. Left out or `null`, the lane goes after the project's last lane — on a
+            `PUT`, after every *other* lane.
+        color:
+          $ref: "#/components/schemas/Color"
+        marksDone:
+          type: boolean
+          default: false
+          description: |
+            Whether the tasks in this lane count as done. A task is done exactly when it is in a
+            lane that marks it so. Any number of a project's lanes may set it, including none.
+
+    Task:
+      type: object
+      required: [description]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+          readOnly: true
+          description: Assigned by the server. Omit it when creating; ignored in a body.
+        laneId:
+          $ref: "#/components/schemas/Uuid"
+          description: |
+            The lane the task is in. Set by the server from the URL a task is created under, and
+            ignored in a `POST` body. In a `PUT` body it moves the task to that lane, which must
+            be in the same project; left out, the task stays where it is. A task carries no
+            project id; its lane says which project it is in.
+        description:
+          type: string
+          minLength: 1
+          description: Required, and may not be blank or only whitespace.
+          examples: [Reconcile the vendor invoice log]
+        position:
+          $ref: "#/components/schemas/Position"
+          description: |
+            Where the task sits in its lane, from 0 at the top. No two tasks of a lane may share
+            one. Left out or `null`, the task goes after the lane's last task.
+
+    TaskHistoryEntry:
+      type: object
+      readOnly: true
+      required: [id, changedAt, change, laneColor]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+          description: The entry's own id.
+        changedAt:
+          type: string
+          format: date-time
+          description: When the change was made, in UTC.
+          examples: ["2026-10-03T14:43:48.192609Z"]
+        change:
+          type: string
+          description: |
+            What changed, in words: `Created in "To do"`, `Moved from "To do" to "In progress"`,
+            `Description changed`. Lane names are as they were at the time, so an entry does not
+            change when a lane is renamed or deleted.
+          examples: ['Moved from "To do" to "In progress"']
+        laneColor:
+          type: [string, "null"]
+          pattern: "^#[0-9a-f]{6}$"
+          description: |
+            The colour of the lane the change put the task in, as it was at the time. `null` for a
+            change that left the task in its lane.
+
+    Runtime:
+      type: object
+      readOnly: true
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          description: The runtime's id.
+          examples: [claude-code]
+        name:
+          type: string
+          description: The name to show.
+          examples: [Claude Code]
+
+    EffortLevel:
+      type: object
+      readOnly: true
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          description: |
+            The name the runtime itself knows the level by, or `default`, which leaves it to the
+            runtime to pick the level for the model.
+          examples: [high]
+        name:
+          type: string
+          description: The name to show.
+          examples: [High]
+
+    Model:
+      type: object
+      readOnly: true
+      required: [id, name, runtime, effortLevels]
+      properties:
+        id:
+          type: string
+          description: The name the runtime itself knows the model by.
+          examples: [sonnet]
+        name:
+          type: string
+          description: The name to show.
+          examples: [Claude Sonnet (latest)]
+        runtime:
+          type: string
+          description: The `id` of the runtime that offers the model.
+          examples: [claude-code]
+        effortLevels:
+          type: array
+          items: { $ref: "#/components/schemas/EffortLevel" }
+          description: The effort levels the model takes, lowest first, starting with `default`.
+
+    Agent:
+      type: object
+      required: [name, runtime, model]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+          readOnly: true
+          description: Assigned by the server. Omit it when creating; ignored in a body.
+        name:
+          type: string
+          minLength: 1
+          description: Unique across agents. May not be blank.
+          examples: [Code Builder]
+        runtime:
+          type: string
+          minLength: 1
+          description: The `id` of a runtime.
+          examples: [claude-code]
+        model:
+          type: string
+          minLength: 1
+          description: The `id` of a model that `runtime` offers.
+          examples: [opus]
+        effort:
+          type: string
+          default: default
+          description: |
+            The `id` of an effort level that `model` takes. `default` leaves it to the runtime to
+            pick the level for the model. Left out or `null`, it is `default`.
+          examples: [high]
+        taskScheduler:
+          type: boolean
+          default: false
+          description: Whether the agent is a task scheduler, one that plans and assigns tasks to the other agents.
+        labels:
+          type: array
+          default: []
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+          description: |
+            Free-text tags, case-insensitive: they are lowercased on the way in, so `Finance` and
+            `finance` are one label, stored and returned as `finance`. None may be blank, and none
+            may appear twice, which goes for two that differ only in case. Read back in
+            alphabetical order.
+          examples: [[reports, weekly]]
+
+    Default:
+      type: object
+      readOnly: true
+      required: [key, value]
+      properties:
+        key:
+          type: string
+          description: What the default is for, such as `runtime`.
+          examples: [runtime]
+        value:
+          type: string
+          description: The default itself. Plain text, not checked against anything.
+          examples: [claude-code]
+
+    Error:
+      type: object
+      required: [statusMessage]
+      properties:
+        statusMessage:
+          type: string
+          examples: [No project has that id.]
+
+  responses:
+    Deleted:
+      description: Deleted. An empty body.
+    BadRequest:
+      description: The body or the id is invalid.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    MalformedId:
+      description: A malformed UUID in the path.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Nothing has that id — including the project or lane something is listed or created under.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { statusMessage: No project has that id. }
+    LanePositionTaken:
+      description: Another lane of the project is already at that position.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { statusMessage: Another lane of the project is already at position 0. }
+    AgentBadRequest:
+      description: |
+        A blank name, runtime, model or label, a label given twice, a runtime that does not exist,
+        a model the runtime does not offer, or an effort level the model does not take.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            unknownRuntime:
+              value: { statusMessage: "There is no runtime 'nope'." }
+            unknownModel:
+              value: { statusMessage: "Claude Code offers no model 'gpt'." }
+            unknownEffort:
+              value: { statusMessage: "The model 'opus' takes no effort level 'turbo'." }
+            duplicateLabel:
+              value: { statusMessage: "The label “finance” is given twice." }
+    AgentNameTaken:
+      description: Another agent already has the name.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { statusMessage: "An agent called “Probe agent 2” already exists. Pick another name." }
+    ServerError:
+      description: |
+        An unexpected server error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

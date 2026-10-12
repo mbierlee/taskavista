@@ -1,0 +1,117 @@
+<style>
+  :host {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 7px 24px;
+    background: var(--surface-strip);
+    border-bottom: 1px solid var(--border-soft);
+  }
+  /* The display above would otherwise beat the browser's own [hidden]. */
+  :host([hidden]) {
+    display: none;
+  }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-status);
+  }
+  :host([paused]) .status {
+    color: var(--muted);
+  }
+
+  .light {
+    position: relative;
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--live);
+  }
+  .light::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--live);
+    animation: pulse 2s ease-out infinite;
+  }
+  :host([paused]) .light {
+    border: 1.5px solid var(--muted);
+    background: none;
+  }
+  :host([paused]) .light::after {
+    content: none;
+  }
+  @keyframes pulse {
+    from {
+      transform: scale(1);
+      opacity: 0.7;
+    }
+    to {
+      transform: scale(3);
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .light::after {
+      animation: none;
+    }
+  }
+
+  .toggle {
+    gap: 7px;
+    padding: 4px 11px;
+    border-color: var(--border);
+    border-radius: 6px;
+    background: var(--surface-input);
+    font-size: 13px;
+    user-select: none;
+  }
+  .toggle:hover:not(:disabled) {
+    border-color: var(--muted-2);
+    background: var(--surface-hover);
+  }
+  :host([paused]) .toggle {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+  :host([paused]) .toggle:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  /* Pause: two bars. Play: a triangle. Both drawn, not glyphs, so they sit
+     the same in every font. */
+  .icon {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    background: linear-gradient(
+      to right,
+      currentColor 0 35%,
+      transparent 35% 65%,
+      currentColor 65% 100%
+    );
+  }
+  :host([paused]) .icon {
+    width: 0;
+    height: 0;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-left: 8px solid currentColor;
+    background: none;
+  }
+</style>
+
+<p class="status" role="status">
+  <span class="light"></span><span class="text"></span>
+</p>
+<button class="btn toggle" type="button">
+  <span class="icon" aria-hidden="true"></span><span class="label-text"></span>
+</button>

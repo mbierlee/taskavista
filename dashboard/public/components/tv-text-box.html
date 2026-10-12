@@ -1,0 +1,20 @@
+<style>
+  :host {
+    display: block;
+  }
+
+  /* Grown to fit its text from script, so it never scrolls. */
+  textarea {
+    display: block;
+    width: 100%;
+    resize: none;
+    overflow: hidden;
+    padding: 14px;
+    border-radius: var(--r-card);
+    font-size: 15px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+</style>
+
+<textarea class="field" part="field" rows="1"></textarea>

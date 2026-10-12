@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Taskavista</title>
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/app.css" />
+    <!-- Module scripts are deferred, so this runs once the markup below is parsed.
+         Paths are absolute because this page is served at every route, such as
+         /projects/…, where a relative one would resolve under that path. -->
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <tv-topbar></tv-topbar>
+    <tv-task-details></tv-task-details>
+
+    <div class="workspace">
+      <main>
+        <tv-board name="Website relaunch"></tv-board>
+      </main>
+      <tv-agent-chat></tv-agent-chat>
+    </div>
+  </body>
+</html>

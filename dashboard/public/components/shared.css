@@ -1,0 +1,203 @@
+/* The styles every component shares, adopted into each shadow root by
+   attachTemplate() in template.js: the reset, buttons, text fields, labels
+   and the like. A component's markup uses these classes, and its own
+   <style> holds only what is particular to it.
+
+   All of it is in a layer, and a component's own styles are not, so they win
+   over anything here whatever their specificity or order — an adopted sheet
+   otherwise comes after a shadow root's <style> elements. Colours come from
+   the tokens in app.css. */
+
+@layer shared {
+  * {
+    box-sizing: border-box;
+  }
+
+  [hidden] {
+    display: none !important;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  :is(button, a, input, textarea, select):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* ---------- buttons ----------
+
+     Also for a link that looks like a button, such as a form's Cancel. A
+     .btn on its own is the base; one of the variants below gives it its
+     look. */
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 9px 18px;
+    border: 1px solid transparent;
+    border-radius: var(--r-ctl);
+    background: none;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-2);
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .btn:disabled {
+    cursor: not-allowed;
+  }
+
+  /* The one action a form or popover is for. */
+  .btn.primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+  .btn.primary:disabled {
+    border-color: var(--border-soft);
+    background: var(--disabled-bg);
+    color: var(--disabled-ink);
+  }
+
+  .btn.secondary {
+    border-color: var(--border);
+    color: var(--muted);
+  }
+  .btn.secondary:hover:not(:disabled) {
+    color: var(--text-2);
+  }
+
+  .btn.danger {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+  .btn.danger:hover:not(:disabled) {
+    background: var(--danger-tint);
+  }
+
+  /* A destructive action that should not draw the eye, such as "Delete
+     task": outlined only while hovered, with a glyph before its text. */
+  .btn.danger-subtle {
+    gap: 7px;
+    padding: 7px 12px;
+    font-size: 13px;
+    color: var(--danger);
+  }
+  .btn.danger-subtle:hover:not(:disabled) {
+    border-color: var(--danger-border);
+    background: var(--danger-tint);
+  }
+  .btn.danger-subtle:disabled {
+    opacity: 0.6;
+  }
+
+  /* Inside a popover. */
+  .btn.small {
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+
+  /* A full-width row that adds something, such as "+ Add a task". */
+  .btn.quiet {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 11px 14px;
+    font-weight: 400;
+    color: var(--muted);
+    text-align: left;
+  }
+  .btn.quiet:hover:not(:disabled) {
+    color: var(--text-2);
+  }
+
+  /* A bare glyph inside a row, such as a drag handle. */
+  .btn.ghost {
+    padding: 0;
+    border: 0;
+    font-weight: 400;
+    color: var(--muted-2);
+  }
+  .btn.ghost:hover:not(:disabled) {
+    color: var(--muted);
+  }
+
+  /* A glyph with a square to hover, such as a panel's ✕. */
+  .btn.icon {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    font-size: 18px;
+    font-weight: 400;
+    color: var(--muted);
+  }
+  .btn.icon:hover:not(:disabled) {
+    background: var(--surface-3);
+    color: var(--text-2);
+  }
+
+  /* A link in running text. */
+  .link {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .link:hover {
+    text-decoration: underline;
+  }
+
+  /* ---------- text fields ---------- */
+
+  .field {
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-ctl);
+    background: var(--surface-input);
+    color: var(--text);
+  }
+  .field::placeholder {
+    color: var(--text-dim);
+  }
+  .field:focus {
+    outline: none;
+    background: var(--bg);
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+  }
+  .field[aria-invalid="true"] {
+    background: var(--bg);
+    border-color: var(--invalid);
+    box-shadow: var(--invalid-ring);
+  }
+  .field-error {
+    margin: 0;
+    font-size: 13px;
+    color: var(--invalid);
+  }
+
+  /* ---------- text ---------- */
+
+  /* Over a field or a section. */
+  .label {
+    line-height: 14px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* A lane's colour, which the element or an ancestor sets as --dot. */
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--dot, var(--accent));
+  }
+}

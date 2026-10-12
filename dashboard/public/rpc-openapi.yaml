@@ -1,0 +1,515 @@
+openapi: 3.1.0
+
+info:
+  title: Taskavista RPC API
+  version: v1
+  summary: Operations on Taskavista's projects, lanes, tasks and agents that are not plain CRUD.
+  description: |
+    Calls that do more than read or write a single resource: moving a task, creating or saving a
+    project together with its lanes, pausing a project's agents, and chatting with an agent. The
+    resources themselves are read and written through the REST API, under `/api/rest/v1`.
+
+    Every call follows the same rules:
+
+    - **Always `POST`**, to `/api/rpc/v1/<call>`. Any other method is a 404.
+    - **The arguments are the fields of a JSON body.** Nothing goes in the path or the query
+      string.
+    - **Calls take and return ids and values, never whole resources.** Read the resources a call
+      changed from the REST API.
+    - **Success is 200** with a JSON result.
+
+    There is no authentication.
+
+    ## Errors
+
+    Failures come back as a JSON object with a single `statusMessage`, as the REST API's do.
+
+    | Status | When |
+    |---|---|
+    | 400 | A body that is not a JSON object, a required argument missing, an argument of the wrong type, a malformed UUID, or a value the call refuses |
+    | 404 | Nothing has an id that was sent, a call that does not exist, or a method other than `POST` |
+    | 409 | The call clashes with what is stored: a project slug that is taken or reserved, or resuming the agents of a project not managed by AI |
+    | 502 | An agent could not answer a chat message |
+    | 500 | An unexpected server error |
+
+servers:
+  - url: /api/rpc/v1
+    description: The server serving this document
+
+tags:
+  - name: Tasks
+    description: Placing tasks on the board.
+  - name: Projects
+    description: |
+      Saving a project together with its lanes, in one go, and pausing or resuming its AI agents.
+      The server makes a project's slug from its name; neither call takes one.
+  - name: Agents
+    description: Chatting with an AI agent.
+
+paths:
+  /moveTask:
+    post:
+      tags: [Tasks]
+      operationId: moveTask
+      summary: Move a task above another task, or to the bottom of a lane
+      description: |
+        Moves a task within its lane or to another lane of its project, placed relative to the
+        tasks already there rather than by position number.
+
+        With `beforeTaskId`, the moved task takes that task's position, and it and every task
+        below it move down one. Without it, or with it `null`, the task goes to the bottom, one
+        past the highest position in the lane.
+
+        The move and the shift happen together or not at all. Positions may be left with gaps, so
+        rely on the order of tasks, not on their numbers. The project's `taskAddRule` does not
+        apply: it governs creating tasks, not moving them.
+
+        The result is the lane's order; read the tasks themselves from the REST API.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [taskId, laneId]
+              properties:
+                taskId:
+                  $ref: "#/components/schemas/Uuid"
+                  description: The task to move.
+                laneId:
+                  $ref: "#/components/schemas/Uuid"
+                  description: The lane to move it to, in the task's project. It may be the lane the task is already in.
+                beforeTaskId:
+                  type: [string, "null"]
+                  format: uuid
+                  default: null
+                  description: |
+                    A task of that lane, other than the one being moved, whose place the moved
+                    task takes. Left out or `null`, the task goes after the lane's last task.
+            examples:
+              before:
+                summary: Above another task
+                value: { taskId: ad20eea0-2cae-4d5a-a9cd-5af2e0ca4fde, laneId: 8c7f6efa-bb63-41c5-84ba-8fdb08bc964c, beforeTaskId: 76953b10-92be-4e61-92de-86b91dd7bcf0 }
+              bottom:
+                summary: To the bottom of the lane
+                value: { taskId: 76953b10-92be-4e61-92de-86b91dd7bcf0, laneId: 8c7f6efa-bb63-41c5-84ba-8fdb08bc964c, beforeTaskId: null }
+      responses:
+        "200":
+          description: The destination lane and its tasks' order after the move.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [laneId, taskIds]
+                properties:
+                  laneId:
+                    $ref: "#/components/schemas/Uuid"
+                    description: The destination lane.
+                  taskIds:
+                    type: array
+                    items: { $ref: "#/components/schemas/Uuid" }
+                    description: The ids of every task of that lane, in their order after the move.
+              examples:
+                before:
+                  summary: Above another task
+                  value: { laneId: 8c7f6efa-bb63-41c5-84ba-8fdb08bc964c, taskIds: [ad20eea0-2cae-4d5a-a9cd-5af2e0ca4fde, 76953b10-92be-4e61-92de-86b91dd7bcf0, 39d20ed2-c3fa-4bae-b54e-2be0b1557541] }
+                bottom:
+                  summary: To the bottom of the lane
+                  value: { laneId: 8c7f6efa-bb63-41c5-84ba-8fdb08bc964c, taskIds: [ad20eea0-2cae-4d5a-a9cd-5af2e0ca4fde, 39d20ed2-c3fa-4bae-b54e-2be0b1557541, 76953b10-92be-4e61-92de-86b91dd7bcf0] }
+        "400":
+          description: |
+            `taskId` or `laneId` missing; the lane belongs to another project; `beforeTaskId` is
+            the task being moved, or is not in that lane.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                notInLane:
+                  value: { statusMessage: The beforeTaskId task is not in that lane. }
+                missing:
+                  value: { statusMessage: The argument taskId is missing. }
+        "404":
+          description: No task has `taskId`, no lane has `laneId`, or no task has `beforeTaskId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: No task has that id. }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /createProject:
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Create a project together with its lanes
+      description: |
+        Creates a project and its lanes: either all of it is stored or none of it. The slug is
+        made from the name, as the REST API makes it when no slug is sent. Whether the project's
+        agents are paused is not sent either: a project managed by AI starts with its agents
+        running, and any other with them paused.
+
+        The new project's id is not returned; find the project by its slug in the REST API's
+        list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { $ref: "#/components/schemas/ProjectName" }
+                taskAddRule:
+                  $ref: "#/components/schemas/TaskAddRule"
+                  default: first_lane
+                managedByAi:
+                  type: boolean
+                  default: false
+                  description: Whether AI agents may add, edit and move the project's tasks.
+                lanes:
+                  type: array
+                  default: []
+                  items: { $ref: "#/components/schemas/NewLane" }
+                  description: The lanes in board order; each one's position is its place in the list.
+            example: { name: Kite launch, taskAddRule: any_lane, lanes: [{ name: To do, color: "#8FA6FF" }, { name: Done, color: "#5fd6ab", marksDone: true }] }
+      responses:
+        "200":
+          description: The slug made from the name.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SlugResult" }
+              example: { slug: kite-launch }
+        "400":
+          description: |
+            `name` missing, blank, or without a letter or digit; a lane with a blank name or a
+            malformed colour; a lane with an id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: "A new project's lanes have no ids yet." }
+        "409":
+          description: |
+            Another project already has the slug the name makes, or it is a reserved one (`new`).
+            The message refers to the name, not the slug.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: "A project cannot be called “New”. Pick another name." }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /saveProjectSettings:
+    post:
+      tags: [Projects]
+      operationId: saveProjectSettings
+      summary: Change a project's name and add-task rule, and replace its lanes
+      description: |
+        Gives a project a name, an add-task rule, its AI setting and exactly the lanes sent, in
+        their order. Either the whole of it is saved or nothing is, and that includes a lane
+        deleted together with its tasks.
+
+        **A lane of the project that is not in the list is deleted, along with its tasks**, so an
+        empty list deletes them all. Lanes may trade places freely: the positions only have to be
+        unique once the whole save is done.
+
+        Whether the project's agents are paused is not sent: turning `managedByAi` off pauses
+        them, turning it on starts them, and leaving it as it was leaves them as they were.
+
+        The slug is the server's to decide, and this call takes none. When the name changes, a
+        new slug is made from it, so the project's URL changes. When the name stays the same, the
+        slug is kept as it is, even if it was not made from the name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId, name, taskAddRule, managedByAi, lanes]
+              properties:
+                projectId:
+                  $ref: "#/components/schemas/Uuid"
+                  description: The project to change.
+                name: { $ref: "#/components/schemas/ProjectName" }
+                taskAddRule: { $ref: "#/components/schemas/TaskAddRule" }
+                managedByAi:
+                  type: boolean
+                  description: |
+                    Whether AI agents may add, edit and move the project's tasks. Changing it
+                    pauses or starts the agents.
+                lanes:
+                  type: array
+                  items: { $ref: "#/components/schemas/SavedLane" }
+                  description: |
+                    The project's lanes in board order; each one's position is its place in the
+                    list. A lane of the project left out is deleted, with its tasks.
+            example: { projectId: e641d6a1-3a9d-4464-8aad-536ef71a5646, name: Kite launch v2, taskAddRule: any_lane, managedByAi: true, lanes: [{ id: 41487034-c575-4d64-858d-7b7e6eb3f40d, name: To do, color: "#8fa6ff" }, { id: null, name: Backlog, color: "#e8b154" }] }
+      responses:
+        "200":
+          description: The project's slug after the save. It differs from the old one only after a rename.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SlugResult" }
+              example: { slug: kite-launch-v2 }
+        "400":
+          description: |
+            `projectId`, `name`, `taskAddRule`, `managedByAi` or `lanes` missing; `name` blank or
+            without a letter or digit; a lane with a blank name or a malformed colour; a lane id
+            listed twice; a lane of another project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: A lane is listed twice. }
+        "404":
+          description: No project has `projectId`, or no lane has one of the lane ids sent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: No lane has one of the lane ids sent. }
+        "409":
+          description: |
+            After a rename, another project already has the slug the new name makes, or it is a
+            reserved one. The message is put in terms of the name.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: "A project called “Website relaunch” already exists. Pick another name." }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /setAiPaused:
+    post:
+      tags: [Projects]
+      operationId: setAiPaused
+      summary: Pause a project's AI agents, or resume them
+      description: |
+        Pauses a project's AI agents, or resumes them, and changes nothing else about the
+        project. The REST API serves the project's `aiPaused` read-only; besides this call, only a
+        change to `managedByAi` changes it. Only a project managed by AI can be resumed: one that
+        is not is always paused. Asking for the state the project is already in is not an error.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId, paused]
+              properties:
+                projectId:
+                  $ref: "#/components/schemas/Uuid"
+                  description: The project whose agents to pause or resume.
+                paused:
+                  type: boolean
+                  description: "`true` pauses them, `false` resumes them."
+            example: { projectId: 98359477-3b46-49be-9f29-135c7c2385a9, paused: true }
+      responses:
+        "200":
+          description: Whether the project's agents are paused now.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [aiPaused]
+                properties:
+                  aiPaused:
+                    type: boolean
+                    description: Whether the project's agents are paused now.
+              example: { aiPaused: true }
+        "400":
+          description: "`projectId` or `paused` missing."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No project has `projectId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: No project has that id. }
+        "409":
+          description: "`paused` is `false` and the project is not managed by AI agents."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: "The project is not managed by AI agents, so its agents cannot be resumed." }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /sendChatMessage:
+    post:
+      tags: [Agents]
+      operationId: sendChatMessage
+      summary: Send a chat message to an AI agent and get its reply
+      description: |
+        Sends a person's chat message to an AI agent and answers with the agent's reply. The
+        first message, sent without a `sessionId`, starts a chat, and the agent is told which
+        project the person is in. Every later message, sent with the `sessionId` the first one
+        returned, continues that chat, and the agent remembers what was said in it.
+
+        The call waits for the agent, which can take anywhere from seconds to minutes. Send a
+        chat's next message only once the last one is answered, since each one continues the one
+        before.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentId, message]
+              properties:
+                agentId:
+                  $ref: "#/components/schemas/Uuid"
+                  description: The agent to send the message to.
+                message:
+                  type: string
+                  minLength: 1
+                  description: What the person wrote. Not blank or only whitespace.
+                projectId:
+                  type: [string, "null"]
+                  format: uuid
+                  default: null
+                  description: |
+                    The project the person is in, told to the agent when the chat starts. Left out
+                    or `null`, the agent is told the person is in none. Not read when `sessionId`
+                    is sent.
+                sessionId:
+                  type: [string, "null"]
+                  default: null
+                  description: |
+                    The chat's session, as an earlier answer returned it. Left out or `null`, a
+                    new chat starts.
+            examples:
+              start:
+                summary: Starting a chat
+                value: { agentId: 00539d3f-0291-4589-89a6-472afa0166cb, message: "My name is Sam. Which project am I in? One line.", projectId: a06eb28a-ff4d-414b-95be-3c661fa3f7f7 }
+              continue:
+                summary: Continuing it
+                value: { agentId: 00539d3f-0291-4589-89a6-472afa0166cb, message: "What is my name?", sessionId: 0b6f2c3e-5d1a-4f7e-9a8b-3c2d1e0f9a7b }
+      responses:
+        "200":
+          description: The agent's reply, and the chat's session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reply, sessionId]
+                properties:
+                  reply:
+                    type: string
+                    description: The agent's answer, without leading or trailing whitespace.
+                  sessionId:
+                    type: string
+                    description: The chat's session; a new one when none was sent, otherwise the one sent.
+              examples:
+                start:
+                  summary: Starting a chat
+                  value: { reply: "You're in the project \"AI test\", Sam.", sessionId: 0b6f2c3e-5d1a-4f7e-9a8b-3c2d1e0f9a7b }
+                continue:
+                  summary: Continuing it
+                  value: { reply: Your name is Sam., sessionId: 0b6f2c3e-5d1a-4f7e-9a8b-3c2d1e0f9a7b }
+        "400":
+          description: "`agentId` or `message` missing, or `message` blank."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: A message cannot be blank. }
+        "404":
+          description: No agent has `agentId`, or, when no `sessionId` is sent, no project has `projectId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: No agent has that id. }
+        "502":
+          description: |
+            The agent could not answer: it has no chat `sessionId`, or it failed. The message starts
+            with "The agent could not answer:" and goes on with the reason.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+components:
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+      examples: [8c7f6efa-bb63-41c5-84ba-8fdb08bc964c]
+
+    Color:
+      description: A web colour, `#` and six hex digits. Uppercase is accepted and returned lowercased; the three-digit short form is not.
+      type: string
+      pattern: "^#[0-9A-Fa-f]{6}$"
+      examples: ["#8fa6ff"]
+
+    ProjectName:
+      type: string
+      minLength: 1
+      description: At least one letter or digit, in any script, as the REST API requires.
+      examples: [Kite launch]
+
+    TaskAddRule:
+      type: string
+      enum: [first_lane, any_lane]
+      description: |
+        Which lanes a task can be created in: only the first lane (lowest position), or any lane.
+        It applies to creating tasks only, not to moving them.
+
+    NewLane:
+      description: A lane of a new project, with the same rules as a lane in the REST API.
+      type: object
+      required: [name, color]
+      properties:
+        id:
+          type: "null"
+          description: Absent or `null`; a new project's lanes have no ids yet.
+        name:
+          type: string
+          minLength: 1
+          description: Not blank or only whitespace.
+          examples: [To do]
+        color: { $ref: "#/components/schemas/Color" }
+        marksDone:
+          type: boolean
+          default: false
+          description: Whether the tasks in this lane count as done.
+
+    SavedLane:
+      description: A lane of the project being saved, with the same rules as a lane in the REST API.
+      type: object
+      required: [name, color]
+      properties:
+        id:
+          type: [string, "null"]
+          format: uuid
+          description: |
+            The id of a lane the project already has, or absent or `null` for a lane the save
+            adds. Each id may be listed once.
+        name:
+          type: string
+          minLength: 1
+          description: Not blank or only whitespace.
+          examples: [To do]
+        color: { $ref: "#/components/schemas/Color" }
+        marksDone:
+          type: boolean
+          default: false
+          description: Whether the tasks in this lane count as done.
+
+    SlugResult:
+      type: object
+      required: [slug]
+      properties:
+        slug:
+          type: string
+          description: The project's slug, which is its URL.
+          examples: [kite-launch]
+
+    Error:
+      type: object
+      required: [statusMessage]
+      properties:
+        statusMessage:
+          type: string
+          description: What went wrong, in a sentence.
+
+  responses:
+    ServerError:
+      description: An unexpected server error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

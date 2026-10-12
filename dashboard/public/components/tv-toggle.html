@@ -1,0 +1,52 @@
+<style>
+  /* The text is the caller's, so its size and colour are left to inherit. */
+  :host {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    cursor: pointer;
+  }
+  :host(:focus-visible) {
+    outline: none;
+  }
+  :host(:disabled) {
+    cursor: default;
+  }
+
+  .track {
+    flex: none;
+    position: relative;
+    width: 34px;
+    height: 20px;
+    margin-top: 1px;
+    border-radius: 10px;
+    background: var(--muted-2);
+    transition: background 0.15s;
+  }
+  .knob {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition:
+      left 0.15s,
+      background 0.15s;
+  }
+  :host([checked]) .track {
+    background: var(--accent);
+  }
+  :host([checked]) .knob {
+    left: 17px;
+    background: var(--accent-ink);
+  }
+  :host(:focus-visible) .track {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+</style>
+
+<span class="track" aria-hidden="true"><span class="knob"></span></span>
+<span><slot></slot></span>

@@ -1,0 +1,100 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "dub run",
+			"type": "shell",
+			"command": "dub",
+			"args": ["run"],
+			"options": {
+				"cwd": "${workspaceFolder}/dashboard",
+				"env": {
+					"PATH": "${env:HOME}/dlang/dmd-2.112.1/linux/bin64:${env:HOME}/dlang/ldc2-1.42.0/bin:${env:PATH}"
+				}
+			},
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			},
+			"problemMatcher": {
+				"owner": "d",
+				"fileLocation": ["relative", "${workspaceFolder}/dashboard"],
+				"pattern": {
+					"regexp": "^(.*\\.d)\\((\\d+),(\\d+)\\):\\s+(Error|Warning|Deprecation):\\s+(.*)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"severity": 4,
+					"message": 5
+				}
+			}
+		},
+		{
+			"label": "dub build",
+			"type": "shell",
+			"command": "dub",
+			"args": ["build"],
+			"options": {
+				"cwd": "${workspaceFolder}/dashboard",
+				"env": {
+					"PATH": "${env:HOME}/dlang/dmd-2.112.1/linux/bin64:${env:HOME}/dlang/ldc2-1.42.0/bin:${env:PATH}"
+				}
+			},
+			"group": "build",
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated"
+			},
+			"problemMatcher": {
+				"owner": "d",
+				"fileLocation": ["relative", "${workspaceFolder}/dashboard"],
+				"pattern": {
+					"regexp": "^(.*\\.d)\\((\\d+),(\\d+)\\):\\s+(Error|Warning|Deprecation):\\s+(.*)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"severity": 4,
+					"message": 5
+				}
+			}
+		},
+		{
+			"label": "dub test",
+			"type": "shell",
+			"command": "dub",
+			"args": ["test"],
+			"options": {
+				"cwd": "${workspaceFolder}/dashboard",
+				"env": {
+					"PATH": "${env:HOME}/dlang/dmd-2.112.1/linux/bin64:${env:HOME}/dlang/ldc2-1.42.0/bin:${env:PATH}"
+				}
+			},
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			},
+			"problemMatcher": {
+				"owner": "d",
+				"fileLocation": ["relative", "${workspaceFolder}/dashboard"],
+				"pattern": {
+					"regexp": "^(.*\\.d)\\((\\d+),(\\d+)\\):\\s+(Error|Warning|Deprecation):\\s+(.*)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"severity": 4,
+					"message": 5
+				}
+			}
+		}
+	]
+}

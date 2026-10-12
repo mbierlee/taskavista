@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Taskavista",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "taskavista-dev",
+      "Username": "taskavista",
+      "SSLMode": "prefer",
+      "Comment": "Local Taskavista database (docker compose)"
+    }
+  }
+}

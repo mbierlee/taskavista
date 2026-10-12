@@ -1,0 +1,196 @@
+<style>
+  /* A popover in the top layer, placed by open() under the swatch it was
+     opened from. The UA's centring for popovers is undone here. */
+  :host {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    width: 250px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-popup);
+    background: var(--surface-1);
+    box-shadow: var(--shadow-popup);
+    color: var(--text);
+    font-family: inherit;
+  }
+  :host(:popover-open) {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .swatches {
+    display: grid;
+    grid-template-columns: repeat(4, 22px);
+    gap: 12px;
+  }
+  .swatch,
+  .more {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .more {
+    border: 1px dashed var(--text-dim);
+    background: none;
+    color: var(--lane-label);
+    font-size: 16px;
+    line-height: 20px;
+  }
+  /* The lane's colour, or the custom picker while it is open. */
+  .swatch[aria-checked="true"],
+  .more[aria-expanded="true"] {
+    box-shadow:
+      0 0 0 2px var(--surface-1),
+      0 0 0 4px var(--accent);
+  }
+
+  .custom {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-soft);
+  }
+
+  .slider {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .slider-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .value {
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The track is the gradient the slider moves along, set as --track. */
+  input[type="range"] {
+    appearance: none;
+    width: 100%;
+    height: 16px;
+    margin: 0;
+    background: none;
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 10px;
+    border-radius: 5px;
+    background: var(--track);
+  }
+  input[type="range"]::-moz-range-track {
+    height: 10px;
+    border-radius: 5px;
+    background: var(--track);
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    margin-top: -3px;
+    border: 2px solid var(--text);
+    border-radius: 50%;
+    background: var(--bg);
+    box-shadow: var(--shadow-thumb);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--text);
+    border-radius: 50%;
+    background: var(--bg);
+    box-shadow: var(--shadow-thumb);
+  }
+  input[type="range"]:focus-visible {
+    border-radius: 5px;
+  }
+  .hue {
+    --track: linear-gradient(
+      to right,
+      hsl(0, 70%, 65%),
+      hsl(60, 70%, 65%),
+      hsl(120, 70%, 65%),
+      hsl(180, 70%, 65%),
+      hsl(240, 70%, 65%),
+      hsl(300, 70%, 65%),
+      hsl(360, 70%, 65%)
+    );
+  }
+
+  .result {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .preview {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    border-radius: var(--r-ctl);
+  }
+  .hex {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 10px;
+    background: var(--bg);
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    text-transform: uppercase;
+  }
+
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+</style>
+
+<div class="swatches" role="radiogroup" aria-label="Lane color">
+  <button
+    class="more"
+    type="button"
+    aria-label="Custom color"
+    aria-expanded="false"
+  >
+    +
+  </button>
+</div>
+
+<div class="custom" hidden>
+  <label class="slider">
+    <span class="slider-head"
+      ><span>Hue</span><span class="value hue-value"></span
+    ></span>
+    <input class="hue" type="range" min="0" max="359" step="1" />
+  </label>
+  <label class="slider">
+    <span class="slider-head"
+      ><span>Lightness</span><span class="value light-value"></span
+    ></span>
+    <input class="light" type="range" min="55" max="80" step="1" />
+  </label>
+  <div class="result">
+    <span class="preview"></span>
+    <input
+      class="field hex"
+      type="text"
+      maxlength="7"
+      spellcheck="false"
+      autocomplete="off"
+      aria-label="Hex color"
+    />
+  </div>
+  <div class="actions">
+    <button class="btn secondary small cancel" type="button">Cancel</button>
+    <button class="btn primary small use" type="button">Use color</button>
+  </div>
+</div>

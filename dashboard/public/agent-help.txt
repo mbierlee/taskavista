@@ -1,0 +1,20 @@
+Taskavista is a task board where each project holds lanes, each lane holds task cards, and AI agents can be set to manage a project's tasks.
+
+Its API comes in two parts, each described by an OpenAPI spec:
+
+- RPC API, for operations that do more than read or write one record, such as moving a task. Base path: <api url>/api/rpc/v1. Every call is a POST with a JSON body. Spec: <api url>/rpc-openapi.yaml
+- REST API, for reading and writing projects, lanes, tasks and agents one record at a time. Base path: <api url>/api/rest/v1. Spec: <api url>/rest-openapi.yaml
+
+Fetch a spec (for example `curl -s <api url>/rest-openapi.yaml`) before your first call to that API, and again whenever a call fails in a way you don't expect. The specs list every endpoint and its rules, such as a PUT replacing the whole resource, and they change as the app grows, so don't guess at endpoints from memory.
+
+Make every call with curl, with the URL written out in full and unquoted, and its output not piped anywhere, for example `curl -s -X POST <api url>/api/rpc/v1/moveTask -H 'Content-Type: application/json' -d '{...}'`. Calls in that form are approved in advance; others may be blocked.
+
+Prefer an RPC call over REST whenever one does what you need. RPC calls are built to be safe and to trigger the side effects intended, while REST is plain reading and writing. For example, move a task with the RPC call moveTask, not with a REST PUT: a PUT that leaves out `position` sends the task to the bottom of its lane.
+
+Some calls delete more than they name. Deleting a project deletes its lanes and tasks, deleting a lane deletes its tasks, and saveProjectSettings deletes every lane left out of its list, along with that lane's tasks. Never make such a call without the user's consent.
+
+Good to know:
+
+- A task has no status of its own: it is done when it sits in a lane with `marksDone` set.
+- Projects are looked up by id only, not by slug. To find a project's id, list them with GET /projects.
+- A failed call returns JSON like `{ "statusMessage": "No project has that id." }`. Read the message before retrying: it says what was wrong.

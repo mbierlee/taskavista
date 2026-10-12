@@ -1,0 +1,13 @@
+{
+  "name": "taskavista-dashboard",
+  "description": "Taskavista Dashboard",
+  "license": "MIT",
+  "authors": ["Mike Bierlee"],
+  "copyright": "Copyright © 2026, Mike Bierlee",
+  "stringImportPaths": ["prompts", "public"],
+  "dependencies": {
+    "vibe-d": "~>0.10.1",
+    "vibe-d-postgresql": "~>3.2.0",
+    "poodinis": "~>9.0.2"
+  }
+}

@@ -1,0 +1,113 @@
+@import url("https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&display=swap");
+
+/* Tokens lifted from the "Taskavista Board Mockup" style tile (screen 5d).
+
+   Everything on the page is a custom element that styles itself; see
+   components/. These tokens reach into their shadow roots because custom
+   properties inherit, so this file holds the palette and nothing else: the
+   rules components share, such as buttons, are in components/shared.css. */
+:root {
+  --bg: #16181c;
+  --surface-1: #1c1f24;
+  --surface-2: #22262c;
+  --surface-input: #23272e;
+  --surface-3: #262b32;
+
+  --border: #333842;
+  --border-soft: #2b2f37;
+  --border-card: #30353d;
+  --border-dashed: #3c434d;
+
+  --text: #f2f4f6;
+  --text-2: #e6e9ee;
+  --lane-label: #a7b0bd;
+  --muted: #8a929e;
+  --text-dim: #6f7885;
+  --muted-2: #4a515c;
+
+  --accent: #8fa6ff;
+  --accent-hover: #a3b6ff;
+  /* Text on an accent-filled button. */
+  --accent-ink: #111a3a;
+
+  /* The strip under the topbar saying whether AI agents are at work. */
+  --surface-strip: #1a1d22;
+  --surface-hover: #2a2f37;
+  /* The row picked in a list of suggestions, such as an agent's labels. */
+  --surface-active: #2f3540;
+  /* Around a chip, and the suggestions under a field of chips. */
+  --border-chip: #3a404a;
+  --text-status: #c9cfd8;
+  /* Something running right now, such as the project's AI agents. */
+  --live: #5fd6ab;
+  /* Destructive actions: deleting a project or a task, removing a lane. */
+  --danger: #e0796b;
+  /* A field whose value cannot be saved, and the message under it. */
+  --invalid: #ef8a7c;
+
+  /* A primary button that cannot be pressed yet. */
+  --disabled-bg: #1f2228;
+  --disabled-ink: #5b626d;
+
+  /* Tints of the colours above, for hovers, rings and the backdrop. */
+  --accent-tint: rgba(143, 166, 255, 0.06);
+  /* Behind a button whose panel is showing, such as the agent chat's, and
+     the glyph on it. */
+  --accent-tint-strong: rgba(143, 166, 255, 0.14);
+  --accent-soft: #c9d4ff;
+  --danger-tint: rgba(224, 121, 107, 0.08);
+  /* Around a borderless danger button while hovered, such as "Delete task"
+     or "Delete project". */
+  --danger-border: rgba(224, 121, 107, 0.35);
+  --count-bg: rgba(255, 255, 255, 0.06);
+  --backdrop: rgba(22, 24, 28, 0.7);
+  --focus-ring: 0 0 0 3px rgba(143, 166, 255, 0.18);
+  --invalid-ring: 0 0 0 3px rgba(239, 138, 124, 0.18);
+
+  /* Behind a modal dialog, such as the one an AI agent is edited in. */
+  --backdrop-modal: rgba(10, 11, 13, 0.6);
+
+  --shadow-popup: 0 18px 40px rgba(0, 0, 0, 0.55);
+  --shadow-dialog: 0 24px 60px rgba(0, 0, 0, 0.6);
+  --shadow-panel: -16px 0 32px rgba(0, 0, 0, 0.35);
+  --shadow-lifted: 0 12px 24px rgba(0, 0, 0, 0.45);
+  --shadow-thumb: 0 1px 4px rgba(0, 0, 0, 0.5);
+
+  --r-ctl: 8px;
+  --r-card: 10px;
+  --r-popup: 12px;
+  --r-dialog: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Figtree", system-ui, sans-serif;
+  font-size: 15px;
+}
+
+/* The screen in <main> gets the whole window below the topbar, so the board
+   can stretch its lanes to the bottom of it (see tv-board.html). */
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The screen, and the agent chat beside it when it shows (see
+   tv-agent-chat.html). */
+.workspace {
+  flex: 1;
+  display: flex;
+}

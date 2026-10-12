@@ -1,0 +1,37 @@
+<style>
+  :host {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 3px 6px 3px 8px;
+    border: 1px solid var(--border-chip);
+    border-radius: 6px;
+    background: var(--surface-hover);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+    color: var(--text-2);
+  }
+
+  .text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .remove {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .remove:hover:not(:disabled) {
+    color: var(--text-2);
+  }
+  .remove:disabled {
+    cursor: default;
+  }
+</style>
+
+<span class="text"><slot></slot></span>
+<button class="btn ghost remove" type="button">✕</button>

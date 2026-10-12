@@ -1,0 +1,11 @@
+The following agents are available:
+
+<agents>
+
+Pick the most appropriate agent for the following task:
+
+Project: <project name>
+
+Task: <task description>
+
+Select the agent based on its name and labels. Select only one agent. Only return the agent's  ID and nothing else.

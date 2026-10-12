@@ -1,0 +1,70 @@
+<style>
+  :host {
+    display: block;
+    position: relative;
+  }
+
+  .box {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-height: 38px;
+    padding: 6px 8px;
+    cursor: text;
+  }
+  .box:focus-within {
+    background: var(--bg);
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+  }
+  :host(:disabled) .box {
+    cursor: default;
+  }
+
+  .chips {
+    display: contents;
+  }
+
+  .draft {
+    flex: 1;
+    min-width: 80px;
+    padding: 3px 4px;
+    border: 0;
+    background: none;
+    font-size: 13px;
+    color: var(--text);
+  }
+  :host([lowercase]) .draft {
+    text-transform: lowercase;
+  }
+  .draft::placeholder {
+    text-transform: none;
+    color: var(--text-dim);
+  }
+  /* The ring is on the box around it. */
+  .draft:focus-visible {
+    outline: none;
+  }
+
+  tv-chip-suggestions {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 2;
+  }
+</style>
+
+<div class="field box">
+  <span class="chips"></span>
+  <input
+    class="draft"
+    type="text"
+    autocomplete="off"
+    role="combobox"
+    aria-autocomplete="list"
+    aria-expanded="false"
+  />
+</div>
+<tv-chip-suggestions hidden></tv-chip-suggestions>

@@ -1,0 +1,172 @@
+<style>
+  :host {
+    display: inline-block;
+  }
+
+  .chip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--surface-input);
+    border: 1px solid var(--border);
+    border-radius: var(--r-ctl);
+    padding: 7px 12px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+  .chip:hover:enabled {
+    border-color: var(--muted-2);
+  }
+  /* Dimmed only once a load has taken a moment, so a quick one does not
+     flicker. Enabling again is immediate: the delay is on this rule alone. */
+  .chip:disabled {
+    cursor: progress;
+    opacity: 0.55;
+    transition: opacity 0.15s 0.2s;
+  }
+  .chip:focus-visible,
+  .chip[aria-expanded="true"] {
+    outline: none;
+    background: var(--bg);
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+  }
+  .chip[aria-expanded="true"] {
+    color: var(--text);
+  }
+  .caret {
+    color: var(--muted);
+    font-size: 0.75em;
+  }
+  .caret::before {
+    content: "\25BC";
+  }
+  .chip[aria-expanded="true"] .caret::before {
+    content: "\25B2";
+  }
+
+  /* A popover sits in the top layer, so it is placed from script rather than
+     by the surrounding layout. */
+  .menu {
+    margin: 0;
+    min-width: 200px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 8px;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--r-popup);
+    color: var(--text);
+    font-family: inherit;
+    box-shadow: var(--shadow-popup);
+  }
+  .menu:popover-open {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .heading {
+    padding: 6px 10px 8px;
+    color: var(--text-dim);
+  }
+
+  .items {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 10px;
+    border: 0;
+    border-radius: var(--r-ctl);
+    background: none;
+    font-size: 14px;
+    color: var(--text-2);
+    text-align: left;
+    cursor: pointer;
+  }
+  .item:hover,
+  .item:focus-visible {
+    outline: none;
+    background: var(--surface-3);
+  }
+  .item[aria-current="true"] {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+  .name {
+    flex: 1;
+  }
+  .check {
+    flex: none;
+    color: var(--accent);
+    font-size: 13px;
+  }
+  .item:not([aria-current="true"]) .check {
+    visibility: hidden;
+  }
+
+  .note {
+    padding: 9px 10px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .actions {
+    display: flex;
+    flex-direction: column;
+    margin-top: 4px;
+    /* Matches the space above the divider (the menu's 2px gap plus the 4px
+       margin), so a highlighted entry sits as far below it as the last item
+       sits above it. */
+    padding-top: 6px;
+    border-top: 1px solid var(--border-soft);
+  }
+  ::slotted([slot="actions"]) {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    border: 0;
+    border-radius: var(--r-ctl);
+    background: none;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--accent);
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  ::slotted([slot="actions"]:hover),
+  ::slotted([slot="actions"]:focus-visible) {
+    outline: none;
+    background: var(--accent-tint);
+  }
+  ::slotted([slot="actions"][hidden]) {
+    display: none;
+  }
+</style>
+
+<button
+  class="chip"
+  part="chip"
+  type="button"
+  popovertarget="menu"
+  aria-haspopup="true"
+  aria-expanded="false"
+>
+  <slot></slot>
+  <span class="caret" aria-hidden="true"></span>
+</button>
+<div id="menu" class="menu" part="menu" popover role="menu">
+  <div class="heading label" aria-hidden="true" hidden></div>
+  <div class="items"></div>
+  <div class="note" hidden></div>
+  <div class="actions" hidden><slot name="actions"></slot></div>
+</div>

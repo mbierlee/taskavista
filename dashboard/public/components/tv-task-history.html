@@ -1,0 +1,64 @@
+<style>
+  :host {
+    display: block;
+  }
+
+  /* A timeline: a dot per entry, joined by a line that runs from each dot
+     down to the next. */
+  .entries {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin: 0;
+    padding: 0 0 0 22px;
+    list-style: none;
+  }
+  .entry {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .entry:not(:last-child)::before {
+    content: "";
+    position: absolute;
+    left: -18px;
+    top: 9px;
+    bottom: -25px;
+    width: 2px;
+    background: var(--border);
+  }
+  .entry::after {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    left: -22px;
+    top: 4px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--dot);
+  }
+  /* A change that left the task in its lane has no lane colour to show. */
+  .entry[no-lane]::after {
+    border: 2px solid var(--muted);
+    background: var(--surface-1);
+  }
+  .change {
+    font-size: 14px;
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+  }
+  .when {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .note {
+    font-size: 14px;
+    color: var(--muted);
+  }
+</style>
+
+<ol class="entries"></ol>
+<div class="note" hidden></div>

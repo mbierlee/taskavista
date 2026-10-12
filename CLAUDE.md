@@ -1,0 +1,68 @@
+# Taskavista
+
+Taskavista is a task board: a project holds lanes, lanes hold task cards. It is early —
+the board screen is a working prototype and the pieces behind it are still going in.
+
+- `dashboard/` — a D / vibe.d HTTP server that serves the web UI out of `public/`. It also
+  holds `sql/init.sql`, the whole schema — `projects`, their `lanes`, the `tasks` in them, each task's `task_history`, the fixed `runtimes` and their `models`, the fixed `effort_levels` and which of them each model takes (`model_effort_levels`), the `agents` that run on them and their `agent_labels`, and the `defaults`, a value per key — which it applies on
+  start-up when the database is still completely empty.
+- `docker/` — postgres 18 and pgadmin.
+- `mock-data.sql` — sample rows, applied by hand; nothing runs it automatically.
+
+The UI reads projects, their lanes and the lanes' tasks from the REST API (`dashboard/public/rest-openapi.yaml`, an OpenAPI spec),
+with operations that are not plain CRUD, such as moving a task, in the RPC API (`dashboard/public/rpc-openapi.yaml`;
+why the APIs are shaped as they are, and how their errors are answered, is in `docs/rest-api.md`
+and `docs/rpc-api.md`),
+and the board shows each task as a `tv-card`. Cards can be dragged within a lane or to another
+lane, and tasks added from a lane's "+ Add a task", both saved through the API. Clicking a card
+opens the task details panel over the board, with the task's lane (which it can be moved out of),
+its description, which can be edited there, and its history, and a button that deletes the task. A project's
+name, add-task rule and lanes are edited on its settings screen (`/projects/:slug/settings`),
+and a project is created on the same screen in its new-project mode (`/projects/new`).
+The Taskavista settings screen (`/settings`, the topbar's ⚙) lists the AI agents, and adds,
+edits and deletes them in a dialog, along with their labels; a new agent starts on the runtime, model and effort level in `defaults`, and each agent is run at its effort level.
+A project managed by AI agents shows a strip over its board saying whether the agents are at
+work, with a button that pauses or resumes them; the pause is only recorded in the database
+for now, since no agents exist yet. The topbar's chat button opens the agent chat, a panel beside
+every screen with a tab per chat with an agent. A chat is a session on the agent's runtime, started
+with a system prompt of two parts, each filled in by `PromptParser`: `dashboard/prompts/agent.txt`,
+which starts every interaction with an agent and gives it the API help in
+`dashboard/public/agent-help.txt` (which agents can also fetch from the server), then
+`dashboard/prompts/new-agent-chat.txt`, the chat's own part; the tabs last as long as the page. Every write
+through the API is reported to the open UIs over a WebSocket
+(`/api/changes/v1`), as an event and the ids it concerns, and the UI fetches what changed, so what
+an agent does shows on screen straight away (see `docs/change-feed.md`).
+
+## Running it
+
+| | |
+|---|---|
+| Dashboard | `cd dashboard && dub run` → http://localhost:8080 (port in `config.json`) |
+| Database | `docker/run.sh -d` → postgres on 5432, pgadmin on http://localhost:5050 |
+
+There are no tests. There is no frontend build step, so a UI change needs only a reload;
+a change to `app.d` needs a rebuild.
+
+The UI mockups are not in this repo — see the `taskavista-designs` skill. The database is
+only reachable through the container, since there is no local psql — see `taskavista-database`.
+
+## The UI is native web components
+
+No framework, no bundler, no npm. The screen is assembled from custom elements in
+`dashboard/public/components/`, each one a `tv-thing.js` / `tv-thing.html` pair, styled with the
+classes in `components/shared.css` (buttons, fields, labels) and the colour tokens in `app.css`. Data goes down
+as attributes, or through the small store in `store.js` (see `docs/store.md`) when it is shared
+or deeply nested;
+changes come up as `composed` events. `app.js` holds the data, and is the only writer to the
+store. It is also the router: each screen has a real URL (`/projects/:slug`), matched in the
+browser, and the server hands every path that is not a file or `/api/` the same `index.html`
+(see `docs/routing.md`).
+
+**Read `docs/webcomponents.md` before changing the UI** — it covers the conventions, how a
+component is put together, and the gotchas (notably: a headless screenshot of the board comes
+out blank, and that is the tool, not a bug). To check a UI change in a browser, headless or
+headful, use the `taskavista-browser-check` skill.
+
+## Code style
+
+**Read `docs/code-style.md` before writing code**: formatting, braces, and what a comment is for.

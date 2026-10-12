@@ -1,0 +1,238 @@
+<style>
+  /* Drawn 1000px wide in the mockup, as the project settings screen is, and
+     held to that width the same way. */
+  :host {
+    display: block;
+    width: 100%;
+    max-width: 1000px;
+    margin-inline: auto;
+    container-type: inline-size;
+    padding: 24px 24px 32px;
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .back {
+    font-size: 14px;
+  }
+  .title {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.4px;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 180px minmax(0, 1fr);
+    gap: 28px;
+  }
+
+  /* One section for now; the column leaves room for the ones to come. */
+  .nav {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-right: 18px;
+    border-right: 1px solid var(--border-soft);
+  }
+  .nav a {
+    padding: 8px 12px;
+    border-radius: var(--r-ctl);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .nav a:hover {
+    color: var(--text-2);
+  }
+  .nav a[aria-current="page"] {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .section-head h2 {
+    margin: 0;
+  }
+  .add {
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .add:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .status {
+    margin: 0;
+    color: var(--muted);
+  }
+
+  .agents {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .agent {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid var(--border-card);
+    border-radius: var(--r-card);
+    background: var(--surface-2);
+  }
+  .agent-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+  .agent-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .edit {
+    flex: none;
+    padding: 3px 10px;
+    border-color: var(--border);
+    border-radius: 6px;
+    background: var(--surface-input);
+    font-size: 12px;
+  }
+  .edit:hover {
+    border-color: var(--muted-2);
+    background: var(--surface-hover);
+  }
+
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  /* Whole chips wrap, never the text in one. */
+  .tag {
+    white-space: nowrap;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--surface-hover);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--lane-label);
+  }
+  .tag.scheduler {
+    background: var(--accent);
+    font-weight: 600;
+    color: var(--accent-ink);
+  }
+
+  .agent-labels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-card);
+  }
+  /* Outlined rather than filled, to tell them from the tags above. */
+  .agent-label {
+    white-space: nowrap;
+    padding: 2px 7px;
+    border: 1px solid var(--border-chip);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-status);
+  }
+
+  /* By the screen's own width rather than the window's, since the agent chat
+     can take part of the window beside it. The widths are inside the
+     padding: these were a 860px and a 640px window. */
+  @container (max-width: 812px) {
+    .agents {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @container (max-width: 592px) {
+    .layout {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 20px;
+    }
+    .nav {
+      flex-direction: row;
+      padding: 0 0 12px;
+      border-right: 0;
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .agents {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>
+
+<div class="head">
+  <a class="link back" href="/">← Back to board</a>
+  <h1 class="title">Taskavista settings</h1>
+</div>
+
+<div class="layout">
+  <nav class="nav" aria-label="Settings sections">
+    <a href="/settings" aria-current="page">AI agents</a>
+  </nav>
+
+  <section class="section" aria-labelledby="agents-heading">
+    <div class="section-head">
+      <h2 class="label" id="agents-heading">AI agents</h2>
+      <button class="btn primary add" type="button" disabled>
+        + Add agent
+      </button>
+    </div>
+    <p class="status" hidden></p>
+    <ul class="agents"></ul>
+  </section>
+</div>
+
+<tv-agent-dialog></tv-agent-dialog>
+
+<template class="agent-template">
+  <li class="agent">
+    <div class="agent-head">
+      <span class="agent-name"></span>
+      <button class="btn edit" type="button">Edit</button>
+    </div>
+    <div class="tags">
+      <span class="tag runtime"></span>
+      <span class="tag model"></span>
+      <span
+        class="tag scheduler"
+        title="Plans and assigns tasks to the other agents"
+        hidden
+      >
+        Scheduler
+      </span>
+    </div>
+    <div class="agent-labels" hidden></div>
+  </li>
+</template>

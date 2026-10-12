@@ -1,0 +1,73 @@
+<style>
+  :host {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 2px 2px;
+  }
+  .dot {
+    --dot: var(--lane-color);
+  }
+  .name {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--lane-label);
+  }
+  .count {
+    font-size: 12px;
+    border-radius: 999px;
+    padding: 2px 8px;
+    background: var(--count-bg);
+    color: var(--lane-color, var(--accent));
+  }
+
+  .cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* The dashed slot in the board mockup marks where a dragged card will
+     land. It sits among the cards, which are light-DOM children, so it is
+     one too (see showDropSlot in tv-lane.js) and is styled from here. */
+  ::slotted(.drop-slot) {
+    height: 48px;
+    border: 1px dashed var(--border-dashed);
+    border-radius: var(--r-card);
+  }
+
+  :host(:not([can-add])) .add {
+    display: none;
+  }
+
+  /* Shown only while it has the focus, and drawn as the card it will be. */
+  .compose::part(field):focus {
+    background: var(--surface-2);
+  }
+</style>
+
+<div class="head">
+  <span class="dot"></span>
+  <span class="name"></span>
+  <span class="count">0</span>
+</div>
+
+<div class="cards">
+  <slot></slot>
+</div>
+
+<button class="btn quiet add" type="button">+ Add a task</button>
+<tv-text-box
+  class="compose"
+  label="New task"
+  placeholder="What needs doing?"
+  hidden
+></tv-text-box>

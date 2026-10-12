@@ -1,0 +1,120 @@
+<style>
+  :host {
+    display: block;
+  }
+  :host([dragging]) {
+    opacity: 0.4;
+  }
+
+  .row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-ctl);
+    padding: 10px 12px;
+  }
+  /* Where a dragged lane will land: a line in the gap above or below the
+     row under the pointer. Nothing moves until the drop. */
+  :host([drop-before]) .row::before,
+  :host([drop-after]) .row::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--accent);
+  }
+  :host([drop-before]) .row::before {
+    top: -7px;
+  }
+  :host([drop-after]) .row::after {
+    bottom: -7px;
+  }
+
+  .handle {
+    flex: none;
+    letter-spacing: 1px;
+    cursor: grab;
+  }
+
+  .name {
+    flex: 1;
+    min-width: 0;
+    padding: 2px 4px;
+    margin: -2px -4px;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    font-size: 15px;
+    color: var(--text);
+  }
+  .name::placeholder {
+    color: var(--text-dim);
+  }
+  .name:focus {
+    outline: 1px solid var(--accent);
+  }
+
+  .swatch {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: var(--swatch);
+    cursor: pointer;
+  }
+  /* While the colour picker is choosing this lane's colour. */
+  :host([picking]) .swatch {
+    box-shadow:
+      0 0 0 2px var(--surface-2),
+      0 0 0 4px var(--accent);
+  }
+
+  /* A fixed width, so the swatch before it lines up from row to row
+     whatever the count says, or when a new lane has none. */
+  .count {
+    flex: none;
+    width: 4.75em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  :host(:not([count])) .count {
+    display: none;
+  }
+
+  .remove {
+    flex: none;
+  }
+  .remove:hover:not(:disabled) {
+    color: var(--danger);
+  }
+</style>
+
+<div class="row">
+  <button class="btn ghost handle" type="button">⠿</button>
+  <input
+    class="name"
+    type="text"
+    placeholder="Lane name"
+    aria-label="Lane name"
+    autocomplete="off"
+    required
+    pattern=".*\S.*"
+  />
+  <button
+    class="swatch"
+    type="button"
+    aria-haspopup="dialog"
+    aria-expanded="false"
+  ></button>
+  <span class="count"></span>
+  <button class="btn ghost remove" type="button">✕</button>
+</div>
