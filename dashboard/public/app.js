@@ -335,7 +335,7 @@ async function editTask(taskId, description) {
 /* On the server first, then on screen, since a card cannot be put back once
    it is gone. A task already gone from the server counts as deleted. Its card
    is removed rather than the lane re-rendered, so a card being dragged in that
-   lane is left alone. */
+   lane is left alone, and it fades out before the cards below it close up. */
 async function deleteTask(taskId) {
   const shown = board;
   try {
@@ -357,7 +357,7 @@ async function deleteTask(taskId) {
   const entry = board === shown ? laneOf(taskId) : undefined;
   if (entry) {
     entry.tasks = entry.tasks.filter((t) => t.id !== taskId);
-    cardOf(taskId)?.remove();
+    boardEl.animateMoves(() => cardOf(taskId)?.remove());
   }
   if (openTaskId === taskId) {
     detailsEl.close();

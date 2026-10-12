@@ -49,7 +49,8 @@ compares what it fetches with what it has drawn, and it draws again only what di
 whose cards changed, or the whole row of lanes if the lanes themselves changed. A card for a
 task that is new to the board gets the same `added` glow as a card added on the page.
 A card that moved, to another lane or within one, slides from where it was drawn to where it
-is now, through the board's `animateMoves`. The page's own moves are drawn before their events
+is now, through the board's `animateMoves`, and a card whose task was deleted fades out before
+the cards around it close the gap. The page's own moves and deletes are drawn before their events
 come back, so those find nothing to draw again and do not fly.
 
 ## Ending up correct
