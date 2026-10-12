@@ -17,7 +17,9 @@ Do not push, amend, or change git config unless asked.
 
 ## The message
 
-- **One line.** No body, no bullet list, no blank line followed by more text.
+- **One line.** No body, no bullet list, no blank line followed by more text — unless the user
+  asks for additional text, or gives text of their own to add. Then that goes in a body below
+  the one-liner, and the user's own text goes in as they wrote it.
 - **Short** — aim for under 72 characters.
 - **Start with a verb** in the imperative: `Add`, `Fix`, `Remove`, `Rename`, `Move`, `Update`…
   For example `Add drag handle to tv-card` or `Fix lane order after task move`.
@@ -29,3 +31,5 @@ Pass the message with a single `-m`:
 ```bash
 git commit -m "Add drag handle to tv-card"
 ```
+
+When there is a body, pass it as a second `-m`, which git puts after a blank line.
