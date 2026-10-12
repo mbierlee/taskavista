@@ -88,5 +88,16 @@
   slot {
     white-space: pre-wrap;
   }
+
+  /* A long description is cut off on the board; the details panel shows all
+     of it. The fade is only drawn when the text overflows, or the last line
+     of a description that just fits would fade too. */
+  .description {
+    max-height: 6lh;
+    overflow: hidden;
+  }
+  .description.clipped {
+    mask-image: linear-gradient(to bottom, black 55%, transparent);
+  }
 </style>
-<slot></slot>
+<div class="description"><slot></slot></div>

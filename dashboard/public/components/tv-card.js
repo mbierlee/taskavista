@@ -4,7 +4,8 @@
    in the light DOM as it does on the board. Styling lives in the shadow root;
    the colour tokens from app.css reach it because custom properties inherit.
    `selected` marks the card whose task is open in the details panel, and
-   `added` plays the glow of a task just added, then removes itself.
+   `added` plays the glow of a task just added, then removes itself. A
+   description longer than six lines is cut off with its bottom faded out.
 
    Events (bubbling and composed):
      task-open  detail { taskId }  the card was clicked, or Enter or Space
@@ -15,9 +16,22 @@ import { attachTemplate, loadTemplate } from "./template.js";
 const template = await loadTemplate("tv-card.html");
 
 export class TvCard extends HTMLElement {
+  #description;
+
   constructor() {
     super();
     attachTemplate(this, template);
+    this.#description = this.shadowRoot.querySelector(".description");
+
+    /* The resize catches most changes, but not text that grows while the box
+       is already at its cap, hence the mutation observer too. */
+    const check = () => this.#checkClipped();
+    new ResizeObserver(check).observe(this.#description);
+    new MutationObserver(check).observe(this, {
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
 
     this.addEventListener("click", () => this.#open());
     this.addEventListener("keydown", (event) => {
@@ -67,6 +81,11 @@ export class TvCard extends HTMLElement {
 
   set added(value) {
     this.toggleAttribute("added", Boolean(value));
+  }
+
+  #checkClipped() {
+    const box = this.#description;
+    box.classList.toggle("clipped", box.scrollHeight > box.clientHeight);
   }
 
   #open() {
