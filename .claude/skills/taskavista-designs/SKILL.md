@@ -1,6 +1,6 @@
 ---
 name: taskavista-designs
-description: Pull the Taskavista UI mockups down from Claude Design so a screen can be built or revised in the dashboard. Use when asked to build, finish, or change a Taskavista screen (board, search, avatar menu, project settings, new project, account settings), when someone refers to "the mockups" or "the designs", or when the styling of an existing screen needs checking against its source design.
+description: Pull the Taskavista UI mockups down from Claude Design so a screen can be built or revised in the dashboard. Use when asked to build, finish, or change a Taskavista screen (board, search, project settings, new project, task details, Taskavista settings, agent chat — or the dropped avatar menu and account settings), when someone refers to "the mockups" or "the designs", or when the styling of an existing screen needs checking against its source design.
 ---
 
 # Pulling the Taskavista designs from Claude Design
@@ -74,7 +74,8 @@ inline styles.
 The dashboard is a **D + vibe.d** server that serves `dashboard/public/` as static files. There
 is deliberately **no JS build step and no node toolchain**, and no framework: the screen is
 assembled from native web components in `dashboard/public/components/`, one `tv-thing.js` /
-`tv-thing.html` pair per element, with `app.js` holding the data and nothing else. **Read
+`tv-thing.html` pair per element, and `app.js` holding the data, writing the store and routing
+the URLs, but drawing nothing itself. **Read
 `docs/webcomponents.md` before adding or changing a screen** — it has the conventions (attributes
 down, `composed` events up, styles scoped inside each component) and the steps for adding an
 element. A new screen is new components, not a new page of plain HTML/CSS/JS. Do not introduce a
@@ -93,26 +94,30 @@ inherit. **Reuse them; do not paste raw hex into new rules.** The main ones:
 | Primary text | `--text` | `#F2F4F6` |
 | Secondary text | `--muted` | `#8A929E` |
 | App accent · To do | `--accent` | `#8FA6FF` |
-| In progress | — | `#E8B154` |
-| Done | — | `#5FD6AB` |
+| In progress lane | — (data) | `#E8B154` |
+| Done lane | — (data) | `#5FD6AB` |
 
 `app.css` also carries the finer-grained ones — `--surface-input`, `--border-soft`,
 `--border-card`, `--border-dashed`, `--text-2`, `--lane-label`, `--muted-2`, and the radii
 `--r-ctl` / `--r-card`. Check the file for the current list before adding a token.
 
 Typeface is **Figtree** (400/500/600, SIL OFL), loaded from Google Fonts in `app.css`.
-Lane colours live in the seed data in `app.js`, not in CSS. The wider lane palette is the one
-offered on the project settings mockup — take it from there.
+Lane colours are not tokens but data, stored with each lane in the database. The colours a lane
+can be given are `standardColors` in `tv-project-settings.js`, taken from the project settings
+mockup, and a new project's starting lanes are in `app.js`.
 
 ## Current build state
 
 Built: the **board**, the **project switcher**, **project settings**, **new project** (the
 settings component in its `new` mode), the **agents strip** over the board of an AI-managed project, the **Taskavista settings**
-screen with its list of AI agents and the **add and edit agent** dialog and its **quick-create an agent** tile, which has an agent draft one and opens it in the add dialog with its failure shown inside the tile, and the **task details** panel, its description editable in place (the
-mockups have no editing state, so it borrows the lane composer's focus ring) and its "Delete task" button, and the **agent chat** panel with its
-tabs, agent picker and the topbar's chat button and unread badge, as UI only: no agent answers yet, and the
-mockups' "is working…" line is not drawn — see the component table in `docs/webcomponents.md` for
-the current elements.
+screen with its list of AI agents, the **add and edit agent** dialog, and the **quick-create an
+agent** tile, which has an agent draft one to open in the add dialog and shows a failure inside
+the tile, the **task details** panel, its description editable in place (the mockups have no
+editing state, so it borrows the lane composer's focus ring) and its "Delete task" button, and
+the **agent chat** panel with its tabs, agent picker, and the topbar's chat button and unread
+badge. Chats are answered by the agents; the mockups' "is working…" line is drawn as
+"*agent* is answering" with animated dots. See the component table in `docs/webcomponents.md`
+for the current elements.
 
 Not built: search. The search field in `tv-topbar` is rendered per the mockup but inert, with a
 `title` tooltip saying it is not built yet. **When you build it, wire it up and drop its
