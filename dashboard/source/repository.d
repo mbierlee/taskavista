@@ -719,42 +719,42 @@ class TaskRepository
     }
 
     /// Adds to the task's notes that its scheduler failed to assign it to an
-    /// agent. Adds nothing when the task or the scheduler is gone.
-    void recordSchedulingFailure(UUID id, UUID schedulerId)
+    /// agent. Adds nothing, and is false, when the task or the scheduler is gone.
+    bool recordSchedulingFailure(UUID id, UUID schedulerId)
     {
-        recordScheduling(id, schedulerId, `Scheduling by "%s" failed`);
+        return recordScheduling(id, schedulerId, `Scheduling by "%s" failed`);
     }
 
     /// Adds to the task's notes that its scheduler found no agent for it.
-    /// Adds nothing when the task or the scheduler is gone.
-    void recordNoAgentFound(UUID id, UUID schedulerId)
+    /// Adds nothing, and is false, when the task or the scheduler is gone.
+    bool recordNoAgentFound(UUID id, UUID schedulerId)
     {
-        recordScheduling(id, schedulerId, `Not assigned, since "%s" found no agent for it`);
+        return recordScheduling(id, schedulerId, `Not assigned, since "%s" found no agent for it`);
     }
 
     /// Adds to the task's notes that there was no task scheduler agent to
-    /// assign it. Adds nothing when the task is gone.
-    void recordNoScheduler(UUID id)
+    /// assign it. Adds nothing, and is false, when the task is gone.
+    bool recordNoScheduler(UUID id)
     {
         QueryParams query;
         query.sqlCommand = "insert into task_notes (task_id, note)"
-            ~ " select id, 'Not assigned, since there is no task scheduler agent' from tasks where id = $1";
+            ~ " select id, 'Not assigned, since there is no task scheduler agent' from tasks where id = $1 returning id";
         query.argsVariadic(id);
 
-        client.pickConnection((scope connection) {
-            connection.execParams(query);
+        return client.pickConnection((scope connection) {
+            return connection.execParams(query).length > 0;
         });
     }
 
     /// `note` is a format for SQL's format(), with the scheduler's name as its one %s.
-    private void recordScheduling(UUID id, UUID schedulerId, string note)
+    private bool recordScheduling(UUID id, UUID schedulerId, string note)
     {
         QueryParams query;
         query.sqlCommand = recordSchedulingOutcome;
         query.argsVariadic(id, schedulerId, note);
 
-        client.pickConnection((scope connection) {
-            connection.execParams(query);
+        return client.pickConnection((scope connection) {
+            return connection.execParams(query).length > 0;
         });
     }
 
@@ -795,7 +795,7 @@ private enum recordAssignment = "insert into task_notes (task_id, note)"
 /// note, a format with the scheduler's name as its one %s. A join rather than
 /// values, so a task deleted while it was being scheduled gets nothing.
 private enum recordSchedulingOutcome = "insert into task_notes (task_id, note)"
-    ~ " select t.id, format($3, a.name) from tasks t, agents a where t.id = $1 and a.id = $2";
+    ~ " select t.id, format($3, a.name) from tasks t, agents a where t.id = $1 and a.id = $2 returning id";
 
 /// Thrown by a task write whose place in its lane clashes with the lane as it
 /// stands once locked, which a check made before the write cannot rule out.

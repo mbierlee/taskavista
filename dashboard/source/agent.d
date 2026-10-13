@@ -19,6 +19,7 @@ import std.string : strip, toLower;
 import std.typecons : Nullable;
 import std.uuid : UUID, randomUUID;
 
+import changes : ChangeFeed;
 import config : Config, apiUrl;
 import model : Agent, AgentLogEntry, Project, defaultEffort;
 import prompt : PromptParser;
@@ -469,9 +470,10 @@ class TaskScheduler
     private PromptParser parser;
     private AgentPrompt agentPrompt;
     private RuntimeExecutor executor;
+    private ChangeFeed changes;
 
     this(AgentRepository agents, TaskRepository tasks, LaneRepository lanes, ProjectRepository projects,
-        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor)
+        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, ChangeFeed changes)
     {
         this.agents = agents;
         this.tasks = tasks;
@@ -480,6 +482,7 @@ class TaskScheduler
         this.parser = parser;
         this.agentPrompt = agentPrompt;
         this.executor = executor;
+        this.changes = changes;
     }
 
     /// Has the scheduler agent choose an agent for the task, in the background,
@@ -526,7 +529,7 @@ class TaskScheduler
         if (schedulers.empty)
         {
             logInfo("Task %s is not scheduled, since there is no task scheduler agent.", taskId);
-            tasks.recordNoScheduler(taskId);
+            noted(tasks.recordNoScheduler(taskId), taskId, project.get.id);
             return;
         }
 
@@ -553,7 +556,7 @@ class TaskScheduler
         catch (Exception e)
         {
             logError("Scheduler %s failed on task %s: %s", scheduler.name, taskId, e.msg);
-            tasks.recordSchedulingFailure(taskId, scheduler.id);
+            noted(tasks.recordSchedulingFailure(taskId, scheduler.id), taskId, project.get.id);
             return;
         }
 
@@ -565,17 +568,32 @@ class TaskScheduler
             {
                 logError("Scheduler %s answered task %s with \"%s\", which is not an agent it could choose.",
                     scheduler.name, taskId, answer);
-                tasks.recordSchedulingFailure(taskId, scheduler.id);
+                noted(tasks.recordSchedulingFailure(taskId, scheduler.id), taskId, project.get.id);
                 return;
             }
 
             chosen = matches.front.id;
         }
 
-        tasks.assignAiAgent(taskId, chosen);
+        // An assignment is a note only when it changed the agent, which it
+        // almost always did, and a needless event costs the UI only a refetch.
+        const assigned = tasks.assignAiAgent(taskId, chosen);
         if (chosen.isNull)
         {
-            tasks.recordNoAgentFound(taskId, scheduler.id);
+            noted(tasks.recordNoAgentFound(taskId, scheduler.id), taskId, project.get.id);
+        }
+        else
+        {
+            noted(assigned, taskId, project.get.id);
+        }
+    }
+
+    /// Reports a note on the task, when one was added.
+    private void noted(bool added, UUID taskId, UUID projectId)
+    {
+        if (added)
+        {
+            changes.note(taskId, projectId);
         }
     }
 

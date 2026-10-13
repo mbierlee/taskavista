@@ -986,6 +986,8 @@ function applyChange(change) {
     }
   } else if (resource === "agent") {
     refreshAgents();
+  } else if (resource === "note" && change.taskId === openTaskId) {
+    loadNotes(openTaskId);
   }
 }
 

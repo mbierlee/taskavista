@@ -20,6 +20,7 @@ Each message is a JSON object holding a `type` and the ids it concerns, and noth
 | `lane-created`, `lane-changed`, `lane-deleted` | `laneId`, `projectId` | The lanes REST endpoints |
 | `project-created`, `project-changed`, `project-deleted` | `projectId` | The projects REST endpoints, `createProject`, `saveProjectSettings`, `setAiPaused` |
 | `agent-created`, `agent-changed`, `agent-deleted` | `agentId` | The agents REST endpoints |
+| `note-created` | `taskId`, `projectId` | The task scheduler, for each note it adds to a task |
 
 The UI fetches whatever it needs through the REST API. That keeps a single way of reading the
 data, and a message lost while the socket is down costs only a refetch. `projectId` comes with
@@ -29,7 +30,9 @@ which are the lanes the UI refetches. The UI must not work these out from what i
 while events are still queued, that drawing is behind, and it is wrong about where a task
 was. `saveProjectSettings` sends a single `project-changed` rather than an event
 per lane, so the UI reads `project-changed` for the project on screen as "its lanes may have
-changed too".
+changed too". A write to a task also adds a note to it, and its own
+task event stands for that note, so `note-created` is sent only for a note added without one,
+such as the scheduler's.
 
 A service reports a write after it has succeeded, so a refused call sends nothing. Writes made
 any other way, such as straight into the database, are not reported. The one exception is that
@@ -81,7 +84,8 @@ page's writes would draw back the state from before the write, and drawing a lan
 would end the drag.
 
 The details panel follows its task: it closes if the task was deleted, and if the task moved or
-its description changed, it shows that and fetches the notes again. An edit that is still being
+its description changed, it shows that and fetches the notes again. It fetches them again
+too on a `note-created` for its task. An edit that is still being
 typed in the panel is overwritten if the description changes elsewhere.
 
 When the project list changes, a project that did not change keeps the object it had. The board

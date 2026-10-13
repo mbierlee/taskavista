@@ -78,6 +78,14 @@ class ChangeFeed
         publish("project", change, ["projectId": projectId]);
     }
 
+    /// A note was added to the task `taskId` of the project `projectId` by
+    /// anything other than a write to the task itself, whose own event already
+    /// stands for its note.
+    public void note(UUID taskId, UUID projectId)
+    {
+        publish("note", Change.created, ["taskId": taskId, "projectId": projectId]);
+    }
+
     /// An AI agent was created, changed or deleted.
     public void agent(Change change, UUID agentId)
     {
