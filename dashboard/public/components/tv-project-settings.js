@@ -9,12 +9,13 @@
    done.
 
    Events (bubbling and composed):
-     settings-save   detail { name, taskAddRule, managedByAi, lanes }
+     settings-save   detail { name, description, taskAddRule, managedByAi,
+                     lanes }
                      `lanes` is every lane in the new order, as { id, name,
                      color, marksDone }; id is null for a lane added here, and
                      a lane left out was removed.
-     project-create  detail { name, taskAddRule, managedByAi, lanes }  the
-                     same, with every id null.
+     project-create  detail { name, description, taskAddRule, managedByAi,
+                     lanes }  the same, with every id null.
      project-delete  detail { id } */
 
 import { attachTemplate, loadTemplate } from "./template.js";
@@ -110,6 +111,7 @@ export class TvProjectSettings extends HTMLElement {
   #body;
   #name;
   #nameError;
+  #description;
   #rules;
   #firstLane;
   #closeRules;
@@ -135,6 +137,7 @@ export class TvProjectSettings extends HTMLElement {
     this.#body = root.querySelector(".body");
     this.#name = root.querySelector(".project-name");
     this.#nameError = root.querySelector(".name-error");
+    this.#description = root.querySelector(".project-description");
     this.#rules = [...root.querySelectorAll('input[name="rule"]')];
     this.#firstLane = root.querySelector(".first-lane");
     this.#closeRules = [...root.querySelectorAll('input[name="close"]')];
@@ -257,6 +260,7 @@ export class TvProjectSettings extends HTMLElement {
       this.#name.placeholder = `e.g. ${examplePlaceholders[nextPlaceholder]}`;
       nextPlaceholder = (nextPlaceholder + 1) % examplePlaceholders.length;
     }
+    this.#description.value = project?.description ?? "";
     const rule = project?.taskAddRule ?? "first_lane";
     for (const option of this.#rules) {
       option.checked = option.value === rule;
@@ -332,6 +336,7 @@ export class TvProjectSettings extends HTMLElement {
         composed: true,
         detail: {
           name: this.#name.value.trim(),
+          description: this.#description.value.trim(),
           taskAddRule: this.#rules.find((rule) => rule.checked).value,
           managedByAi: this.#managed.checked,
           lanes: this.#lanes.map(({ id, name, color, marksDone }) => ({

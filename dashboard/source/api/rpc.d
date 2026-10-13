@@ -79,16 +79,17 @@ interface RpcApi
     /// Creates the project with these lanes, in this order, or nothing at all.
     /// A project managed by AI starts with its agents running.
     @method(HTTPMethod.POST) @path("createProject")
-    CreateProjectResult createProject(string name, TaskAddRule taskAddRule = TaskAddRule.firstLane,
-        bool managedByAi = false, LaneDraft[] lanes = null) @safe;
+    CreateProjectResult createProject(string name, string description = null,
+        TaskAddRule taskAddRule = TaskAddRule.firstLane, bool managedByAi = false,
+        LaneDraft[] lanes = null) @safe;
 
-    /// Gives the project this name, rule, AI setting and exactly these lanes,
-    /// in this order, or changes nothing. A lane of the project left out is
-    /// deleted. Turning the AI setting off pauses the project's agents, and
-    /// turning it on starts them.
+    /// Gives the project this name, description, rule, AI setting and exactly
+    /// these lanes, in this order, or changes nothing. A lane of the project
+    /// left out is deleted. Turning the AI setting off pauses the project's
+    /// agents, and turning it on starts them.
     @method(HTTPMethod.POST) @path("saveProjectSettings")
-    SaveProjectSettingsResult saveProjectSettings(UUID projectId, string name, TaskAddRule taskAddRule,
-        bool managedByAi, LaneDraft[] lanes) @safe;
+    SaveProjectSettingsResult saveProjectSettings(UUID projectId, string name, string description,
+        TaskAddRule taskAddRule, bool managedByAi, LaneDraft[] lanes) @safe;
 
     /// Pauses the project's AI agents, or resumes them, and changes nothing
     /// else about the project. Only a project managed by AI can be resumed.
@@ -161,10 +162,10 @@ class RpcService : RpcApi
         return MoveTaskResult(laneId, tasks.ofLane(laneId).map!(task => task.id).array);
     }
 
-    override CreateProjectResult createProject(string name, TaskAddRule taskAddRule, bool managedByAi,
-        LaneDraft[] lanes) @trusted
+    override CreateProjectResult createProject(string name, string description,
+        TaskAddRule taskAddRule, bool managedByAi, LaneDraft[] lanes) @trusted
     {
-        auto project = new Project(name, null, taskAddRule, managedByAi);
+        auto project = new Project(name, null, description, taskAddRule, managedByAi);
         project.enforceNamed();
         enforceHTTP(lanes.filter!(lane => !lane.id.isNull).empty, HTTPStatus.badRequest,
             "A new project's lanes have no ids yet.");
@@ -178,7 +179,7 @@ class RpcService : RpcApi
     }
 
     override SaveProjectSettingsResult saveProjectSettings(UUID projectId, string name,
-        TaskAddRule taskAddRule, bool managedByAi, LaneDraft[] lanes) @trusted
+        string description, TaskAddRule taskAddRule, bool managedByAi, LaneDraft[] lanes) @trusted
     {
         auto stored = projects.find(projectId);
         enforceHTTP(!stored.isNull, HTTPStatus.notFound, "No project has that id.");
@@ -186,8 +187,8 @@ class RpcService : RpcApi
         // The slug is made again only on a rename, so a save that leaves the
         // name alone never moves the project to a new URL.
         const renamed = name != stored.get.name;
-        auto project = new Project(projectId, name, renamed ? null : stored.get.slug, taskAddRule,
-            managedByAi);
+        auto project = new Project(projectId, name, renamed ? null : stored.get.slug, description,
+            taskAddRule, managedByAi);
         project.enforceNamed();
         project.enforceSlug(projects);
 

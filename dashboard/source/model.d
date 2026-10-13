@@ -41,6 +41,9 @@ class Project
     /// The project's name in its URL. Optional on the wire: the service derives
     /// one from the name when a client leaves it out.
     @optional string slug;
+    /// What the project is about, and directions for its AI agents. Empty for
+    /// none.
+    @optional string description;
     @optional TaskAddRule taskAddRule = TaskAddRule.firstLane;
     /// Whether AI agents may add, edit and move the project's tasks.
     @optional bool managedByAi;
@@ -54,21 +57,24 @@ class Project
     {
     }
 
-    this(string name, string slug, TaskAddRule taskAddRule = TaskAddRule.firstLane,
-        bool managedByAi = false) @safe
+    this(string name, string slug, string description = null,
+        TaskAddRule taskAddRule = TaskAddRule.firstLane, bool managedByAi = false) @safe
     {
         this.name = name;
         this.slug = slug;
+        this.description = description;
         this.taskAddRule = taskAddRule;
         this.managedByAi = managedByAi;
     }
 
-    this(UUID id, string name, string slug, TaskAddRule taskAddRule = TaskAddRule.firstLane,
-        bool managedByAi = false, bool aiPaused = false) @safe
+    this(UUID id, string name, string slug, string description = null,
+        TaskAddRule taskAddRule = TaskAddRule.firstLane, bool managedByAi = false,
+        bool aiPaused = false) @safe
     {
         this.id = id;
         this.name = name;
         this.slug = slug;
+        this.description = description;
         this.taskAddRule = taskAddRule;
         this.managedByAi = managedByAi;
         this.aiPaused = aiPaused;

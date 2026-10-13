@@ -17,7 +17,7 @@ and the board shows each task as a `tv-card`. Cards can be dragged within a lane
 lane, and tasks added from a lane's "+ Add a task", both saved through the API. Clicking a card
 opens the task details panel over the board, with the task's lane (which it can be moved out of),
 its description, which can be edited there, and its notes, and a button that deletes the task. A project's
-name, add-task rule and lanes are edited on its settings screen (`/projects/:slug/settings`),
+name, description, add-task rule and lanes are edited on its settings screen (`/projects/:slug/settings`),
 and a project is created on the same screen in its new-project mode (`/projects/new`).
 The Taskavista settings screen (`/settings`, the topbar's ⚙) lists the AI agents, and adds,
 edits and deletes them in a dialog, along with their labels; a new agent starts on the runtime, model and effort level in `defaults`, and each agent is run at its effort level.

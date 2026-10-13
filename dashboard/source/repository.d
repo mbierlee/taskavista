@@ -10,12 +10,12 @@ import std.uuid : UUID;
 import model : Agent, AgentLogEntry, Default, EffortLevel, Lane, Model, Project, Runtime, Task, TaskAddRule, TaskNote,
     toTaskAddRule;
 
-/// The assignment to ai_paused in an update that sets managed_by_ai to $5. A
+/// The assignment to ai_paused in an update that sets managed_by_ai to $6. A
 /// project that stops being managed by AI has its agents paused, and one
 /// that starts being managed has them running; otherwise they stay as they
 /// were. On the right of a set, managed_by_ai is still the old value.
 private enum pausedOnceManaged =
-    "ai_paused = case when managed_by_ai = $5 then ai_paused else not $5 end";
+    "ai_paused = case when managed_by_ai = $6 then ai_paused else not $6 end";
 
 /// Reads and writes rows of the projects table.
 class ProjectRepository
@@ -31,7 +31,7 @@ class ProjectRepository
     Project[] all()
     {
         QueryParams query;
-        query.sqlCommand = "select id, name, slug, task_add_rule, managed_by_ai, ai_paused from projects order by name";
+        query.sqlCommand = "select id, name, slug, description, task_add_rule, managed_by_ai, ai_paused from projects order by name";
 
         return client.pickConnection((scope connection) {
             auto answer = connection.execParams(query);
@@ -52,7 +52,7 @@ class ProjectRepository
     Nullable!Project find(UUID id)
     {
         QueryParams query;
-        query.sqlCommand = "select id, name, slug, task_add_rule, managed_by_ai, ai_paused from projects where id = $1";
+        query.sqlCommand = "select id, name, slug, description, task_add_rule, managed_by_ai, ai_paused from projects where id = $1";
         query.argsVariadic(id);
 
         return client.pickConnection((scope connection) {
@@ -85,9 +85,9 @@ class ProjectRepository
     Project add(Project project)
     {
         QueryParams query;
-        query.sqlCommand = "insert into projects (name, slug, task_add_rule, managed_by_ai, ai_paused) values ($1, $2, $3, $4, not $4) returning id, ai_paused";
-        query.argsVariadic(project.name, project.slug, cast(string) project.taskAddRule, project
-                .managedByAi);
+        query.sqlCommand = "insert into projects (name, slug, description, task_add_rule, managed_by_ai, ai_paused) values ($1, $2, $3, $4, $5, not $5) returning id, ai_paused";
+        query.argsVariadic(project.name, project.slug, project.description,
+            cast(string) project.taskAddRule, project.managedByAi);
 
         client.pickConnection((scope connection) {
             auto row = connection.execParams(query)[0];
@@ -105,10 +105,10 @@ class ProjectRepository
     bool update(Project project)
     {
         QueryParams query;
-        query.sqlCommand = "update projects set name = $2, slug = $3, task_add_rule = $4, managed_by_ai = $5, "
+        query.sqlCommand = "update projects set name = $2, slug = $3, description = $4, task_add_rule = $5, managed_by_ai = $6, "
             ~ pausedOnceManaged ~ " where id = $1 returning ai_paused";
-        query.argsVariadic(project.id, project.name, project.slug, cast(string) project.taskAddRule,
-            project.managedByAi);
+        query.argsVariadic(project.id, project.name, project.slug, project.description,
+            cast(string) project.taskAddRule, project.managedByAi);
 
         return client.pickConnection((scope connection) {
             auto answer = connection.execParams(query);
@@ -148,9 +148,9 @@ class ProjectRepository
             }
 
             QueryParams insert;
-            insert.sqlCommand = "insert into projects (name, slug, task_add_rule, managed_by_ai, ai_paused) values ($1, $2, $3, $4, not $4) returning id, ai_paused";
-            insert.argsVariadic(project.name, project.slug, cast(string) project.taskAddRule, project
-                .managedByAi);
+            insert.sqlCommand = "insert into projects (name, slug, description, task_add_rule, managed_by_ai, ai_paused) values ($1, $2, $3, $4, $5, not $5) returning id, ai_paused";
+            insert.argsVariadic(project.name, project.slug, project.description,
+                cast(string) project.taskAddRule, project.managedByAi);
             auto row = connection.execParams(insert)[0];
             project.id = row["id"].as!UUID;
             project.aiPaused = row["ai_paused"].as!bool;
@@ -188,10 +188,10 @@ class ProjectRepository
             connection.exec("set constraints all deferred");
 
             QueryParams update;
-            update.sqlCommand = "update projects set name = $2, slug = $3, task_add_rule = $4, managed_by_ai = $5, "
+            update.sqlCommand = "update projects set name = $2, slug = $3, description = $4, task_add_rule = $5, managed_by_ai = $6, "
                 ~ pausedOnceManaged ~ " where id = $1 returning ai_paused";
-            update.argsVariadic(project.id, project.name, project.slug, cast(string) project.taskAddRule,
-                project.managedByAi);
+            update.argsVariadic(project.id, project.name, project.slug, project.description,
+                cast(string) project.taskAddRule, project.managedByAi);
             project.aiPaused = connection.execParams(update)[0]["ai_paused"].as!bool;
 
             foreach (id; removed)
@@ -246,6 +246,7 @@ private Project toProject(immutable Row row)
         row["id"].as!UUID,
         row["name"].as!string,
         row["slug"].as!string,
+        row["description"].as!string,
         row["task_add_rule"].as!string.toTaskAddRule,
         row["managed_by_ai"].as!bool,
         row["ai_paused"].as!bool

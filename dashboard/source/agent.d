@@ -447,9 +447,13 @@ class AgentChat
         {
             placeholders["<project name>"] = project.get.name;
             placeholders["<project id>"] = project.get.id.toString;
+            placeholders["<project description>"] = project.get.description.strip;
         }
 
-        const conditions = ["project": !project.isNull];
+        const conditions = [
+            "project": !project.isNull,
+            "description": !project.isNull && project.get.description.strip.length > 0
+        ];
         auto chatPrompt = parser.parse(newChatPrompt, placeholders, conditions);
 
         return executor.prompt(agent.id.toString, message, true, sessionId,
@@ -536,14 +540,15 @@ class TaskScheduler
         string[string] placeholders = [
             "<project name>": project.get.name,
             "<project id>": project.get.id.toString,
+            "<project description>": project.get.description.strip,
             "<lane name>": lane.get.name,
             "<task description>": task.get.description.strip,
             "<agent list>": agentList(all)
         ];
 
-        const bool[string] noConditions;
+        const conditions = ["description": project.get.description.strip.length > 0];
         auto scheduler = schedulers.front;
-        auto prompt = parser.parse(schedulePrompt, placeholders, noConditions);
+        auto prompt = parser.parse(schedulePrompt, placeholders, conditions);
         auto systemPrompt = agentPrompt.systemPrompt(scheduler, "").strip;
 
         // Caught here rather than by schedule, so the log says which scheduler failed.

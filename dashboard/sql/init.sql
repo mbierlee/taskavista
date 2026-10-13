@@ -14,6 +14,7 @@ create table if not exists projects (
 							  and slug !~ '[\x21-\x2c\x2e\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]'
 							  and slug = lower(slug)
 							  and slug is nfc normalized),
+	description   text not null default '',
 	task_add_rule text not null default 'first_lane'
 					   check (task_add_rule in ('first_lane', 'any_lane')),
 	managed_by_ai boolean not null default false,

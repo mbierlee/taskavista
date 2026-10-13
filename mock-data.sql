@@ -4,14 +4,19 @@
 -- database with something in it. Re-runnable — it seeds an empty table and
 -- does nothing otherwise.
 
-insert into projects (name, slug, task_add_rule, managed_by_ai, ai_paused)
-select name, slug, task_add_rule, managed_by_ai, not managed_by_ai
+insert into projects (name, slug, description, task_add_rule, managed_by_ai, ai_paused)
+select name, slug, description, task_add_rule, managed_by_ai, not managed_by_ai
 from (values
-	('Website relaunch', 'website-relaunch', 'first_lane', false),
-	('Q3 finance', 'q3-finance', 'any_lane', false),
-	('Локализация сайта', 'локализация-сайта', 'any_lane', false),
-	('AI test', 'ai-test', 'first_lane', true)
-) as seed(name, slug, task_add_rule, managed_by_ai)
+	('Website relaunch', 'website-relaunch',
+		'The new marketing site, from design to launch day. The old site stays up until the new one has passed review.',
+		'first_lane', false),
+	('Q3 finance', 'q3-finance', '', 'any_lane', false),
+	('Локализация сайта', 'локализация-сайта', 'Перевод сайта на русский, японский, арабский и греческий.',
+		'any_lane', false),
+	('AI test', 'ai-test',
+		'A playground for the AI agents. Keep task descriptions short, and leave tasks in "Done" alone.',
+		'first_lane', true)
+) as seed(name, slug, description, task_add_rule, managed_by_ai)
 where not exists (select 1 from projects);
 
 insert into lanes (project_id, name, position, color, marks_done)

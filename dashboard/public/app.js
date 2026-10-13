@@ -567,6 +567,7 @@ async function saveSettings(draft) {
       sendJson("POST", "/api/rpc/v1/saveProjectSettings", {
         projectId: shown.project.id,
         name: draft.name,
+        description: draft.description,
         taskAddRule: draft.taskAddRule,
         managedByAi: draft.managedByAi,
         lanes: draft.lanes,
@@ -638,6 +639,7 @@ async function createProject(draft) {
     created = await queueWrite(() =>
       sendJson("POST", "/api/rpc/v1/createProject", {
         name: draft.name,
+        description: draft.description,
         taskAddRule: draft.taskAddRule,
         managedByAi: draft.managedByAi,
         lanes: draft.lanes,

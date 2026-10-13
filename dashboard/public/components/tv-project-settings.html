@@ -58,7 +58,8 @@
   /* The labels over the two columns share a line height (see .label in
      shared.css), and the gap under them, so the name field and the first
      lane start level. */
-  .name-field {
+  .name-field,
+  .description-field {
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -70,6 +71,18 @@
     background: var(--surface-2);
     padding: 11px 13px;
     font-size: 15px;
+  }
+
+  .project-description {
+    display: block;
+    width: 100%;
+    min-height: 104px;
+    max-height: 50vh;
+    background: var(--surface-2);
+    padding: 11px 13px;
+    font-size: 14px;
+    line-height: 1.5;
+    resize: vertical;
   }
 
   .rule {
@@ -263,6 +276,15 @@
             aria-describedby="name-error"
           />
           <p class="field-error name-error" id="name-error" hidden></p>
+        </div>
+
+        <div class="description-field">
+          <label class="label" for="project-description">Description</label>
+          <textarea
+            id="project-description"
+            class="field project-description"
+            placeholder="Describe the project, or give the AI agents instructions and directives to follow…"
+          ></textarea>
         </div>
 
         <fieldset class="rule">

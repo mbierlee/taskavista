@@ -9,6 +9,15 @@ whoever does the task, not for you.
 <task>
 <task description>
 </task>
+[if description]
+
+The project's description says what the project is about, and may give directions for the
+agents working on it. Where those directions say who should do which work, follow them:
+
+<project-description>
+<project description>
+</project-description>
+[end]
 
 These are the agents the task can be given to, each with its ID, name, labels and the
 instructions it works by. Those instructions are written to that agent, so "you" in them

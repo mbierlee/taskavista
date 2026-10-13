@@ -103,17 +103,17 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Project" }
               example:
-                - { id: 51ccc63c-4eba-4e65-a46d-b124ccf3a717, name: AI test, slug: ai-test, taskAddRule: first_lane, managedByAi: true, aiPaused: false }
-                - { id: 138cb919-a9da-42cf-bf90-b338d690f61d, name: Q3 finance, slug: q3-finance, taskAddRule: any_lane, managedByAi: false, aiPaused: true }
-                - { id: 0c21385d-81d5-4fe9-9667-d353e0a1fb71, name: Локализация сайта, slug: локализация-сайта, taskAddRule: any_lane, managedByAi: false, aiPaused: true }
+                - { id: 9ec81254-6a98-4992-bd78-1522242c384d, name: AI test, slug: ai-test, description: "A playground for the AI agents. Keep task descriptions short, and leave tasks in \"Done\" alone.", taskAddRule: first_lane, managedByAi: true, aiPaused: false }
+                - { id: 9a368af0-3728-4873-b86c-ff0bc2fdda2c, name: Q3 finance, slug: q3-finance, description: "", taskAddRule: any_lane, managedByAi: false, aiPaused: true }
+                - { id: e646f399-2320-4e4e-bf19-03a62dd82b30, name: Локализация сайта, slug: локализация-сайта, description: Перевод сайта на русский, японский, арабский и греческий., taskAddRule: any_lane, managedByAi: false, aiPaused: true }
         "500": { $ref: "#/components/responses/ServerError" }
     post:
       tags: [Projects]
       operationId: createProject
       summary: Create a project
       description: |
-        The body is a project without an id. `slug`, `taskAddRule` and `managedByAi` may be left
-        out. Whatever `aiPaused` the body has, the project's agents start running if it is
+        The body is a project without an id. `slug`, `description`, `taskAddRule` and
+        `managedByAi` may be left out. Whatever `aiPaused` the body has, the project's agents start running if it is
         managed by AI, and paused otherwise. An `id` sent in the body is ignored.
 
         A slug that was sent is named in a 409's message; when the slug was derived from the
@@ -126,7 +126,7 @@ paths:
             examples:
               derivedSlug:
                 summary: Slug derived from the name
-                value: { name: Zebra migration }
+                value: { name: Zebra migration, description: Move the zebras to the new enclosure before the winter. }
               ownSlug:
                 summary: Slug sent
                 value: { name: Kite launch, slug: kite }
@@ -136,7 +136,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: d7f4a87e-730c-42a7-a946-202d094dc4a1, name: Zebra migration, slug: zebra-migration, taskAddRule: first_lane, managedByAi: false, aiPaused: true }
+              example: { id: 6ef6ab58-fdb5-4256-8bcc-d1f8b27edb24, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., taskAddRule: first_lane, managedByAi: false, aiPaused: true }
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
@@ -171,7 +171,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: 138cb919-a9da-42cf-bf90-b338d690f61d, name: Q3 finance, slug: q3-finance, taskAddRule: any_lane, managedByAi: false, aiPaused: true }
+              example: { id: 9a368af0-3728-4873-b86c-ff0bc2fdda2c, name: Q3 finance, slug: q3-finance, description: "", taskAddRule: any_lane, managedByAi: false, aiPaused: true }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -182,7 +182,7 @@ paths:
       description: |
         A full replacement, not a patch. For `slug` the default is the one derived from the name,
         so **renaming a project without sending its slug changes its URL**; send the slug to keep
-        it.
+        it. Likewise a `description` left out empties the description.
 
         `aiPaused` is never taken from the body. A `PUT` that turns `managedByAi` on starts the
         project's agents, one that turns it off pauses them, and one that leaves it as it was
@@ -195,14 +195,14 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/Project" }
-            example: { name: Kite launch v2, slug: kite, taskAddRule: first_lane, managedByAi: true, aiPaused: true }
+            example: { name: Kite launch v2, slug: kite, description: Launch the kite range in the spring catalogue., taskAddRule: first_lane, managedByAi: true, aiPaused: true }
       responses:
         "200":
           description: The stored project.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: 98359477-3b46-49be-9f29-135c7c2385a9, name: Kite launch v2, slug: kite, taskAddRule: first_lane, managedByAi: true, aiPaused: false }
+              example: { id: 4b534b4a-76ce-45c2-8ec4-bc6e6619d777, name: Kite launch v2, slug: kite, description: Launch the kite range in the spring catalogue., taskAddRule: first_lane, managedByAi: true, aiPaused: false }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
@@ -771,6 +771,13 @@ components:
             A slug is never made unique by the server — if the derived one is taken the request
             fails with 409, and the client has to send a slug of its own.
           examples: [q3-finance]
+        description:
+          type: string
+          default: ""
+          description: |
+            What the project is about, and directions for the AI agents that work on it. Free
+            text, over as many lines as needed; empty for none.
+          examples: [Move the zebras to the new enclosure before the winter.]
         taskAddRule:
           type: string
           enum: [first_lane, any_lane]

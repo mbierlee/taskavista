@@ -158,6 +158,9 @@ paths:
               required: [name]
               properties:
                 name: { $ref: "#/components/schemas/ProjectName" }
+                description:
+                  $ref: "#/components/schemas/ProjectDescription"
+                  default: ""
                 taskAddRule:
                   $ref: "#/components/schemas/TaskAddRule"
                   default: first_lane
@@ -170,7 +173,7 @@ paths:
                   default: []
                   items: { $ref: "#/components/schemas/NewLane" }
                   description: The lanes in board order; each one's position is its place in the list.
-            example: { name: Kite launch, taskAddRule: any_lane, lanes: [{ name: To do, color: "#8FA6FF" }, { name: Done, color: "#5fd6ab", marksDone: true }] }
+            example: { name: Kite launch, description: Launch the kite range in the spring catalogue., taskAddRule: any_lane, lanes: [{ name: To do, color: "#8FA6FF" }, { name: Done, color: "#5fd6ab", marksDone: true }] }
       responses:
         "200":
           description: The slug made from the name.
@@ -200,10 +203,10 @@ paths:
     post:
       tags: [Projects]
       operationId: saveProjectSettings
-      summary: Change a project's name and add-task rule, and replace its lanes
+      summary: Change a project's name, description and add-task rule, and replace its lanes
       description: |
-        Gives a project a name, an add-task rule, its AI setting and exactly the lanes sent, in
-        their order. Either the whole of it is saved or nothing is, and that includes a lane
+        Gives a project a name, a description, an add-task rule, its AI setting and exactly the
+        lanes sent, in their order. Either the whole of it is saved or nothing is, and that includes a lane
         deleted together with its tasks.
 
         **A lane of the project that is not in the list is deleted, along with its tasks**, so an
@@ -222,12 +225,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [projectId, name, taskAddRule, managedByAi, lanes]
+              required: [projectId, name, description, taskAddRule, managedByAi, lanes]
               properties:
                 projectId:
                   $ref: "#/components/schemas/Uuid"
                   description: The project to change.
                 name: { $ref: "#/components/schemas/ProjectName" }
+                description: { $ref: "#/components/schemas/ProjectDescription" }
                 taskAddRule: { $ref: "#/components/schemas/TaskAddRule" }
                 managedByAi:
                   type: boolean
@@ -240,7 +244,7 @@ paths:
                   description: |
                     The project's lanes in board order; each one's position is its place in the
                     list. A lane of the project left out is deleted, with its tasks.
-            example: { projectId: e641d6a1-3a9d-4464-8aad-536ef71a5646, name: Kite launch v2, taskAddRule: any_lane, managedByAi: true, lanes: [{ id: 41487034-c575-4d64-858d-7b7e6eb3f40d, name: To do, color: "#8fa6ff" }, { id: null, name: Backlog, color: "#e8b154" }] }
+            example: { projectId: d83af3a0-e609-4305-98d4-9bfdc28d2648, name: Kite launch v2, description: "Launch the kite range in the spring catalogue, and the kite bags with it.", taskAddRule: any_lane, managedByAi: true, lanes: [{ id: b775c8b5-04e0-4e27-88da-046ce1c1bb99, name: To do, color: "#8fa6ff" }, { id: null, name: Backlog, color: "#e8b154" }] }
       responses:
         "200":
           description: The project's slug after the save. It differs from the old one only after a rename.
@@ -250,9 +254,9 @@ paths:
               example: { slug: kite-launch-v2 }
         "400":
           description: |
-            `projectId`, `name`, `taskAddRule`, `managedByAi` or `lanes` missing; `name` blank or
-            without a letter or digit; a lane with a blank name or a malformed colour; a lane id
-            listed twice; a lane of another project.
+            `projectId`, `name`, `description`, `taskAddRule`, `managedByAi` or `lanes` missing;
+            `name` blank or without a letter or digit; a lane with a blank name or a malformed
+            colour; a lane id listed twice; a lane of another project.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -441,6 +445,13 @@ components:
       minLength: 1
       description: At least one letter or digit, in any script, as the REST API requires.
       examples: [Kite launch]
+
+    ProjectDescription:
+      type: string
+      description: |
+        What the project is about, and directions for the AI agents that work on it. Free text,
+        over as many lines as needed; empty for none.
+      examples: [Launch the kite range in the spring catalogue.]
 
     TaskAddRule:
       type: string
