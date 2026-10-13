@@ -16,5 +16,6 @@ Some calls delete more than they name. Deleting a project deletes its lanes and 
 Good to know:
 
 - A task has no status of its own: it is done when it sits in a lane with `marksDone` set.
+- A new task is assigned to an agent by the task scheduler, one of the agents, which chooses by the agents' labels and instructions. The API does not show who a task is assigned to, but the task's notes (GET /tasks/{id}/notes) say so. No agent can change an assignment: the scheduler assigns a task once, when it is created, and editing or moving the task later does not assign it again.
 - Projects are looked up by id only, not by slug. To find a project's id, list them with GET /projects.
 - A failed call returns JSON like `{ "statusMessage": "No project has that id." }`. Read the message before retrying: it says what was wrong.
