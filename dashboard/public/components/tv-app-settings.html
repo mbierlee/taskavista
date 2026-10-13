@@ -166,6 +166,76 @@
     color: var(--text-status);
   }
 
+  /* Last in the grid, after the agents. */
+  .quick-create {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    border: 1px dashed var(--border-dashed);
+    border-radius: var(--r-card);
+  }
+  .quick-create-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .quick-create .field {
+    min-height: 56px;
+    padding: 8px 10px;
+    background: var(--bg);
+    font-size: 13px;
+    line-height: 1.45;
+    /* Grows with what is typed, as the mockup's does, rather than scrolling. */
+    field-sizing: content;
+    resize: none;
+  }
+  .generate {
+    align-self: flex-end;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 7px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .generate:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  /* After a failed draft: the box outlined and the reason under it, and
+     "Try again" quieter than "Generate", with only its ✦ in the accent. */
+  .quick-create-input {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .quick-create .field[aria-invalid="true"] {
+    border-color: var(--invalid);
+    box-shadow: none;
+  }
+  .quick-create .field-error {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .generate.retry {
+    border-color: var(--border);
+    background: var(--surface-input);
+    color: var(--text-2);
+  }
+  .generate.retry:hover:not(:disabled) {
+    background: var(--surface-hover);
+  }
+  .generate.retry .sparkle {
+    color: var(--accent);
+  }
+  .generate.retry:disabled {
+    border-color: var(--border-soft);
+    background: var(--disabled-bg);
+    color: var(--disabled-ink);
+  }
+  .generate.retry:disabled .sparkle {
+    color: inherit;
+  }
+
   /* By the screen's own width rather than the window's, since the agent chat
      can take part of the window beside it. The widths are inside the
      padding: these were a 860px and a 640px window. */
@@ -235,5 +305,24 @@
       </span>
     </div>
     <div class="agent-labels" hidden></div>
+  </li>
+</template>
+
+<template class="quick-create-template">
+  <li class="quick-create">
+    <div class="quick-create-title">Quick-create an agent</div>
+    <div class="quick-create-input">
+      <textarea
+        class="field quick-create-text"
+        placeholder="Describe what it should do…"
+        aria-label="Describe what the agent should do"
+        aria-describedby="quick-create-error"
+      ></textarea>
+      <p class="field-error" id="quick-create-error" role="alert" hidden></p>
+    </div>
+    <button class="btn primary generate" type="button" disabled>
+      <span class="sparkle" aria-hidden="true">✦</span>
+      <span class="generate-label">Generate</span>
+    </button>
   </li>
 </template>

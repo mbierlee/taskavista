@@ -4,14 +4,24 @@
    than to one project. Its one section so far lists the AI agents, each with
    its runtime, model and effort level as a chip apiece (the mockup joins
    them in one, but the models' real names are too long for that), marks each task
-   scheduler, and shows its labels, if it has any, under a divider. `show()` hands it the agents, `clear()` empties it.
+   scheduler, and shows its labels, if it has any, under a divider. After them
+   comes "Quick-create an agent", where a person describes an agent for one
+   of the agents to draft. `show()` hands it the agents, `clear()` empties it.
 
    "+ Add agent" and each agent's "Edit" open a tv-agent-dialog, whose events
    come up through this element. The caller writes what they ask for, then
    calls `show()` again and `closeDialog()`, or sets `dialogError` if the
    write was refused; `dialogSaving` holds the dialog while it is under way.
 
-   Events (bubbling and composed), from the dialog:
+   "Generate" raises agent-draft. The caller has the draft made, holding the
+   tile with `generating` meanwhile, then opens it in the dialog with
+   `openDraft()`, or sets `draftError` to say why there is none. The error
+   shows in the tile, with the description kept to be put right, until the
+   next try or the next draft.
+
+   Events (bubbling and composed):
+     agent-draft   detail { description }
+   and from the dialog:
      agent-create  detail { name, runtime, model, effort, instructions, labels, taskScheduler }
      agent-save    detail { id, name, runtime, model, effort, instructions, labels, taskScheduler }
      agent-delete  detail { id } */
@@ -26,6 +36,11 @@ export class TvAppSettings extends HTMLElement {
   #add;
   #agents;
   #agentTemplate;
+  #quickCreate;
+  #description;
+  #generate;
+  #generateLabel;
+  #draftError;
   #dialog;
 
   /* What `show()` was last given, for the dialog to offer. */
@@ -44,6 +59,13 @@ export class TvAppSettings extends HTMLElement {
     this.#add = root.querySelector(".add");
     this.#agents = root.querySelector(".agents");
     this.#agentTemplate = root.querySelector(".agent-template");
+    this.#quickCreate = root
+      .querySelector(".quick-create-template")
+      .content.firstElementChild.cloneNode(true);
+    this.#description = this.#quickCreate.querySelector(".quick-create-text");
+    this.#generate = this.#quickCreate.querySelector(".generate");
+    this.#generateLabel = this.#quickCreate.querySelector(".generate-label");
+    this.#draftError = this.#quickCreate.querySelector(".field-error");
     this.#dialog = root.querySelector("tv-agent-dialog");
 
     this.#add.addEventListener("click", () =>
@@ -52,6 +74,16 @@ export class TvAppSettings extends HTMLElement {
         this.#models,
         this.#defaults,
         this.#labels,
+      ),
+    );
+    this.#description.addEventListener("input", () => this.#updateGenerate());
+    this.#generate.addEventListener("click", () =>
+      this.dispatchEvent(
+        new CustomEvent("agent-draft", {
+          bubbles: true,
+          composed: true,
+          detail: { description: this.#description.value.trim() },
+        }),
       ),
     );
   }
@@ -113,6 +145,7 @@ export class TvAppSettings extends HTMLElement {
         );
         return item;
       }),
+      this.#quickCreate,
     );
     this.#setStatus(agents.length === 0 ? "There are no agents yet." : "");
   }
@@ -128,12 +161,64 @@ export class TvAppSettings extends HTMLElement {
     this.#dialog.close();
   }
 
+  /* Opens the dialog on a new agent filled in from `draft`, which has the
+     fields of the agent-create event, and empties the tile, since the
+     description has done its job. */
+  openDraft(draft) {
+    this.#description.value = "";
+    this.draftError = "";
+    this.#dialog.add(
+      this.#runtimes,
+      this.#models,
+      this.#defaults,
+      this.#labels,
+      draft,
+    );
+  }
+
+  set generating(value) {
+    this.#description.disabled = Boolean(value);
+    if (value) {
+      this.draftError = "";
+    } else {
+      this.#updateGenerate();
+    }
+  }
+
+  set draftError(message) {
+    this.#draftError.textContent = message;
+    this.#draftError.hidden = !message;
+    this.#description.setAttribute("aria-invalid", String(Boolean(message)));
+    this.#updateGenerate();
+  }
+
   set dialogSaving(value) {
     this.#dialog.saving = value;
   }
 
   set dialogError(message) {
     this.#dialog.error = message;
+  }
+
+  /* The textarea is disabled only while a draft is being generated. */
+  #updateGenerate() {
+    const generating = this.#description.disabled;
+    this.#generate.disabled =
+      generating || this.#description.value.trim() === "";
+    const failed = !this.#draftError.hidden;
+    this.#generate.classList.toggle("retry", failed && !generating);
+    this.#generateLabel.textContent = generating
+      ? "Generating"
+      : failed
+        ? "Try again"
+        : "Generate";
+    if (generating) {
+      const dots = document.createElement("span");
+      dots.className = "dots";
+      dots.setAttribute("aria-hidden", "true");
+      dots.innerHTML = "<span>.</span><span>.</span><span>.</span>";
+      this.#generateLabel.append(dots);
+    }
   }
 
   #setStatus(message) {

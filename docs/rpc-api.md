@@ -71,6 +71,29 @@ project the person is in, with its description when it has one, and how to write
 there, including an unknown runtime or a `sessionId` the runtime does not have, is a 502: only
 the runtime knows which sessions exist, so the server cannot check one beforehand.
 
+## Drafting an agent
+
+`draftAgent` is the settings screen's "Quick-create an agent". It runs
+`dashboard/prompts/quick-create-agent.txt` as a one-off prompt (`AgentDrafter` in `agent.d`), with
+`agent.txt` as the system prompt as for any interaction, and creates nothing: the UI opens the
+draft in the new agent dialog, so the person reviews it before the ordinary REST create.
+
+It is the one call that returns something shaped like a resource, since the draft is not stored
+anywhere for a client to fetch, and its fields are what `POST /api/rest/v1/agents` takes.
+
+Any agent can draft one, as the prompt is written for whoever runs it, so the call asks the agent
+named Generic, found by name as the chat's picker finds it, and then each task scheduler, since one
+is meant to exist. An agent that fails or answers with something that is not a draft is logged
+and passed over for the next. The answer is cleaned rather than trusted: the object is taken from
+between the first `{` and the last `}`, since agents tend to wrap it in a code fence, a runtime,
+model and effort level that do not go together become the defaults, and labels are lowercased
+and deduplicated. The name is not checked, since the dialog's save will refuse a taken one.
+
+When there is no draft, the answer is a 200 with only an `error`, the same shape the prompt asks
+an agent to give for a description too vague to work from. That makes "no agent could" and "the
+description says too little" one case for the UI, which shows the message, rather than a status
+for one and a body for the other.
+
 ## Error messages
 
 Every failure is `{"statusMessage": "…"}`, with a message written for whoever called. The error

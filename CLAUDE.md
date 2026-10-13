@@ -20,7 +20,7 @@ its description, which can be edited there, and its notes, and a button that del
 name, description, add-task rule and lanes are edited on its settings screen (`/projects/:slug/settings`),
 and a project is created on the same screen in its new-project mode (`/projects/new`).
 The Taskavista settings screen (`/settings`, the topbar's ⚙) lists the AI agents, and adds,
-edits and deletes them in a dialog, along with their labels; a new agent starts on the runtime, model and effort level in `defaults`, and each agent is run at its effort level.
+edits and deletes them in a dialog, along with their labels; a new agent starts on the runtime, model and effort level in `defaults`, and each agent is run at its effort level. Its "Quick-create an agent" has an agent (Generic, or else a task scheduler) draft one from a description, with `dashboard/prompts/quick-create-agent.txt`, and opens the draft in that dialog to be reviewed before it is added.
 A project managed by AI agents shows a strip over its board saying whether the agents are at
 work, with a button that pauses or resumes them; the pause is only recorded in the database
 for now, since no agents exist yet. The topbar's chat button opens the agent chat, a panel beside

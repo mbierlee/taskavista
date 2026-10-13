@@ -6,8 +6,8 @@ info:
   summary: Operations on Taskavista's projects, lanes, tasks and agents that are not plain CRUD.
   description: |
     Calls that do more than read or write a single resource: moving a task, creating or saving a
-    project together with its lanes, pausing a project's agents, and chatting with an agent. The
-    resources themselves are read and written through the REST API, under `/api/rest/v1`.
+    project together with its lanes, pausing a project's agents, chatting with an agent, and
+    having an agent draft a new one. The resources themselves are read and written through the REST API, under `/api/rest/v1`.
 
     Every call follows the same rules:
 
@@ -44,7 +44,7 @@ tags:
       Saving a project together with its lanes, in one go, and pausing or resuming its AI agents.
       The server makes a project's slug from its name; neither call takes one.
   - name: Agents
-    description: Chatting with an AI agent.
+    description: Chatting with an AI agent, and having one draft a new agent.
 
 paths:
   /moveTask:
@@ -425,6 +425,111 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /draftAgent:
+    post:
+      tags: [Agents]
+      operationId: draftAgent
+      summary: Have an AI agent draft a new agent from a description
+      description: |
+        Has an AI agent draft a new agent from what a person wrote it should do, and answers
+        with the draft's fields, ready to be sent on to `POST /api/rest/v1/agents` once they have
+        been reviewed. Nothing is created: the draft is only an answer.
+
+        The draft is made by the agent named "Generic", or, when there is none or it fails, by
+        each task scheduler in turn. The call waits for the agent, which usually takes some
+        seconds.
+
+        The draft's runtime, model and effort level always go together: when the agent's do
+        not, the defaults (`GET /api/rest/v1/defaults`) are given instead. Its labels are
+        lowercase and unique. Its name is not checked against the other agents', so it may be
+        taken.
+
+        When no draft can be made, the answer is still a 200, holding only an `error`: either
+        the description does not say enough, or no agent could draft one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [description]
+              properties:
+                description:
+                  type: string
+                  minLength: 1
+                  description: What the new agent should do, in the person's own words. Not blank or only whitespace.
+            example: { description: "Something that writes the release notes every time we ship, from the tasks that were done since the last release. Should be thorough." }
+      responses:
+        "200":
+          description: The draft, or an `error` saying why there is none.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    title: Draft
+                    required: [name, runtime, model, effort, instructions, labels, taskScheduler]
+                    properties:
+                      name:
+                        type: string
+                        description: The agent's name, not blank.
+                      runtime:
+                        type: string
+                        description: The id of the runtime it would run in.
+                      model:
+                        type: string
+                        description: The id of its model, one the runtime offers.
+                      effort:
+                        type: string
+                        description: The id of its effort level, one the model takes.
+                      instructions:
+                        type: string
+                        description: Its own instructions, written to it; empty for none.
+                      labels:
+                        type: array
+                        items: { type: string }
+                        description: Its specialties, lowercase and unique; empty for none.
+                      taskScheduler:
+                        type: boolean
+                        description: Whether it would choose which agent works on each new task.
+                  - type: object
+                    title: No draft
+                    required: [error]
+                    properties:
+                      error:
+                        type: string
+                        description: Why there is no draft, in a sentence fit to show the person.
+              examples:
+                draft:
+                  summary: A draft
+                  value:
+                    name: Release Notes Writer
+                    runtime: claude-code
+                    model: sonnet
+                    effort: default
+                    instructions: |-
+                      You write the release notes every time the team ships a release, based on the tasks that were done since the last release.
+
+                      Be thorough. Work out when the last release was and which tasks have been completed since then (a task is done when it sits in a lane that marks tasks as done). Read each of those tasks in full, including its description and notes, so that nothing that shipped is missed or misdescribed. Cover every completed task in the release notes, grouping related changes under clear headings and describing each change in terms of what it means for the people who use the product. Do not invent changes, details or tasks that are not in the board, and if a task is unclear, say so rather than guessing.
+                    labels: [release notes, writing, releases]
+                    taskScheduler: false
+                vague:
+                  summary: A description that says too little ("hmm")
+                  value: { error: "The description (\"hmm\") does not say what the agent should do." }
+        "400":
+          description: "`description` missing or blank."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                blank:
+                  summary: Blank
+                  value: { statusMessage: A description cannot be blank. }
+                missing:
+                  summary: Missing
+                  value: { statusMessage: The argument description is missing. }
         "500": { $ref: "#/components/responses/ServerError" }
 
 components:

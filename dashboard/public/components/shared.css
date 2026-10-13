@@ -192,6 +192,41 @@
     color: var(--muted);
   }
 
+  /* Something under way: "<span class="dots" aria-hidden="true"><span>.</span>
+     <span>.</span><span>.</span></span>" after its text. One dot, then two,
+     then three, and round again. A hidden dot keeps its space, so the text
+     does not shift as they come and go. */
+  .dots span {
+    animation: 1.2s steps(1, end) infinite;
+  }
+  .dots span:nth-child(2) {
+    animation-name: second-dot;
+  }
+  .dots span:nth-child(3) {
+    animation-name: third-dot;
+  }
+  @keyframes second-dot {
+    0% {
+      visibility: hidden;
+    }
+    33.333% {
+      visibility: visible;
+    }
+  }
+  @keyframes third-dot {
+    0% {
+      visibility: hidden;
+    }
+    66.667% {
+      visibility: visible;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dots span {
+      animation: none;
+    }
+  }
+
   /* A lane's colour, which the element or an ancestor sets as --dot. */
   .dot {
     flex: none;

@@ -730,6 +730,27 @@ async function writeAgent(write, failure) {
   }
 }
 
+/* An agent drafts the new agent, which can take a while, and the person
+   then reviews it in the dialog: nothing is created until they add it there. */
+async function draftAgent(description) {
+  appSettingsEl.generating = true;
+  let draft;
+  try {
+    draft = await sendJson("POST", "/api/rpc/v1/draftAgent", { description });
+  } catch (error) {
+    console.error("Could not draft the agent:", error);
+    draft = { error: error.message };
+  } finally {
+    appSettingsEl.generating = false;
+  }
+
+  if (draft.error) {
+    appSettingsEl.draftError = `Couldn’t generate an agent. ${draft.error}`;
+  } else if (appSettingsEl.isConnected) {
+    appSettingsEl.openDraft(draft);
+  }
+}
+
 function createAgent(agent) {
   writeAgent(
     () => sendJson("POST", "/api/rest/v1/agents", agent),
@@ -1568,6 +1589,10 @@ settingsEl.addEventListener("project-delete", (event) => {
 
 newProjectEl.addEventListener("project-create", (event) => {
   createProject(event.detail);
+});
+
+appSettingsEl.addEventListener("agent-draft", (event) => {
+  draftAgent(event.detail.description);
 });
 
 appSettingsEl.addEventListener("agent-create", (event) => {

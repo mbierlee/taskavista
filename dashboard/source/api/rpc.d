@@ -14,7 +14,7 @@ import std.string : strip;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
-import agent : AgentChat;
+import agent : AgentChat, AgentDrafter;
 import changes : Change, ChangeFeed;
 import api.checks : enforceNamed, enforceSlug, enforceValid;
 import model : Lane, Project, TaskAddRule;
@@ -103,6 +103,12 @@ interface RpcApi
     @method(HTTPMethod.POST) @path("sendChatMessage")
     SendChatMessageResult sendChatMessage(UUID agentId, string message,
         Nullable!UUID projectId = Nullable!UUID.init, Nullable!string sessionId = Nullable!string.init) @safe;
+
+    /// Has an agent draft a new agent from what the person wrote it should do,
+    /// without creating it. Answers with the agent's fields, for the new agent
+    /// dialog to show, or with only an `error` when no agent could draft one.
+    @method(HTTPMethod.POST) @path("draftAgent")
+    Json draftAgent(string description) @safe;
 }
 
 /// Serves the RPC calls out of the repositories.
@@ -113,16 +119,18 @@ class RpcService : RpcApi
     private TaskRepository tasks;
     private AgentRepository agents;
     private AgentChat chat;
+    private AgentDrafter drafter;
     private ChangeFeed changes;
 
     this(ProjectRepository projects, LaneRepository lanes, TaskRepository tasks, AgentRepository agents,
-        AgentChat chat, ChangeFeed changes)
+        AgentChat chat, AgentDrafter drafter, ChangeFeed changes)
     {
         this.projects = projects;
         this.lanes = lanes;
         this.tasks = tasks;
         this.agents = agents;
         this.chat = chat;
+        this.drafter = drafter;
         this.changes = changes;
     }
 
@@ -254,6 +262,13 @@ class RpcService : RpcApi
             throw new HTTPStatusException(HTTPStatus.badGateway,
                 "The agent could not answer: " ~ exception.msg);
         }
+    }
+
+    override Json draftAgent(string description) @trusted
+    {
+        enforceHTTP(description.strip.length > 0, HTTPStatus.badRequest, "A description cannot be blank.");
+
+        return drafter.draft(description);
     }
 }
 

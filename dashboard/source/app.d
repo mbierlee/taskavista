@@ -6,7 +6,7 @@ import std.algorithm : startsWith;
 import std.functional : toDelegate;
 import std.path : baseName, extension;
 
-import agent : AgentChat, AgentHelp, AgentPrompt, ClaudeCodeRuntime, IRuntime, RuntimeExecutor, TaskScheduler;
+import agent : AgentChat, AgentDrafter, AgentHelp, AgentPrompt, ClaudeCodeRuntime, IRuntime, RuntimeExecutor, TaskScheduler;
 import config : Config, connectionString, loadConfig;
 import helpers : formatURL;
 import prompt : PromptParser;
@@ -50,6 +50,7 @@ class DashboardContext : ApplicationContext
         container.register!AgentHelp;
         container.register!AgentPrompt;
         container.register!AgentChat;
+        container.register!AgentDrafter;
     }
 
     /// The pool comes from a factory method because its connection string is

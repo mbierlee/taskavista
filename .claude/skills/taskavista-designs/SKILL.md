@@ -108,7 +108,7 @@ offered on the project settings mockup — take it from there.
 
 Built: the **board**, the **project switcher**, **project settings**, **new project** (the
 settings component in its `new` mode), the **agents strip** over the board of an AI-managed project, the **Taskavista settings**
-screen with its list of AI agents and the **add and edit agent** dialog, and the **task details** panel, its description editable in place (the
+screen with its list of AI agents and the **add and edit agent** dialog and its **quick-create an agent** tile, which has an agent draft one and opens it in the add dialog with its failure shown inside the tile, and the **task details** panel, its description editable in place (the
 mockups have no editing state, so it borrows the lane composer's focus ring) and its "Delete task" button, and the **agent chat** panel with its
 tabs, agent picker and the topbar's chat button and unread badge, as UI only: no agent answers yet, and the
 mockups' "is working…" line is not drawn — see the component table in `docs/webcomponents.md` for

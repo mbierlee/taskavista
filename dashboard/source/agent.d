@@ -5,25 +5,29 @@ import vibe.core.file : existsFile, moveFile, writeFileUTF8;
 import vibe.core.path : NativePath;
 import vibe.core.process : ProcessConfig = Config, Redirect, collectOutput, pipeProcess;
 import vibe.core.log : logError, logInfo;
+import vibe.data.json : Json, parseJsonString, serializeToJson;
 import poodinis : Inject;
 
 import std.algorithm.iteration : filter, map;
-import std.array : join;
+import std.algorithm.searching : canFind, find;
+import std.array : array, join;
 import std.datetime.systime : SysTime;
 import std.digest : toHexString;
 import std.digest.sha : sha256Of;
 import std.file : mkdirRecurse, tempDir;
 import std.format : format;
 import std.path : buildPath;
-import std.string : strip, toLower;
-import std.typecons : Nullable;
+import std.range : chain;
+import std.string : indexOf, lastIndexOf, strip, toLower;
+import std.typecons : Nullable, nullable;
 import std.uuid : UUID, randomUUID;
 
 import changes : ChangeFeed;
 import config : Config, apiUrl;
-import model : Agent, AgentLogEntry, Project, defaultEffort;
+import model : Agent, AgentLogEntry, EffortLevel, Model, Project, Runtime, defaultEffort;
 import prompt : PromptParser;
-import repository : AgentLogRepository, AgentRepository, LaneRepository, ProjectRepository, TaskRepository;
+import repository : AgentLogRepository, AgentRepository, DefaultRepository, LaneRepository, ProjectRepository,
+    RuntimeRepository, TaskRepository;
 
 /// The permission mode Claude Code runs in. Auto, since in print mode there is
 /// nobody to answer a permission prompt.
@@ -623,4 +627,272 @@ class TaskScheduler
         return format("<agent>\nID: %s\nName: %s\nLabels: %s\n%s</agent>", agent.id, agent.name, labels,
             instructions.length == 0 ? "" : "Instructions:\n" ~ instructions ~ "\n");
     }
+}
+
+/// Asks an agent to draft a new agent from a person's description of it.
+private enum quickCreatePrompt = import("quick-create-agent.txt");
+
+/// Drafts a new agent from a person's description of it, for the person to
+/// review in the new agent dialog before anything is created. Any agent can
+/// draft one, so the one named Generic is asked first, as the chat offers it
+/// first, and then each task scheduler, since there is always meant to be one.
+class AgentDrafter
+{
+    private AgentRepository agents;
+    private RuntimeRepository runtimes;
+    private DefaultRepository defaults;
+    private PromptParser parser;
+    private AgentPrompt agentPrompt;
+    private RuntimeExecutor executor;
+
+    this(AgentRepository agents, RuntimeRepository runtimes, DefaultRepository defaults, PromptParser parser,
+        AgentPrompt agentPrompt, RuntimeExecutor executor)
+    {
+        this.agents = agents;
+        this.runtimes = runtimes;
+        this.defaults = defaults;
+        this.parser = parser;
+        this.agentPrompt = agentPrompt;
+        this.executor = executor;
+    }
+
+    /**
+     * Has an agent draft a new agent from the description. An agent that fails
+     * to answer, or answers with something that is not a draft, is passed over
+     * for the next.
+     *
+     * Params:
+     *   description = What the person wrote the new agent should do.
+     *
+     * Returns: The draft, as an object with the fields of the new agent dialog,
+     *   or one with only an `error`, a message for the person, when the agent
+     *   found the description too vague or no agent could draft one.
+     */
+    public Json draft(string description)
+    {
+        auto all = agents.all();
+        auto drafters = all.filter!(agent => isGeneric(agent))
+            .chain(all.filter!(agent => agent.taskScheduler && !isGeneric(agent)))
+            .array;
+        if (drafters.length == 0)
+        {
+            return draftError("There is no agent to draft one with. Add an agent named Generic, or a task scheduler.");
+        }
+
+        auto models = runtimes.models();
+        string[string] defaultIds;
+        foreach (entry; defaults.all())
+        {
+            defaultIds[entry.key] = entry.value;
+        }
+
+        string[string] placeholders = [
+            "<agent request>": description.strip,
+            "<default runtime>": defaultIds.get("runtime", ""),
+            "<default model>": defaultIds.get("model", ""),
+            "<default effort>": defaultIds.get("effort", defaultEffort),
+            "<runtime list>": runtimeList(runtimes.all(), models),
+            "<agent list>": all.map!(agent => describe(agent)).join("\n")
+        ];
+        auto prompt = parser.parse(quickCreatePrompt, placeholders, ["agents": all.length > 0]);
+
+        foreach (drafter; drafters)
+        {
+            string answer;
+            try
+            {
+                string noSession;
+                answer = executor.prompt(drafter.id.toString, prompt, false, noSession,
+                    agentPrompt.systemPrompt(drafter, "").strip);
+            }
+            catch (Exception exception)
+            {
+                logError("Agent %s could not draft an agent: %s", drafter.name, exception.msg);
+                continue;
+            }
+
+            auto draft = readDraft(answer, models, defaultIds);
+            if (draft.isNull)
+            {
+                logError("Agent %s answered a request to draft an agent with \"%s\", which is not a draft.",
+                    drafter.name, answer);
+                continue;
+            }
+
+            return draft.get;
+        }
+
+        return draftError("No agent could draft one. The server's log says why.");
+    }
+
+    /// Found by name, as the chat finds it, since it is an ordinary agent with
+    /// nothing else to tell it by.
+    private static bool isGeneric(Agent agent)
+    {
+        return agent.name.toLower == "generic";
+    }
+
+    /// One block per runtime, with a line per model it offers.
+    private static string runtimeList(Runtime[] all, Model[] models)
+    {
+        return all.map!(runtime => format("<runtime>\nID: %s\nName: %s\nModels:\n%s</runtime>", runtime.id,
+                runtime.name, models
+                .filter!(model => model.runtime == runtime.id)
+                .map!(model => format("- ID %s (%s), effort levels: %s\n", model.id, model.name,
+                    model.effortLevels.map!(level => level.id).join(", ")))
+                .join))
+            .join("\n\n");
+    }
+
+    /// An existing agent, by the name it is known by and its labels.
+    private static string describe(Agent agent)
+    {
+        return format("- %s (labels: %s)", agent.name, agent.labels.length == 0 ? "none" : agent.labels.join(", "));
+    }
+}
+
+private Json draftError(string message)
+{
+    auto error = Json.emptyObject;
+    error["error"] = message;
+
+    return error;
+}
+
+/**
+ * Reads an agent's answer to the quick-create prompt.
+ *
+ * Agents are asked for a bare JSON object but often wrap it in a code fence
+ * or a sentence, so the object is taken from between the first `{` and the
+ * last `}`. A runtime, model and effort level that do not go together are
+ * replaced by the defaults, and the labels are made lowercase and unique, so
+ * the dialog shows only what it could save. Whatever else is in the object
+ * is dropped.
+ *
+ * Returns: The draft, or an error object when the agent answered with one, or
+ *   an empty Nullable when the answer is neither.
+ */
+private Nullable!Json readDraft(string answer, Model[] models, string[string] defaultIds)
+{
+    const start = answer.indexOf('{');
+    const end = answer.lastIndexOf('}');
+    if (start < 0 || end < start)
+    {
+        return Nullable!Json.init;
+    }
+
+    Json json;
+    try
+    {
+        json = parseJsonString(answer[start .. end + 1]);
+    }
+    catch (Exception exception)
+    {
+        return Nullable!Json.init;
+    }
+
+    if (json.type != Json.Type.object)
+    {
+        return Nullable!Json.init;
+    }
+
+    string text(string key)
+    {
+        auto value = key in json;
+        return value !is null && value.type == Json.Type.string ? value.get!string.strip : "";
+    }
+
+    if (text("error").length > 0)
+    {
+        return draftError(text("error")).nullable;
+    }
+
+    if (text("name").length == 0)
+    {
+        return Nullable!Json.init;
+    }
+
+    auto runtime = text("runtime");
+    auto modelId = text("model");
+    auto effort = text("effort");
+    auto model = models.find!(m => m.id == modelId && m.runtime == runtime);
+    if (model.length == 0)
+    {
+        runtime = defaultIds.get("runtime", "");
+        modelId = defaultIds.get("model", "");
+        effort = defaultIds.get("effort", defaultEffort);
+    }
+    else if (!model[0].effortLevels.canFind!(level => level.id == effort))
+    {
+        effort = defaultEffort;
+    }
+
+    string[] labels;
+    if (auto list = "labels" in json)
+    {
+        if (list.type == Json.Type.array)
+        {
+            foreach (item; *list)
+            {
+                if (item.type != Json.Type.string)
+                {
+                    continue;
+                }
+
+                auto label = item.get!string.strip.toLower;
+                if (label.length > 0 && !labels.canFind(label))
+                {
+                    labels ~= label;
+                }
+            }
+        }
+    }
+
+    auto scheduler = "taskScheduler" in json;
+
+    auto draft = Json.emptyObject;
+    draft["name"] = text("name");
+    draft["runtime"] = runtime;
+    draft["model"] = modelId;
+    draft["effort"] = effort;
+    draft["instructions"] = text("instructions");
+    draft["labels"] = serializeToJson(labels);
+    draft["taskScheduler"] = scheduler !is null && scheduler.type == Json.Type.bool_ && scheduler.get!bool;
+
+    return draft.nullable;
+}
+
+unittest
+{
+    auto models = [
+        new Model("sonnet", "Claude Sonnet", "claude-code", [
+            new EffortLevel("default", "Default"), new EffortLevel("high", "High")
+        ])
+    ];
+    auto defaultIds = ["runtime": "claude-code", "model": "sonnet", "effort": "default"];
+
+    auto fenced = readDraft("```json\n{\"name\": \" Writer \", \"runtime\": \"claude-code\", \"model\": \"sonnet\","
+            ~ " \"effort\": \"high\", \"labels\": [\"Docs\", \"docs\", \" \", 3], \"taskScheduler\": true}\n```",
+            models, defaultIds);
+    assert(!fenced.isNull);
+    assert(fenced.get["name"].get!string == "Writer");
+    assert(fenced.get["effort"].get!string == "high");
+    assert(fenced.get["labels"].length == 1 && fenced.get["labels"][0].get!string == "docs");
+    assert(fenced.get["taskScheduler"].get!bool);
+    assert(fenced.get["instructions"].get!string == "");
+
+    auto unknown = readDraft(`{"name": "Writer", "runtime": "x", "model": "opus", "effort": "max"}`, models,
+        defaultIds);
+    assert(unknown.get["model"].get!string == "sonnet" && unknown.get["effort"].get!string == "default");
+
+    auto tooHard = readDraft(`{"name": "Writer", "runtime": "claude-code", "model": "sonnet", "effort": "max"}`,
+        models, defaultIds);
+    assert(tooHard.get["model"].get!string == "sonnet" && tooHard.get["effort"].get!string == "default");
+
+    auto error = readDraft(`{"error": "Say what it should do."}`, models, defaultIds);
+    assert(error.get["error"].get!string == "Say what it should do." && "name" !in error.get);
+
+    assert(readDraft("I cannot help with that.", models, defaultIds).isNull);
+    assert(readDraft(`{"name": " "}`, models, defaultIds).isNull);
+    assert(readDraft(`{"name": "Writer"`, models, defaultIds).isNull);
 }

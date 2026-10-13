@@ -7,7 +7,7 @@
    the write has gone through, or sets `error` when it has not.
 
    `add()` opens it on a new agent, with the runtime, model and effort level
-   given as the defaults; `edit()` opens it on an existing one, which adds
+   given as the defaults, or filled in from a draft; `edit()` opens it on an existing one, which adds
    "Delete agent". The models offered are those of the runtime picked, and
    picking another runtime picks its default model, or else its first. The
    effort levels offered are those of the model picked, and picking another
@@ -93,17 +93,24 @@ export class TvAgentDialog extends HTMLElement {
      `defaults` holds the ids a new agent starts from, { runtime, model,
      effort }, any of which may be missing or name nothing that exists. `labels`
      are those to suggest, as { label, agents }, with the number of agents
-     that have each. */
-  add(runtimes, models, defaults, labels) {
+     that have each. `draft`, with the fields of the agent-create event, fills
+     the form in instead of leaving it blank; a runtime, model or effort level
+     in it that is not offered falls back as the defaults do. */
+  add(runtimes, models, defaults, labels, draft = null) {
     this.#open(null, runtimes, models, defaults, labels);
     this.#title.textContent = "New agent";
     this.#save.dataset.label = "Add agent";
-    this.#name.value = "";
-    this.#instructions.value = "";
-    this.#labels.values = [];
-    this.#scheduler.checked = false;
-    this.#pick(this.#runtime, defaults.runtime);
-    this.#fillModels(defaults.model, defaults.effort);
+    this.#name.value = draft?.name ?? "";
+    this.#instructions.value = draft?.instructions ?? "";
+    this.#labels.values = draft?.labels ?? [];
+    this.#scheduler.checked = draft?.taskScheduler ?? false;
+    if (!this.#pick(this.#runtime, draft?.runtime)) {
+      this.#pick(this.#runtime, defaults.runtime);
+    }
+    this.#fillModels(
+      draft?.model ?? defaults.model,
+      draft?.effort ?? defaults.effort,
+    );
     this.#finishOpening();
   }
 
