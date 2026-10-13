@@ -2,8 +2,8 @@
 
    The Taskavista settings screen, for what belongs to the whole app rather
    than to one project. Its one section so far lists the AI agents, each with
-   its runtime and model as a chip apiece (the mockup joins them in one, but
-   the models' real names are too long for that), marks each task
+   its runtime, model and effort level as a chip apiece (the mockup joins
+   them in one, but the models' real names are too long for that), marks each task
    scheduler, and shows its labels, if it has any, under a divider. `show()` hands it the agents, `clear()` empties it.
 
    "+ Add agent" and each agent's "Edit" open a tv-agent-dialog, whose events
@@ -66,8 +66,8 @@ export class TvAppSettings extends HTMLElement {
 
   /* `agents`, `runtimes` and `models` are as their REST endpoints return
      them, and `defaults` holds the default runtime, model and effort level
-     ids as { runtime, model, effort }, for a new agent. An agent's runtime and model are
-     shown by name, or by id if the list has no such entry. */
+     ids as { runtime, model, effort }, for a new agent. An agent's runtime, model and effort
+     level are shown by name, or by id if the lists have no such entry. */
   show(agents, runtimes, models, defaults) {
     this.#runtimes = runtimes;
     this.#models = models;
@@ -86,6 +86,11 @@ export class TvAppSettings extends HTMLElement {
           runtimeNames.get(agent.runtime) ?? agent.runtime;
         item.querySelector(".model").textContent =
           modelNames.get(agent.model) ?? agent.model;
+        item.querySelector(".effort").textContent =
+          models
+            .find((m) => m.id === agent.model)
+            ?.effortLevels.find((e) => e.id === agent.effort)?.name ??
+          agent.effort;
         item.querySelector(".scheduler").hidden = !agent.taskScheduler;
         const labels = item.querySelector(".agent-labels");
         labels.hidden = agent.labels.length === 0;

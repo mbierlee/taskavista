@@ -249,6 +249,7 @@ export class TvAgentChat extends HTMLElement {
         const meta = choice.querySelector(".choice-meta");
         meta.textContent = meta.title = [
           ...this.#describe(agent),
+          this.#effort(agent),
           ...(agent.taskScheduler ? ["Scheduler"] : []),
         ].join(" · ");
         choice.querySelector(".choice-go").textContent = "→";
@@ -320,6 +321,17 @@ export class TvAgentChat extends HTMLElement {
       runtimes.find((r) => r.id === agent.runtime)?.name ?? agent.runtime,
       models.find((m) => m.id === agent.model)?.name ?? agent.model,
     ];
+  }
+
+  /* The agent's effort level by name, or by id if its model has no such
+     entry. The chat itself leaves it out, as the mockup does, and only the
+     agent picker shows it. */
+  #effort(agent) {
+    return (
+      this.#agents.models
+        .find((m) => m.id === agent.model)
+        ?.effortLevels.find((e) => e.id === agent.effort)?.name ?? agent.effort
+    );
   }
 
   /* The panel covers the window below the topbar, which scrolls with the
