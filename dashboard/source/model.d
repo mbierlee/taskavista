@@ -243,6 +243,8 @@ class Agent
     @optional string effort = defaultEffort;
     /// Whether the agent plans and assigns tasks to the other agents.
     @optional bool taskScheduler;
+    /// The agent's own instructions, added to its system prompt. Empty for none.
+    @optional string instructions;
     /// The agent's rows in agent_labels, lowercase, in alphabetical order when read.
     @optional string[] labels;
 
@@ -251,7 +253,7 @@ class Agent
     }
 
     this(UUID id, string name, string runtime, string model, string effort, bool taskScheduler,
-        string[] labels = null) @safe
+        string instructions = null, string[] labels = null) @safe
     {
         this.id = id;
         this.name = name;
@@ -259,6 +261,7 @@ class Agent
         this.model = model;
         this.effort = effort;
         this.taskScheduler = taskScheduler;
+        this.instructions = instructions;
         this.labels = labels;
     }
 }

@@ -93,6 +93,7 @@ create table if not exists agents (
 	model          text not null,
 	effort         text not null default 'default',
 	task_scheduler boolean not null default false,
+	instructions   text not null default '',
 	foreign key (model, runtime) references models (id, runtime),
 	foreign key (model, effort) references model_effort_levels (model, effort_level)
 );

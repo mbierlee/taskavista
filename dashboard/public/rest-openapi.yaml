@@ -591,22 +591,23 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Agent" }
               example:
-                - { id: 70168ba0-e0e2-4248-b48d-4a3f8805b9a9, name: Probe agent 2, runtime: claude-code, model: haiku, effort: default, taskScheduler: true, labels: [] }
-                - { id: 0e41172d-9b6b-454c-89f8-882c3522e77c, name: Task Scheduler, runtime: claude-code, model: sonnet, effort: default, taskScheduler: true, labels: [] }
+                - { id: 08e07761-3ae3-4f59-8f2d-0cc7d9f86b80, name: Probe agent 2, runtime: claude-code, model: haiku, effort: default, taskScheduler: true, instructions: "", labels: [] }
+                - { id: 0e41172d-9b6b-454c-89f8-882c3522e77c, name: Task Scheduler, runtime: claude-code, model: sonnet, effort: default, taskScheduler: true, instructions: "", labels: [] }
         "500": { $ref: "#/components/responses/ServerError" }
     post:
       tags: [Agents]
       operationId: createAgent
       summary: Create an agent
       description: |
-        The body is an agent without an id. `effort`, `taskScheduler` and `labels` may be left out.
+        The body is an agent without an id. `effort`, `taskScheduler`, `instructions` and `labels` may be
+        left out.
         An `id` sent in the body is ignored.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/Agent" }
-            example: { name: Probe agent, runtime: claude-code, model: opus, effort: high, labels: [weekly, reports] }
+            example: { name: Probe agent, runtime: claude-code, model: opus, effort: high, instructions: You write the weekly status report. Keep it under 300 words., labels: [weekly, reports] }
       responses:
         "200":
           description: |
@@ -615,7 +616,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Agent" }
-              example: { id: 70168ba0-e0e2-4248-b48d-4a3f8805b9a9, name: Probe agent, runtime: claude-code, model: opus, effort: high, taskScheduler: false, labels: [weekly, reports] }
+              example: { id: 08e07761-3ae3-4f59-8f2d-0cc7d9f86b80, name: Probe agent, runtime: claude-code, model: opus, effort: high, taskScheduler: false, instructions: You write the weekly status report. Keep it under 300 words., labels: [weekly, reports] }
         "400": { $ref: "#/components/responses/AgentBadRequest" }
         "409": { $ref: "#/components/responses/AgentNameTaken" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -633,7 +634,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Agent" }
-              example: { id: 70168ba0-e0e2-4248-b48d-4a3f8805b9a9, name: Probe agent, runtime: claude-code, model: opus, effort: high, taskScheduler: false, labels: [reports, weekly] }
+              example: { id: 08e07761-3ae3-4f59-8f2d-0cc7d9f86b80, name: Probe agent, runtime: claude-code, model: opus, effort: high, taskScheduler: false, instructions: You write the weekly status report. Keep it under 300 words., labels: [reports, weekly] }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -643,8 +644,8 @@ paths:
       summary: Replace an agent
       description: |
         A full replacement, not a patch: an `effort` left out of the body becomes `default`, a
-        `taskScheduler` left out becomes `false`, and `labels` left out become `[]`, not the values
-        stored. The agent ends up with exactly
+        `taskScheduler` left out becomes `false`, `instructions` left out become `""`, and `labels`
+        left out become `[]`, not the values stored. The agent ends up with exactly
         the labels in the body.
 
         The same 400s and 409 as `POST` apply, except that an agent keeping its own name is not a
@@ -661,7 +662,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Agent" }
-              example: { id: 70168ba0-e0e2-4248-b48d-4a3f8805b9a9, name: Probe agent 2, runtime: claude-code, model: haiku, effort: default, taskScheduler: true, labels: [] }
+              example: { id: 08e07761-3ae3-4f59-8f2d-0cc7d9f86b80, name: Probe agent 2, runtime: claude-code, model: haiku, effort: default, taskScheduler: true, instructions: "", labels: [] }
         "400": { $ref: "#/components/responses/AgentBadRequest" }
         "404":
           description: No agent has that id.
@@ -964,6 +965,13 @@ components:
           type: boolean
           default: false
           description: Whether the agent is a task scheduler, one that plans and assigns tasks to the other agents.
+        instructions:
+          type: string
+          default: ""
+          description: |
+            The agent's own instructions: what it does and how it should work. Free text of any
+            length, kept as sent. `""` for none; left out or `null`, it is `""`.
+          examples: [You write the weekly status report. Keep it under 300 words.]
         labels:
           type: array
           default: []

@@ -891,7 +891,7 @@ class AgentRepository
     Agent[] all()
     {
         QueryParams query;
-        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler from agents order by task_scheduler desc, name";
+        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, instructions from agents order by task_scheduler desc, name";
 
         return client.pickConnection((scope connection) {
             auto answer = connection.execParams(query);
@@ -925,7 +925,7 @@ class AgentRepository
     Nullable!Agent find(UUID id)
     {
         QueryParams query;
-        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler from agents where id = $1";
+        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, instructions from agents where id = $1";
         query.argsVariadic(id);
 
         return client.pickConnection((scope connection) {
@@ -962,8 +962,8 @@ class AgentRepository
     Agent add(Agent agent)
     {
         QueryParams query;
-        query.sqlCommand = "insert into agents (name, runtime, model, effort, task_scheduler) values ($1, $2, $3, $4, $5) returning id";
-        query.argsVariadic(agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler);
+        query.sqlCommand = "insert into agents (name, runtime, model, effort, task_scheduler, instructions) values ($1, $2, $3, $4, $5, $6) returning id";
+        query.argsVariadic(agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler, agent.instructions);
 
         client.pickConnection((scope connection) {
             connection.exec("begin");
@@ -987,8 +987,8 @@ class AgentRepository
     bool update(Agent agent)
     {
         QueryParams query;
-        query.sqlCommand = "update agents set name = $2, runtime = $3, model = $4, effort = $5, task_scheduler = $6 where id = $1 returning id";
-        query.argsVariadic(agent.id, agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler);
+        query.sqlCommand = "update agents set name = $2, runtime = $3, model = $4, effort = $5, task_scheduler = $6, instructions = $7 where id = $1 returning id";
+        query.argsVariadic(agent.id, agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler, agent.instructions);
 
         return client.pickConnection((scope connection) {
             connection.exec("begin");
@@ -1065,7 +1065,8 @@ private Agent toAgent(immutable Row row)
         row["runtime"].as!string,
         row["model"].as!string,
         row["effort"].as!string,
-        row["task_scheduler"].as!bool
+        row["task_scheduler"].as!bool,
+        row["instructions"].as!string
     );
 }
 

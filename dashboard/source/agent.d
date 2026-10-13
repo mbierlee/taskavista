@@ -3,7 +3,7 @@ module agent;
 import vibe.core.file : existsFile, moveFile, writeFileUTF8;
 import vibe.core.path : NativePath;
 import vibe.core.process : ProcessConfig = Config, Redirect, collectOutput, pipeProcess;
-import vibe.core.log : logError;
+import vibe.core.log : logError, logInfo;
 import poodinis : Inject;
 
 import std.algorithm.iteration : filter, map;
@@ -14,14 +14,14 @@ import std.digest.sha : sha256Of;
 import std.file : mkdirRecurse, tempDir;
 import std.format : format;
 import std.path : buildPath;
-import std.string : replace, strip;
+import std.string : strip;
 import std.typecons : Nullable;
 import std.uuid : UUID, randomUUID;
 
 import config : Config, apiUrl;
 import model : Agent, AgentLogEntry, Project, defaultEffort;
 import prompt : PromptParser;
-import repository : AgentLogRepository, AgentRepository;
+import repository : AgentLogRepository, AgentRepository, LaneRepository, ProjectRepository, TaskRepository;
 
 /// The permission mode Claude Code runs in. Auto, since in print mode there is
 /// nobody to answer a permission prompt.
@@ -360,7 +360,8 @@ class AgentHelp
 }
 
 /// The part of a system prompt that every interaction with an agent starts
-/// with, whatever the interaction is: who the agent is, and the API help.
+/// with, whatever the interaction is: who the agent is, its own instructions,
+/// and the API help.
 class AgentPrompt
 {
     private PromptParser parser;
@@ -387,10 +388,11 @@ class AgentPrompt
             "<agent name>": agent.name,
             "<agent id>": agent.id.toString,
             "<agent labels>": agent.labels.join(", "),
+            "<agent instructions>": agent.instructions.strip,
             "<agent help>": help.text
         ];
 
-        const conditions = ["labels": agent.labels.length > 0];
+        const conditions = ["labels": agent.labels.length > 0, "instructions": agent.instructions.strip.length > 0];
 
         return parser.parse(agentPromptTemplate, placeholders, conditions).strip
             ~ "\n\n" ~ interactionPrompt.strip;
@@ -460,27 +462,90 @@ private enum schedulePrompt = import("schedule-tasks.txt");
 class TaskScheduler
 {
     private AgentRepository agents;
+    private TaskRepository tasks;
+    private LaneRepository lanes;
+    private ProjectRepository projects;
+    private PromptParser parser;
+    private AgentPrompt agentPrompt;
 
-    this(AgentRepository agents)
+    this(AgentRepository agents, TaskRepository tasks, LaneRepository lanes, ProjectRepository projects,
+        PromptParser parser, AgentPrompt agentPrompt)
     {
         this.agents = agents;
+        this.tasks = tasks;
+        this.lanes = lanes;
+        this.projects = projects;
+        this.parser = parser;
+        this.agentPrompt = agentPrompt;
     }
 
     public void schedule(UUID taskId)
     {
         // TODO: Deal with paused projects.
-        auto prompt = schedulePrompt.replace("<agents>", agentList());
+        // The task, its lane or its project may be gone by the time it is
+        // scheduled, and then there is nothing to schedule.
+        auto task = tasks.find(taskId);
+        if (task.isNull)
+        {
+            return;
+        }
+
+        auto lane = lanes.find(task.get.laneId);
+        if (lane.isNull)
+        {
+            return;
+        }
+
+        auto project = projects.find(lane.get.projectId);
+        if (project.isNull)
+        {
+            return;
+        }
+
+        auto all = agents.all();
+        auto schedulers = all.filter!(agent => agent.taskScheduler);
+        if (schedulers.empty)
+        {
+            logInfo("Task %s is not scheduled, since there is no task scheduler agent.", taskId);
+            return;
+        }
+
+        string[string] placeholders = [
+            "<project name>": project.get.name,
+            "<project id>": project.get.id.toString,
+            "<lane name>": lane.get.name,
+            "<task description>": task.get.description.strip,
+            "<agent list>": agentList(all)
+        ];
+
+        const bool[string] noConditions;
+        auto prompt = agentPrompt.systemPrompt(schedulers.front,
+            parser.parse(schedulePrompt, placeholders, noConditions));
+        // TODO: Temporary, for debugging the prompt. Remove once it is sent, with
+        // the agent prompt as its system prompt rather than ahead of it.
+        logInfo("Scheduler prompt for task %s:\n%s", taskId, prompt);
         // TODO: send the prompt to a task scheduler agent for pick-up
     }
 
-    /// One line per agent that can be given a task. Schedulers are left out,
+    /// One block per agent that can be given a task, set apart by tags since an
+    /// agent's instructions run over several lines. Schedulers are left out,
     /// since they hand out tasks rather than work on them.
-    private string agentList()
+    private static string agentList(Agent[] all)
     {
-        return agents.all()
+        return all
             .filter!(agent => !agent.taskScheduler)
-            .map!(agent => format("- ID: %s, name: %s, labels: %s", agent.id, agent.name,
-                    agent.labels.length == 0 ? "none" : agent.labels.join(", ")))
-            .join("\n");
+            .map!(agent => describe(agent))
+            .join("\n\n");
+    }
+
+    /// An agent as the scheduler sees it. Labels are always given, as "none" when
+    /// there are none, while instructions are left out when there are none.
+    private static string describe(Agent agent)
+    {
+        auto labels = agent.labels.length == 0 ? "none" : agent.labels.join(", ");
+        auto instructions = agent.instructions.strip;
+
+        return format("<agent>\nID: %s\nName: %s\nLabels: %s\n%s</agent>", agent.id, agent.name, labels,
+            instructions.length == 0 ? "" : "Instructions:\n" ~ instructions ~ "\n");
     }
 }

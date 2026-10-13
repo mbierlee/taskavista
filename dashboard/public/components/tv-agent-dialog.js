@@ -1,8 +1,8 @@
 /* <tv-agent-dialog></tv-agent-dialog>
 
    The modal dialog an AI agent is added or edited in: its name, runtime,
-   model, effort level, labels (a tv-chip-list, suggesting the labels other agents have)
-   and whether it is a task scheduler. It writes nothing itself: it
+   model, effort level, instructions, labels (a tv-chip-list, suggesting the
+   labels other agents have) and whether it is a task scheduler. It writes nothing itself: it
    reports what was asked for and stays open, so the caller closes it once
    the write has gone through, or sets `error` when it has not.
 
@@ -15,8 +15,8 @@
    level, or else its first.
 
    Events (bubbling and composed):
-     agent-create  detail { name, runtime, model, effort, labels, taskScheduler }
-     agent-save    detail { id, name, runtime, model, effort, labels, taskScheduler }
+     agent-create  detail { name, runtime, model, effort, instructions, labels, taskScheduler }
+     agent-save    detail { id, name, runtime, model, effort, instructions, labels, taskScheduler }
      agent-delete  detail { id } */
 
 import { attachTemplate, loadTemplate } from "./template.js";
@@ -34,6 +34,7 @@ export class TvAgentDialog extends HTMLElement {
   #runtime;
   #model;
   #effort;
+  #instructions;
   #labels;
   #scheduler;
   #error;
@@ -58,6 +59,7 @@ export class TvAgentDialog extends HTMLElement {
     this.#runtime = root.querySelector(".runtime");
     this.#model = root.querySelector(".model");
     this.#effort = root.querySelector(".effort");
+    this.#instructions = root.querySelector(".instructions");
     this.#labels = root.querySelector(".labels");
     this.#scheduler = root.querySelector(".scheduler");
     this.#error = root.querySelector(".error");
@@ -97,6 +99,7 @@ export class TvAgentDialog extends HTMLElement {
     this.#title.textContent = "New agent";
     this.#save.dataset.label = "Add agent";
     this.#name.value = "";
+    this.#instructions.value = "";
     this.#labels.values = [];
     this.#scheduler.checked = false;
     this.#pick(this.#runtime, defaults.runtime);
@@ -137,6 +140,7 @@ export class TvAgentDialog extends HTMLElement {
     this.#title.textContent = "Edit agent";
     this.#save.dataset.label = "Save";
     this.#name.value = agent.name;
+    this.#instructions.value = agent.instructions;
     this.#labels.values = agent.labels;
     this.#scheduler.checked = agent.taskScheduler;
     this.#pick(this.#runtime, agent.runtime);
@@ -245,6 +249,7 @@ export class TvAgentDialog extends HTMLElement {
       runtime: this.#runtime.value,
       model: this.#model.value,
       effort: this.#effort.value,
+      instructions: this.#instructions.value.trim(),
       labels: this.#labels.values,
       taskScheduler: this.#scheduler.checked,
     };

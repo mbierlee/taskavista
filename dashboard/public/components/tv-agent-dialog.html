@@ -58,6 +58,16 @@
     font-size: 14px;
   }
 
+  .instructions {
+    display: block;
+    min-height: 92px;
+    max-height: 50vh;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-2);
+    resize: vertical;
+  }
+
   /* A native select, for its keyboard handling and its list, with the
      mockup's ▼ drawn over where the browser's arrow was. */
   .select {
@@ -170,6 +180,14 @@
       <label class="row">
         <span class="row-label">Effort</span>
         <span class="select"><select class="field effort"></select></span>
+      </label>
+
+      <label class="row">
+        <span class="row-label">Instructions</span>
+        <textarea
+          class="field instructions"
+          placeholder="Describe what this agent does and how it should work…"
+        ></textarea>
       </label>
 
       <label class="row">

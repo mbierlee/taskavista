@@ -12,8 +12,8 @@
    write was refused; `dialogSaving` holds the dialog while it is under way.
 
    Events (bubbling and composed), from the dialog:
-     agent-create  detail { name, runtime, model, effort, labels, taskScheduler }
-     agent-save    detail { id, name, runtime, model, effort, labels, taskScheduler }
+     agent-create  detail { name, runtime, model, effort, instructions, labels, taskScheduler }
+     agent-save    detail { id, name, runtime, model, effort, instructions, labels, taskScheduler }
      agent-delete  detail { id } */
 
 import { attachTemplate, loadTemplate } from "./template.js";
