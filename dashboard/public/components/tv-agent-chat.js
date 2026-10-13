@@ -233,7 +233,9 @@ export class TvAgentChat extends HTMLElement {
   }
 
   /* Every agent is offered, in the order the settings list them, whether
-     or not it is in a chat already: picking it starts another. */
+     or not it is in a chat already: picking it starts another. The one
+     named "Generic" comes first, found by its name rather than its id, so
+     it still does when it is deleted and added again. */
   #renderPicker() {
     this.#compose.setAttribute("disabled", "");
     this.#compose.setAttribute("label", "Message");
@@ -241,8 +243,10 @@ export class TvAgentChat extends HTMLElement {
     this.#send.disabled = true;
 
     const { status, list } = this.#agents;
+    const isGeneric = (agent) => agent.name.toLowerCase() === "generic";
+    const ordered = [...list.filter(isGeneric), ...list.filter((a) => !isGeneric(a))];
     this.#choices.replaceChildren(
-      ...list.map((agent) => {
+      ...ordered.map((agent) => {
         const choice =
           this.#choiceTemplate.content.firstElementChild.cloneNode(true);
         choice.querySelector(".choice-name").textContent = agent.name;
