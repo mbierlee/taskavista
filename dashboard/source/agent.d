@@ -1,5 +1,6 @@
 module agent;
 
+import vibe.core.core : runTask;
 import vibe.core.file : existsFile, moveFile, writeFileUTF8;
 import vibe.core.path : NativePath;
 import vibe.core.process : ProcessConfig = Config, Redirect, collectOutput, pipeProcess;
@@ -14,7 +15,7 @@ import std.digest.sha : sha256Of;
 import std.file : mkdirRecurse, tempDir;
 import std.format : format;
 import std.path : buildPath;
-import std.string : strip;
+import std.string : strip, toLower;
 import std.typecons : Nullable;
 import std.uuid : UUID, randomUUID;
 
@@ -467,9 +468,10 @@ class TaskScheduler
     private ProjectRepository projects;
     private PromptParser parser;
     private AgentPrompt agentPrompt;
+    private RuntimeExecutor executor;
 
     this(AgentRepository agents, TaskRepository tasks, LaneRepository lanes, ProjectRepository projects,
-        PromptParser parser, AgentPrompt agentPrompt)
+        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor)
     {
         this.agents = agents;
         this.tasks = tasks;
@@ -477,9 +479,26 @@ class TaskScheduler
         this.projects = projects;
         this.parser = parser;
         this.agentPrompt = agentPrompt;
+        this.executor = executor;
     }
 
+    /// Has the scheduler agent choose an agent for the task, in the background,
+    /// since the request that added the task should not wait on an agent.
     public void schedule(UUID taskId)
+    {
+        runTask(() nothrow {
+            try
+            {
+                choose(taskId);
+            }
+            catch (Exception e)
+            {
+                logError("Scheduling task %s failed: %s", taskId, e.msg);
+            }
+        });
+    }
+
+    private void choose(UUID taskId)
     {
         // TODO: Deal with paused projects.
         // The task, its lane or its project may be gone by the time it is
@@ -507,6 +526,7 @@ class TaskScheduler
         if (schedulers.empty)
         {
             logInfo("Task %s is not scheduled, since there is no task scheduler agent.", taskId);
+            tasks.recordNoScheduler(taskId);
             return;
         }
 
@@ -519,12 +539,44 @@ class TaskScheduler
         ];
 
         const bool[string] noConditions;
-        auto prompt = agentPrompt.systemPrompt(schedulers.front,
-            parser.parse(schedulePrompt, placeholders, noConditions));
-        // TODO: Temporary, for debugging the prompt. Remove once it is sent, with
-        // the agent prompt as its system prompt rather than ahead of it.
-        logInfo("Scheduler prompt for task %s:\n%s", taskId, prompt);
-        // TODO: send the prompt to a task scheduler agent for pick-up
+        auto scheduler = schedulers.front;
+        auto prompt = parser.parse(schedulePrompt, placeholders, noConditions);
+        auto systemPrompt = agentPrompt.systemPrompt(scheduler, "").strip;
+
+        // Caught here rather than by schedule, so the log says which scheduler failed.
+        string answer;
+        try
+        {
+            string noSession;
+            answer = executor.prompt(scheduler.id.toString, prompt, false, noSession, systemPrompt).strip;
+        }
+        catch (Exception e)
+        {
+            logError("Scheduler %s failed on task %s: %s", scheduler.name, taskId, e.msg);
+            tasks.recordSchedulingFailure(taskId, scheduler.id);
+            return;
+        }
+
+        Nullable!UUID chosen;
+        if (answer != "none")
+        {
+            auto matches = all.filter!(agent => !agent.taskScheduler && agent.id.toString == answer.toLower);
+            if (matches.empty)
+            {
+                logError("Scheduler %s answered task %s with \"%s\", which is not an agent it could choose.",
+                    scheduler.name, taskId, answer);
+                tasks.recordSchedulingFailure(taskId, scheduler.id);
+                return;
+            }
+
+            chosen = matches.front.id;
+        }
+
+        tasks.assignAiAgent(taskId, chosen);
+        if (chosen.isNull)
+        {
+            tasks.recordNoAgentFound(taskId, scheduler.id);
+        }
     }
 
     /// One block per agent that can be given a task, set apart by tags since an

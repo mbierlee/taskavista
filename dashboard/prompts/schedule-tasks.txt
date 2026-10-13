@@ -34,4 +34,5 @@ the task: the server gives it to the agent you choose.
 
 Answer with the chosen agent's ID, exactly as listed, and nothing else: no name, no
 explanation, no quotes or other markup. If none of the agents can do the task, or there
-are no agents listed, answer none.
+are no agents listed, answer with the word none instead, rather than leaving the answer
+empty.

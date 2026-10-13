@@ -33,31 +33,6 @@ create table if not exists lanes (
 	unique (project_id, position) deferrable initially immediate
 );
 
-create table if not exists tasks (
-	id          uuid primary key default gen_random_uuid(),
-	lane_id     uuid not null references lanes (id) on delete cascade,
-	description text not null check (length(trim(description)) > 0),
-	position    integer not null check (position >= 0),
-	created_at  timestamptz not null default now(),
-	-- Set by the application rather than a trigger, so that the tasks shifted
-	-- to make room for a moved one do not count as updated.
-	updated_at  timestamptz not null default now(),
-	-- Deferrable so tasks can swap positions inside one transaction.
-	unique (lane_id, position) deferrable initially immediate
-);
-
-create table if not exists task_history (
-	id         uuid primary key default gen_random_uuid(),
-	task_id    uuid not null references tasks (id) on delete cascade,
-	changed_at timestamptz not null default now(),
-	change     text not null check (length(trim(change)) > 0),
-	-- The colour the task's lane had when the change put it there, copied like
-	-- the lane names in change. Null for a change that left the task in its lane.
-	lane_color text check (lane_color ~ '^#[0-9a-f]{6}$')
-);
-
-create index if not exists task_history_task_id on task_history (task_id, changed_at);
-
 create table if not exists runtimes (
 	id   text primary key check (length(trim(id)) > 0),
 	name text not null unique check (length(trim(name)) > 0)
@@ -115,6 +90,32 @@ create table if not exists agent_log (
 
 create index if not exists agent_log_agent_id on agent_log (agent_id, created_at);
 
+create table if not exists tasks (
+	id                   uuid primary key default gen_random_uuid(),
+	lane_id              uuid not null references lanes (id) on delete cascade,
+	description          text not null check (length(trim(description)) > 0),
+	position             integer not null check (position >= 0),
+	created_at           timestamptz not null default now(),
+	-- Set by the application rather than a trigger, so that the tasks shifted
+	-- to make room for a moved one do not count as updated.
+	updated_at           timestamptz not null default now(),
+	assigned_ai_agent_id uuid references agents (id) on delete set null,
+	-- Deferrable so tasks can swap positions inside one transaction.
+	unique (lane_id, position) deferrable initially immediate
+);
+
+create table if not exists task_history (
+	id         uuid primary key default gen_random_uuid(),
+	task_id    uuid not null references tasks (id) on delete cascade,
+	changed_at timestamptz not null default now(),
+	change     text not null check (length(trim(change)) > 0),
+	-- The colour the task's lane had when the change put it there, copied like
+	-- the lane names in change. Null for a change that left the task in its lane.
+	lane_color text check (lane_color ~ '^#[0-9a-f]{6}$')
+);
+
+create index if not exists task_history_task_id on task_history (task_id, changed_at);
+
 create table if not exists defaults (
 	key   text primary key check (length(trim(key)) > 0),
 	-- Text, and no foreign key, since a value may be an id from any table or
@@ -163,8 +164,14 @@ insert into model_effort_levels (model, effort_level)
 	select model, 'ultracode' from model_effort_levels where effort_level = 'xhigh'
 	on conflict (model, effort_level) do nothing;
 
-insert into agents (name, runtime, model, task_scheduler)
-	values ('Task Scheduler', 'claude-code', 'sonnet', true)
+insert into agents (name, runtime, model, effort, task_scheduler)
+	values ('Task Scheduler', 'claude-code', 'sonnet', 'default', true)
+	on conflict (name) do nothing;
+
+insert into agents (name, runtime, model, effort, instructions)
+	values ('Generic', 'claude-code', 'sonnet', 'default',
+		'You are a general-purpose assistant for whatever the person asks of you, such as '
+		|| 'managing their projects, lanes and tasks.')
 	on conflict (name) do nothing;
 
 insert into defaults (key, value) values

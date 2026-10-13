@@ -668,6 +668,96 @@ class TaskRepository
         });
     }
 
+    /// Assigns the task to an AI agent, or to none when `agentId` is null, and
+    /// adds the assignment to its history when it puts the task with another
+    /// agent. False when no row has that id.
+    bool assignAiAgent(UUID id, Nullable!UUID agentId)
+    {
+        return client.pickConnection((scope connection) {
+            connection.exec("begin");
+            scope (failure)
+            {
+                connection.exec("rollback");
+            }
+
+            QueryParams current;
+            current.sqlCommand = "select assigned_ai_agent_id from tasks where id = $1 for update";
+            current.argsVariadic(id);
+            auto answer = connection.execParams(current);
+            if (answer.length == 0)
+            {
+                connection.exec("rollback");
+                return false;
+            }
+            auto old = answer[0]["assigned_ai_agent_id"];
+            const unchanged = old.isNull ? agentId.isNull : !agentId.isNull && old.as!UUID == agentId.get;
+
+            QueryParams write;
+            if (agentId.isNull)
+            {
+                write.sqlCommand = "update tasks set assigned_ai_agent_id = null, updated_at = now() where id = $1";
+                write.argsVariadic(id);
+            }
+            else
+            {
+                write.sqlCommand = "update tasks set assigned_ai_agent_id = $2, updated_at = now() where id = $1";
+                write.argsVariadic(id, agentId.get);
+            }
+            connection.execParams(write);
+
+            if (!unchanged && !agentId.isNull)
+            {
+                QueryParams assigned;
+                assigned.sqlCommand = recordAssignment;
+                assigned.argsVariadic(id, agentId.get);
+                connection.execParams(assigned);
+            }
+
+            connection.exec("commit");
+            return true;
+        });
+    }
+
+    /// Adds to the task's history that its scheduler failed to assign it to an
+    /// agent. Adds nothing when the task or the scheduler is gone.
+    void recordSchedulingFailure(UUID id, UUID schedulerId)
+    {
+        recordScheduling(id, schedulerId, `Scheduling by "%s" failed`);
+    }
+
+    /// Adds to the task's history that its scheduler found no agent for it.
+    /// Adds nothing when the task or the scheduler is gone.
+    void recordNoAgentFound(UUID id, UUID schedulerId)
+    {
+        recordScheduling(id, schedulerId, `Not assigned, since "%s" found no agent for it`);
+    }
+
+    /// Adds to the task's history that there was no task scheduler agent to
+    /// assign it. Adds nothing when the task is gone.
+    void recordNoScheduler(UUID id)
+    {
+        QueryParams query;
+        query.sqlCommand = "insert into task_history (task_id, change)"
+            ~ " select id, 'Not assigned, since there is no task scheduler agent' from tasks where id = $1";
+        query.argsVariadic(id);
+
+        client.pickConnection((scope connection) {
+            connection.execParams(query);
+        });
+    }
+
+    /// `change` is a format for SQL's format(), with the scheduler's name as its one %s.
+    private void recordScheduling(UUID id, UUID schedulerId, string change)
+    {
+        QueryParams query;
+        query.sqlCommand = recordSchedulingOutcome;
+        query.argsVariadic(id, schedulerId, change);
+
+        client.pickConnection((scope connection) {
+            connection.execParams(query);
+        });
+    }
+
     /// Deletes the task with this id. False when no row had it.
     bool remove(UUID id)
     {
@@ -682,9 +772,9 @@ class TaskRepository
 }
 
 /* The task_history entries, written in the same transaction as the change.
-   The lane names are copied into the text, and the colour of the lane the
-   task went into alongside it, so an entry still reads right after a lane is
-   renamed, recoloured or deleted. A move within a lane is not recorded. */
+   The lane and agent names are copied into the text, and the colour of the
+   lane the task went into alongside it, so an entry still reads right after a
+   lane or agent is renamed, recoloured or deleted. A move within a lane is not recorded. */
 
 /// $1 is the task, which must already be stored.
 private enum recordCreated = "insert into task_history (task_id, change, lane_color)"
@@ -696,6 +786,16 @@ private enum recordLaneChange = "insert into task_history (task_id, change, lane
 
 /// $1 is the task.
 private enum recordDescriptionChange = "insert into task_history (task_id, change) values ($1, 'Description changed')";
+
+/// $1 is the task and $2 the AI agent it is now assigned to.
+private enum recordAssignment = "insert into task_history (task_id, change)"
+    ~ " select $1, format('Assigned to \"%s\"', name) from agents where id = $2";
+
+/// $1 is the task, $2 the scheduler agent that tried to assign it, and $3 the
+/// change, a format with the scheduler's name as its one %s. A join rather than
+/// values, so a task deleted while it was being scheduled gets nothing.
+private enum recordSchedulingOutcome = "insert into task_history (task_id, change)"
+    ~ " select t.id, format($3, a.name) from tasks t, agents a where t.id = $1 and a.id = $2";
 
 /// Thrown by a task write whose place in its lane clashes with the lane as it
 /// stands once locked, which a check made before the write cannot rule out.
