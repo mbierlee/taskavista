@@ -7,10 +7,7 @@
 			"command": "dub",
 			"args": ["run"],
 			"options": {
-				"cwd": "${workspaceFolder}/dashboard",
-				"env": {
-					"PATH": "${env:HOME}/dlang/dmd-2.112.1/linux/bin64:${env:HOME}/dlang/ldc2-1.42.0/bin:${env:PATH}"
-				}
+				"cwd": "${workspaceFolder}/dashboard"
 			},
 			"group": {
 				"kind": "build",
@@ -40,10 +37,7 @@
 			"command": "dub",
 			"args": ["build"],
 			"options": {
-				"cwd": "${workspaceFolder}/dashboard",
-				"env": {
-					"PATH": "${env:HOME}/dlang/dmd-2.112.1/linux/bin64:${env:HOME}/dlang/ldc2-1.42.0/bin:${env:PATH}"
-				}
+				"cwd": "${workspaceFolder}/dashboard"
 			},
 			"group": "build",
 			"presentation": {
@@ -69,10 +63,7 @@
 			"command": "dub",
 			"args": ["test"],
 			"options": {
-				"cwd": "${workspaceFolder}/dashboard",
-				"env": {
-					"PATH": "${env:HOME}/dlang/dmd-2.112.1/linux/bin64:${env:HOME}/dlang/ldc2-1.42.0/bin:${env:PATH}"
-				}
+				"cwd": "${workspaceFolder}/dashboard"
 			},
 			"group": {
 				"kind": "test",
