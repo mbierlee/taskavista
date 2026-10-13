@@ -4,7 +4,7 @@ Taskavista is a task board: a project holds lanes, lanes hold task cards. It is 
 the board screen is a working prototype and the pieces behind it are still going in.
 
 - `dashboard/` — a D / vibe.d HTTP server that serves the web UI out of `public/`. It also
-  holds `sql/init.sql`, the whole schema — `projects`, their `lanes`, the `tasks` in them, each task's `task_history`, the fixed `runtimes` and their `models`, the fixed `effort_levels` and which of them each model takes (`model_effort_levels`), the `agents` that run on them and their `agent_labels`, and the `defaults`, a value per key — which it applies on
+  holds `sql/init.sql`, the whole schema — `projects`, their `lanes`, the `tasks` in them, each task's `task_notes`, the fixed `runtimes` and their `models`, the fixed `effort_levels` and which of them each model takes (`model_effort_levels`), the `agents` that run on them and their `agent_labels`, and the `defaults`, a value per key — which it applies on
   start-up when the database is still completely empty.
 - `docker/` — postgres 18 and pgadmin.
 - `mock-data.sql` — sample rows, applied by hand; nothing runs it automatically.
@@ -16,7 +16,7 @@ and `docs/rpc-api.md`),
 and the board shows each task as a `tv-card`. Cards can be dragged within a lane or to another
 lane, and tasks added from a lane's "+ Add a task", both saved through the API. Clicking a card
 opens the task details panel over the board, with the task's lane (which it can be moved out of),
-its description, which can be edited there, and its history, and a button that deletes the task. A project's
+its description, which can be edited there, and its notes, and a button that deletes the task. A project's
 name, add-task rule and lanes are edited on its settings screen (`/projects/:slug/settings`),
 and a project is created on the same screen in its new-project mode (`/projects/new`).
 The Taskavista settings screen (`/settings`, the topbar's ⚙) lists the AI agents, and adds,

@@ -81,7 +81,7 @@ page's writes would draw back the state from before the write, and drawing a lan
 would end the drag.
 
 The details panel follows its task: it closes if the task was deleted, and if the task moved or
-its description changed, it shows that and fetches the history again. An edit that is still being
+its description changed, it shows that and fetches the notes again. An edit that is still being
 typed in the panel is overwritten if the description changes elsewhere.
 
 When the project list changes, a project that did not change keeps the object it had. The board

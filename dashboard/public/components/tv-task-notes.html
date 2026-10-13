@@ -39,12 +39,12 @@
     border-radius: 50%;
     background: var(--dot);
   }
-  /* A change that left the task in its lane has no lane colour to show. */
+  /* A note on anything but the task going into a lane has no lane colour to show. */
   .entry[no-lane]::after {
     border: 2px solid var(--muted);
     background: var(--surface-1);
   }
-  .change {
+  .note {
     font-size: 14px;
     color: var(--text-2);
     overflow-wrap: anywhere;
@@ -54,11 +54,11 @@
     color: var(--muted);
   }
 
-  .note {
+  .status {
     font-size: 14px;
     color: var(--muted);
   }
 </style>
 
 <ol class="entries"></ol>
-<div class="note" hidden></div>
+<div class="status" hidden></div>

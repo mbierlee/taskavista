@@ -212,9 +212,9 @@ async function moveTask(taskId, laneId, before) {
         beforeTaskId: before,
       }),
     );
-    /* A move to another lane is a new entry in the task's history. */
+    /* A move to another lane is a new note on the task. */
     if (to !== from && openTaskId === taskId) {
-      loadHistory(taskId);
+      loadNotes(taskId);
     }
   } catch (error) {
     console.error(`Could not move the task ${taskId}:`, error);
@@ -258,9 +258,9 @@ async function addTask(laneId, description) {
 /* The task open in the details panel, or null while it is closed. */
 let openTaskId = null;
 
-/* Counts history requests, so a slow one cannot land on the panel after it
+/* Counts notes requests, so a slow one cannot land on the panel after it
    has been closed, or switched to another task. */
-let historyRequest = 0;
+let notesRequest = 0;
 
 function openTask(taskId) {
   const entry = laneOf(taskId);
@@ -274,7 +274,7 @@ function openTask(taskId) {
     entry.tasks.find((t) => t.id === taskId),
     [...board.lanes.values()].map((e) => e.lane),
   );
-  loadHistory(taskId);
+  loadNotes(taskId);
 }
 
 /* The panel has already closed itself. A card re-rendered while it was open
@@ -318,7 +318,7 @@ async function editTask(taskId, description) {
       return sendJson("PUT", url, { ...stored, description });
     });
     if (openTaskId === taskId) {
-      loadHistory(taskId);
+      loadNotes(taskId);
     }
   } catch (error) {
     console.error(`Could not save the description of the task ${taskId}:`, error);
@@ -398,20 +398,20 @@ function cardOf(taskId) {
   return null;
 }
 
-async function loadHistory(taskId) {
-  const request = ++historyRequest;
-  const current = () => request === historyRequest && openTaskId === taskId;
+async function loadNotes(taskId) {
+  const request = ++notesRequest;
+  const current = () => request === notesRequest && openTaskId === taskId;
   try {
-    const history = await fetchJson(
-      `/api/rest/v1/tasks/${encodeURIComponent(taskId)}/history`,
+    const notes = await fetchJson(
+      `/api/rest/v1/tasks/${encodeURIComponent(taskId)}/notes`,
     );
     if (current()) {
-      detailsEl.history = history;
+      detailsEl.notes = notes;
     }
   } catch (error) {
-    console.error(`Could not load the history of the task ${taskId}:`, error);
+    console.error(`Could not load the notes of the task ${taskId}:`, error);
     if (current()) {
-      detailsEl.historyError = "The history could not be loaded.";
+      detailsEl.notesError = "The notes could not be loaded.";
     }
   }
 }
@@ -1211,7 +1211,7 @@ async function refreshLanes(shown) {
       laneOf(open.id).tasks.find((t) => t.id === open.id),
       lanes,
     );
-    loadHistory(open.id);
+    loadNotes(open.id);
   } else {
     showOpenTask(open);
   }
@@ -1224,8 +1224,8 @@ function openTaskSnapshot() {
   return task ? { id: task.id, laneId: task.laneId, description: task.description } : null;
 }
 
-/* The panel follows the open task, and closes if it has gone. Its history
-   is fetched again for any change, since every change is an entry in it. */
+/* The panel follows the open task, and closes if it has gone. Its notes
+   are fetched again for any change, since every change is a note on it. */
 function showOpenTask(open) {
   if (!open || openTaskId !== open.id) {
     return;
@@ -1240,7 +1240,7 @@ function showOpenTask(open) {
   }
   detailsEl.laneId = task.laneId;
   detailsEl.description = task.description;
-  loadHistory(task.id);
+  loadNotes(task.id);
 }
 
 /* The whole list, since the server decides its order, which a rename

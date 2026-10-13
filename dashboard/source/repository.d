@@ -7,7 +7,7 @@ import std.format : format;
 import std.typecons : Nullable, nullable;
 import std.uuid : UUID;
 
-import model : Agent, AgentLogEntry, Default, EffortLevel, Lane, Model, Project, Runtime, Task, TaskAddRule, TaskHistoryEntry,
+import model : Agent, AgentLogEntry, Default, EffortLevel, Lane, Model, Project, Runtime, Task, TaskAddRule, TaskNote,
     toTaskAddRule;
 
 /// The assignment to ai_paused in an update that sets managed_by_ai to $5. A
@@ -440,29 +440,29 @@ class TaskRepository
         });
     }
 
-    /// The task's history, newest first. Empty both for a task with none and
+    /// The task's notes, newest first. Empty both for a task with none and
     /// for no task at all.
-    TaskHistoryEntry[] history(UUID taskId)
+    TaskNote[] notes(UUID taskId)
     {
         QueryParams query;
-        query.sqlCommand = "select id, changed_at, change, lane_color from task_history"
-            ~ " where task_id = $1 order by changed_at desc";
+        query.sqlCommand = "select id, inserted_at, note, lane_color from task_notes"
+            ~ " where task_id = $1 order by inserted_at desc";
         query.argsVariadic(taskId);
 
         return client.pickConnection((scope connection) {
             auto answer = connection.execParams(query);
 
-            TaskHistoryEntry[] entries;
+            TaskNote[] entries;
             entries.reserve(answer.length);
 
             foreach (index; 0 .. answer.length)
             {
                 auto row = answer[index];
                 auto color = row["lane_color"];
-                entries ~= new TaskHistoryEntry(
+                entries ~= new TaskNote(
                     row["id"].as!UUID,
-                    row["changed_at"].as!SysTime,
-                    row["change"].as!string,
+                    row["inserted_at"].as!SysTime,
+                    row["note"].as!string,
                     color.isNull ? Nullable!string.init : color.as!string.nullable
                 );
             }
@@ -516,7 +516,7 @@ class TaskRepository
         });
     }
 
-    /// Inserts the task, with its creation in its history, and fills in the
+    /// Inserts the task, with its creation in its notes, and fills in the
     /// id the database assigned it, and its position when it carries none.
     /// Returns the same instance, so it can be used as an expression.
     ///
@@ -549,7 +549,7 @@ class TaskRepository
     }
 
     /// Writes the task back over the row with its id, lane included, and adds
-    /// a change of lane or description to its history. A task carrying no
+    /// a change of lane or description to its notes. A task carrying no
     /// position goes to the bottom of its lane, and is given that position.
     /// False when no row has that id, in which case nothing was written.
     ///
@@ -603,7 +603,7 @@ class TaskRepository
     }
 
     /// Puts the task in lane `laneId` just above `before`, or at the bottom
-    /// for UUID.init, and adds a change of lane to its history. The position
+    /// for UUID.init, and adds a change of lane to its notes. The position
     /// constraint is deferred to the commit, since the shift can briefly give
     /// two tasks the same position.
     ///
@@ -669,7 +669,7 @@ class TaskRepository
     }
 
     /// Assigns the task to an AI agent, or to none when `agentId` is null, and
-    /// adds the assignment to its history when it puts the task with another
+    /// adds the assignment to its notes when it puts the task with another
     /// agent. False when no row has that id.
     bool assignAiAgent(UUID id, Nullable!UUID agentId)
     {
@@ -718,26 +718,26 @@ class TaskRepository
         });
     }
 
-    /// Adds to the task's history that its scheduler failed to assign it to an
+    /// Adds to the task's notes that its scheduler failed to assign it to an
     /// agent. Adds nothing when the task or the scheduler is gone.
     void recordSchedulingFailure(UUID id, UUID schedulerId)
     {
         recordScheduling(id, schedulerId, `Scheduling by "%s" failed`);
     }
 
-    /// Adds to the task's history that its scheduler found no agent for it.
+    /// Adds to the task's notes that its scheduler found no agent for it.
     /// Adds nothing when the task or the scheduler is gone.
     void recordNoAgentFound(UUID id, UUID schedulerId)
     {
         recordScheduling(id, schedulerId, `Not assigned, since "%s" found no agent for it`);
     }
 
-    /// Adds to the task's history that there was no task scheduler agent to
+    /// Adds to the task's notes that there was no task scheduler agent to
     /// assign it. Adds nothing when the task is gone.
     void recordNoScheduler(UUID id)
     {
         QueryParams query;
-        query.sqlCommand = "insert into task_history (task_id, change)"
+        query.sqlCommand = "insert into task_notes (task_id, note)"
             ~ " select id, 'Not assigned, since there is no task scheduler agent' from tasks where id = $1";
         query.argsVariadic(id);
 
@@ -746,12 +746,12 @@ class TaskRepository
         });
     }
 
-    /// `change` is a format for SQL's format(), with the scheduler's name as its one %s.
-    private void recordScheduling(UUID id, UUID schedulerId, string change)
+    /// `note` is a format for SQL's format(), with the scheduler's name as its one %s.
+    private void recordScheduling(UUID id, UUID schedulerId, string note)
     {
         QueryParams query;
         query.sqlCommand = recordSchedulingOutcome;
-        query.argsVariadic(id, schedulerId, change);
+        query.argsVariadic(id, schedulerId, note);
 
         client.pickConnection((scope connection) {
             connection.execParams(query);
@@ -771,30 +771,30 @@ class TaskRepository
     }
 }
 
-/* The task_history entries, written in the same transaction as the change.
+/* The task_notes rows, written in the same transaction as the change.
    The lane and agent names are copied into the text, and the colour of the
-   lane the task went into alongside it, so an entry still reads right after a
+   lane the task went into alongside it, so a note still reads right after a
    lane or agent is renamed, recoloured or deleted. A move within a lane is not recorded. */
 
 /// $1 is the task, which must already be stored.
-private enum recordCreated = "insert into task_history (task_id, change, lane_color)"
+private enum recordCreated = "insert into task_notes (task_id, note, lane_color)"
     ~ " select t.id, format('Created in \"%s\"', l.name), l.color from tasks t join lanes l on l.id = t.lane_id where t.id = $1";
 
 /// $1 is the task, $2 the lane it left and $3 the lane it is now in.
-private enum recordLaneChange = "insert into task_history (task_id, change, lane_color)"
+private enum recordLaneChange = "insert into task_notes (task_id, note, lane_color)"
     ~ " select $1, format('Moved from \"%s\" to \"%s\"', f.name, t.name), t.color from lanes f, lanes t where f.id = $2 and t.id = $3";
 
 /// $1 is the task.
-private enum recordDescriptionChange = "insert into task_history (task_id, change) values ($1, 'Description changed')";
+private enum recordDescriptionChange = "insert into task_notes (task_id, note) values ($1, 'Description changed')";
 
 /// $1 is the task and $2 the AI agent it is now assigned to.
-private enum recordAssignment = "insert into task_history (task_id, change)"
+private enum recordAssignment = "insert into task_notes (task_id, note)"
     ~ " select $1, format('Assigned to \"%s\"', name) from agents where id = $2";
 
 /// $1 is the task, $2 the scheduler agent that tried to assign it, and $3 the
-/// change, a format with the scheduler's name as its one %s. A join rather than
+/// note, a format with the scheduler's name as its one %s. A join rather than
 /// values, so a task deleted while it was being scheduled gets nothing.
-private enum recordSchedulingOutcome = "insert into task_history (task_id, change)"
+private enum recordSchedulingOutcome = "insert into task_notes (task_id, note)"
     ~ " select t.id, format($3, a.name) from tasks t, agents a where t.id = $1 and a.id = $2";
 
 /// Thrown by a task write whose place in its lane clashes with the lane as it

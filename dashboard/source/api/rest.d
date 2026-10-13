@@ -10,7 +10,7 @@ import std.uuid : UUID;
 import agent : TaskScheduler;
 import changes : Change, ChangeFeed;
 import api.checks : enforceNamed, enforceSlug, enforceValid;
-import model : Agent, Default, Lane, Model, Project, Runtime, Task, TaskHistoryEntry;
+import model : Agent, Default, Lane, Model, Project, Runtime, Task, TaskNote;
 import repository : AgentRepository, DefaultRepository, LaneRepository, PositionConflict, ProjectRepository, RuntimeRepository,
     TaskRepository;
 
@@ -201,7 +201,7 @@ private void enforcePositionFree(Lane lane, LaneRepository repository)
 
 /// The tasks REST API. A lane's tasks are listed and created under the lane,
 /// and a whole board's can be listed under the project; a single task is
-/// addressed by its own id, and so is its history.
+/// addressed by its own id, and so are its notes.
 @path("/api/rest/v1")
 interface TaskApi
 {
@@ -214,8 +214,8 @@ interface TaskApi
     @method(HTTPMethod.GET) @path("tasks/:id")
     Task readTask(UUID _id) @safe;
 
-    @method(HTTPMethod.GET) @path("tasks/:id/history")
-    TaskHistoryEntry[] listTaskHistory(UUID _id) @safe;
+    @method(HTTPMethod.GET) @path("tasks/:id/notes")
+    TaskNote[] listTaskNotes(UUID _id) @safe;
 
     @method(HTTPMethod.POST) @path("lanes/:laneId/tasks")
     Task createTask(UUID _laneId, @viaBody() Task task) @safe;
@@ -265,11 +265,11 @@ class TaskService : TaskApi
         return task.get;
     }
 
-    override TaskHistoryEntry[] listTaskHistory(UUID _id) @trusted
+    override TaskNote[] listTaskNotes(UUID _id) @trusted
     {
         enforceHTTP(!repository.find(_id).isNull, HTTPStatus.notFound, "No task has that id.");
 
-        return repository.history(_id);
+        return repository.notes(_id);
     }
 
     override Task createTask(UUID _laneId, Task task) @trusted

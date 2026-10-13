@@ -1,13 +1,13 @@
-/* <tv-task-history></tv-task-history>
+/* <tv-task-notes></tv-task-notes>
 
-   A task's history as a timeline, newest first, with a dot in the colour of
-   the lane each change put the task in. `entries` is the history as the API
-   returns it, or null while it is loading; `error` is shown in its place
-   when it could not be loaded. It raises no events. */
+   A task's notes as a timeline, newest first, with a dot in the colour of
+   the lane each note says the task went into. `entries` are the notes as
+   the API returns them, or null while they are loading; `error` is shown
+   in their place when they could not be loaded. It raises no events. */
 
 import { attachTemplate, loadTemplate } from "./template.js";
 
-const template = await loadTemplate("tv-task-history.html");
+const template = await loadTemplate("tv-task-notes.html");
 
 const timeFormat = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
@@ -23,38 +23,38 @@ const timeFormatWithYear = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 
-export class TvTaskHistory extends HTMLElement {
+export class TvTaskNotes extends HTMLElement {
   #entries;
-  #note;
+  #status;
 
   constructor() {
     super();
     const root = attachTemplate(this, template);
 
     this.#entries = root.querySelector(".entries");
-    this.#note = root.querySelector(".note");
+    this.#status = root.querySelector(".status");
     this.entries = null;
   }
 
   set entries(entries) {
     this.#entries.replaceChildren(...(entries ?? []).map(renderEntry));
     if (entries === null) {
-      this.#showNote("Loading…");
+      this.#showStatus("Loading…");
     } else if (entries.length === 0) {
-      this.#showNote("Nothing has happened to this task yet.");
+      this.#showStatus("Nothing has happened to this task yet.");
     } else {
-      this.#showNote("");
+      this.#showStatus("");
     }
   }
 
   set error(message) {
     this.#entries.replaceChildren();
-    this.#showNote(message);
+    this.#showStatus(message);
   }
 
-  #showNote(text) {
-    this.#note.textContent = text;
-    this.#note.hidden = text === "";
+  #showStatus(text) {
+    this.#status.textContent = text;
+    this.#status.hidden = text === "";
   }
 }
 
@@ -67,16 +67,16 @@ function renderEntry(entry) {
     el.setAttribute("no-lane", "");
   }
 
-  const change = document.createElement("span");
-  change.className = "change";
-  change.textContent = entry.change;
+  const note = document.createElement("span");
+  note.className = "note";
+  note.textContent = entry.note;
 
   const when = document.createElement("time");
   when.className = "when";
-  when.dateTime = entry.changedAt;
-  when.textContent = formatTime(new Date(entry.changedAt));
+  when.dateTime = entry.insertedAt;
+  when.textContent = formatTime(new Date(entry.insertedAt));
 
-  el.append(change, when);
+  el.append(note, when);
   return el;
 }
 
@@ -89,4 +89,4 @@ function formatTime(date) {
   return format.format(date);
 }
 
-customElements.define("tv-task-history", TvTaskHistory);
+customElements.define("tv-task-notes", TvTaskNotes);

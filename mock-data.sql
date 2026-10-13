@@ -64,8 +64,8 @@ join projects p on p.slug = seed.slug
 join lanes l on l.project_id = p.id and l.name = seed.lane
 where not exists (select 1 from tasks);
 
-insert into task_history (task_id, changed_at, change, lane_color)
+insert into task_notes (task_id, inserted_at, note, lane_color)
 select t.id, t.created_at, format('Created in "%s"', l.name), l.color
 from tasks t
 join lanes l on l.id = t.lane_id
-where not exists (select 1 from task_history);
+where not exists (select 1 from task_notes);

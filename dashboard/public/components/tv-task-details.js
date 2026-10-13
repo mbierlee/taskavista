@@ -2,8 +2,8 @@
 
    The task details panel, which slides over the right of the board: the
    task's lane, which a menu moves it out of, its description, which can be
-   edited in place, its history, and a button that deletes it. It holds no data of its own: show()
-   hands it a task and the board's lanes, and the history follows once it is
+   edited in place, its notes, and a button that deletes it. It holds no data of its own: show()
+   hands it a task and the board's lanes, and the notes follow once they are
    loaded. Closed, it shows nothing; `open` is set while it shows.
 
    Events (bubbling and composed):
@@ -22,7 +22,7 @@
 
 import { attachTemplate, loadTemplate } from "./template.js";
 import "./tv-menu.js";
-import "./tv-task-history.js";
+import "./tv-task-notes.js";
 import "./tv-text-box.js";
 
 const template = await loadTemplate("tv-task-details.html");
@@ -39,7 +39,7 @@ export class TvTaskDetails extends HTMLElement {
   #laneName;
   #description;
   #error;
-  #history;
+  #notes;
   #delete;
   #deleteError;
 
@@ -57,7 +57,7 @@ export class TvTaskDetails extends HTMLElement {
     this.#laneName = root.querySelector(".lane-name");
     this.#description = root.querySelector(".description");
     this.#error = root.querySelector(".field-error");
-    this.#history = root.querySelector("tv-task-history");
+    this.#notes = root.querySelector("tv-task-notes");
     this.#delete = root.querySelector(".delete");
     this.#deleteError = root.querySelector(".delete-error");
 
@@ -103,7 +103,7 @@ export class TvTaskDetails extends HTMLElement {
 
   /* Opens the panel on `task`, or switches it to another task while open.
      `lanes` are the board's, in board order, with the task's among them. The
-     history shows as loading until it is set. */
+     notes show as loading until they are set. */
   show(task, lanes) {
     const wasOpen = this.open;
     this.#task = task;
@@ -111,7 +111,7 @@ export class TvTaskDetails extends HTMLElement {
     this.#renderLane();
     this.descriptionError = "";
     this.deleteError = "";
-    this.history = null;
+    this.notes = null;
 
     if (!wasOpen) {
       /* Focus goes back to whatever opened the panel, usually a card, once
@@ -161,15 +161,15 @@ export class TvTaskDetails extends HTMLElement {
     this.#deleteError.hidden = message === "";
   }
 
-  /* The task's history, newest first, as the API returns it; null while it
-     is loading. */
-  set history(entries) {
-    this.#history.entries = entries;
+  /* The task's notes, newest first, as the API returns them; null while
+     they are loading. */
+  set notes(entries) {
+    this.#notes.entries = entries;
   }
 
-  /* Shown in place of the history when it could not be loaded. */
-  set historyError(message) {
-    this.#history.error = message;
+  /* Shown in place of the notes when they could not be loaded. */
+  set notesError(message) {
+    this.#notes.error = message;
   }
 
   close() {

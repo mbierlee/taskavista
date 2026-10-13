@@ -136,27 +136,27 @@ class Task
     }
 }
 
-/// A row of the task_history table: one change to a task.
-class TaskHistoryEntry
+/// A row of the task_notes table: a note on something that happened to a task.
+class TaskNote
 {
     UUID id;
-    SysTime changedAt;
-    /// What changed, in words, with the names of the lanes involved as they
-    /// were at the time.
-    string change;
-    /// The colour of the lane the change put the task in, as it was at the
-    /// time; null for a change that left the task in its lane.
+    SysTime insertedAt;
+    /// What happened, in words, with the names of the lanes and agents involved
+    /// as they were at the time.
+    string note;
+    /// The colour of the lane the note says the task went into, as it was at
+    /// the time; null for a note on anything else.
     Nullable!string laneColor;
 
     this() @safe
     {
     }
 
-    this(UUID id, SysTime changedAt, string change, Nullable!string laneColor) @safe
+    this(UUID id, SysTime insertedAt, string note, Nullable!string laneColor) @safe
     {
         this.id = id;
-        this.changedAt = changedAt;
-        this.change = change;
+        this.insertedAt = insertedAt;
+        this.note = note;
         this.laneColor = laneColor;
     }
 }

@@ -84,7 +84,7 @@
     flex-direction: column;
     gap: 8px;
   }
-  section.history {
+  section.notes {
     gap: 12px;
   }
   h2 {
@@ -109,7 +109,7 @@
     display: none;
   }
 
-  /* Pinned to the foot of the panel however short the history is. */
+  /* Pinned to the foot of the panel however short the notes are. */
   .foot {
     margin-top: auto;
     display: flex;
@@ -141,9 +141,9 @@
       <div class="field-error" role="alert" hidden></div>
     </section>
 
-    <section class="history">
-      <h2 class="label">History</h2>
-      <tv-task-history></tv-task-history>
+    <section class="notes">
+      <h2 class="label">Notes</h2>
+      <tv-task-notes></tv-task-notes>
     </section>
 
     <div class="foot">

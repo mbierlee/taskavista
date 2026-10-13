@@ -6,7 +6,7 @@ info:
   summary: Projects, their lanes, the tasks in those lanes, and the AI agents.
   description: |
     The server exposes **projects**, their **lanes**, and the **tasks** in those lanes, each task
-    with its **history**, plus the **AI agents**, the **runtimes** and **models** they run on, and
+    with its **notes**, plus the **AI agents**, the **runtimes** and **models** they run on, and
     the app-wide **defaults**. Everything is JSON in and JSON out.
 
     Operations that are not plain CRUD, such as moving a task, are in the RPC API, under
@@ -495,40 +495,40 @@ paths:
       tags: [Tasks]
       operationId: deleteTask
       summary: Delete a task
-      description: The task's history goes with it.
+      description: The task's notes go with it.
       responses:
         "200": { $ref: "#/components/responses/Deleted" }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
 
-  /tasks/{id}/history:
+  /tasks/{id}/notes:
     parameters:
       - $ref: "#/components/parameters/Id"
     get:
       tags: [Tasks]
-      operationId: listTaskHistory
+      operationId: listTaskNotes
       summary: What has happened to one task, newest first
       description: |
         The changes made to a task since it was created, newest first. The server records them
         itself whenever a task is created, moved to another lane, or has its description changed;
-        a move within a lane is not recorded. History is read-only: there is no endpoint that
-        writes it, and it is deleted with its task.
+        a move within a lane is not recorded. Notes are read-only: there is no endpoint that
+        writes them, and they are deleted with their task.
 
         Changes saved together, such as a `PUT` that moves a task and changes its description,
-        share one `changedAt`, and their order is not defined.
+        share one `insertedAt`, and their order is not defined.
       responses:
         "200":
-          description: The task's history, newest first.
+          description: The task's notes, newest first.
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/TaskHistoryEntry" }
+                items: { $ref: "#/components/schemas/TaskNote" }
               example:
-                - { id: 5f4029b0-14da-499f-af84-674ed83db8e8, changedAt: "2026-10-03T14:43:49.26117Z", change: Description changed, laneColor: null }
-                - { id: 2053f5af-0e91-4e57-883a-e916bc18a6e8, changedAt: "2026-10-03T14:43:48.192609Z", change: 'Moved from "To do" to "In progress"', laneColor: "#e8b154" }
-                - { id: 681cf017-2788-4cd8-8c06-3005664a6a9b, changedAt: "2026-10-03T14:43:47.115254Z", change: 'Created in "To do"', laneColor: "#8fa6ff" }
+                - { id: 5f4029b0-14da-499f-af84-674ed83db8e8, insertedAt: "2026-10-03T14:43:49.26117Z", note: Description changed, laneColor: null }
+                - { id: 2053f5af-0e91-4e57-883a-e916bc18a6e8, insertedAt: "2026-10-03T14:43:48.192609Z", note: 'Moved from "To do" to "In progress"', laneColor: "#e8b154" }
+                - { id: 681cf017-2788-4cd8-8c06-3005664a6a9b, insertedAt: "2026-10-03T14:43:47.115254Z", note: 'Created in "To do"', laneColor: "#8fa6ff" }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -852,32 +852,32 @@ components:
             Where the task sits in its lane, from 0 at the top. No two tasks of a lane may share
             one. Left out or `null`, the task goes after the lane's last task.
 
-    TaskHistoryEntry:
+    TaskNote:
       type: object
       readOnly: true
-      required: [id, changedAt, change, laneColor]
+      required: [id, insertedAt, note, laneColor]
       properties:
         id:
           $ref: "#/components/schemas/Uuid"
-          description: The entry's own id.
-        changedAt:
+          description: The note's own id.
+        insertedAt:
           type: string
           format: date-time
-          description: When the change was made, in UTC.
+          description: When the note was added, in UTC.
           examples: ["2026-10-03T14:43:48.192609Z"]
-        change:
+        note:
           type: string
           description: |
-            What changed, in words: `Created in "To do"`, `Moved from "To do" to "In progress"`,
-            `Description changed`. Lane names are as they were at the time, so an entry does not
+            What happened, in words: `Created in "To do"`, `Moved from "To do" to "In progress"`,
+            `Description changed`. Lane names are as they were at the time, so a note does not
             change when a lane is renamed or deleted.
           examples: ['Moved from "To do" to "In progress"']
         laneColor:
           type: [string, "null"]
           pattern: "^#[0-9a-f]{6}$"
           description: |
-            The colour of the lane the change put the task in, as it was at the time. `null` for a
-            change that left the task in its lane.
+            The colour of the lane the note says the task went into, as it was at the time. `null` for
+            a note on anything else.
 
     Runtime:
       type: object

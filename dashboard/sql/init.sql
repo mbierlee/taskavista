@@ -22,7 +22,7 @@ create table if not exists projects (
 );
 
 create table if not exists lanes (
-	id         uuid primary key default gen_random_uuid(),
+	id          uuid primary key default gen_random_uuid(),
 	project_id uuid not null references projects (id) on delete cascade,
 	name       text not null check (length(trim(name)) > 0),
 	position   integer not null check (position >= 0),
@@ -80,7 +80,7 @@ create table if not exists agent_labels (
 );
 
 create table if not exists agent_log (
-	id         uuid primary key default gen_random_uuid(),
+	id          uuid primary key default gen_random_uuid(),
 	agent_id   uuid not null references agents (id) on delete cascade,
 	created_at timestamptz not null default now(),
 	prompt     text not null check (length(trim(prompt)) > 0),
@@ -104,17 +104,17 @@ create table if not exists tasks (
 	unique (lane_id, position) deferrable initially immediate
 );
 
-create table if not exists task_history (
-	id         uuid primary key default gen_random_uuid(),
-	task_id    uuid not null references tasks (id) on delete cascade,
-	changed_at timestamptz not null default now(),
-	change     text not null check (length(trim(change)) > 0),
-	-- The colour the task's lane had when the change put it there, copied like
-	-- the lane names in change. Null for a change that left the task in its lane.
-	lane_color text check (lane_color ~ '^#[0-9a-f]{6}$')
+create table if not exists task_notes (
+	id          uuid primary key default gen_random_uuid(),
+	task_id     uuid not null references tasks (id) on delete cascade,
+	inserted_at timestamptz not null default now(),
+	note        text not null check (length(trim(note)) > 0),
+	-- The colour of the lane the note says the task went into, as it was then,
+	-- copied like the lane names in note. Null for a note on anything else.
+	lane_color  text check (lane_color ~ '^#[0-9a-f]{6}$')
 );
 
-create index if not exists task_history_task_id on task_history (task_id, changed_at);
+create index if not exists task_notes_task_id on task_notes (task_id, inserted_at);
 
 create table if not exists defaults (
 	key   text primary key check (length(trim(key)) > 0),
