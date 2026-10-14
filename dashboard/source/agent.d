@@ -476,7 +476,7 @@ class AgentChat
 }
 
 /// Asks an agent which agent should work on the task, given the agents there are.
-private enum schedulePrompt = import("schedule-tasks.txt");
+private enum schedulePrompt = import("schedule-task.txt");
 
 /// Picks the agent that should work on a task.
 class TaskScheduler
