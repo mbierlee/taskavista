@@ -15,7 +15,7 @@ Each message is a JSON object holding a `type` and the ids it concerns, and noth
 |---|---|---|
 | `task-created` | `taskId`, `projectId`, `toLaneId` | The tasks REST endpoints |
 | `task-changed` | `taskId`, `projectId`, `fromLaneId`, `toLaneId` | The tasks REST endpoints (a `PUT` can move a task) |
-| `task-moved` | `taskId`, `projectId`, `fromLaneId`, `toLaneId` | `moveTask` |
+| `task-moved` | `taskId`, `projectId`, `fromLaneId`, `toLaneId` | `moveTask`, and the task scheduler when it moves a task on to the lane its agent starts it in |
 | `task-deleted` | `taskId`, `projectId`, `fromLaneId` | The tasks REST endpoints |
 | `lane-created`, `lane-changed`, `lane-deleted` | `laneId`, `projectId` | The lanes REST endpoints |
 | `project-created`, `project-changed`, `project-deleted` | `projectId` | The projects REST endpoints, `createProject`, `saveProjectSettings`, `setAiPaused` |

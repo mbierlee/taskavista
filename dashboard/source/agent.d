@@ -1,6 +1,5 @@
 module agent;
 
-import vibe.core.core : runTask;
 import vibe.core.file : existsFile, moveFile, writeFileUTF8;
 import vibe.core.path : NativePath;
 import vibe.core.process : ProcessConfig = Config, Redirect, collectOutput, pipeProcess;
@@ -11,20 +10,21 @@ import poodinis : Inject;
 import std.algorithm.iteration : filter, map;
 import std.algorithm.searching : canFind, find;
 import std.array : array, join;
+import std.datetime.date : DateTime;
 import std.datetime.systime : SysTime;
 import std.digest : toHexString;
 import std.digest.sha : sha256Of;
 import std.file : mkdirRecurse, tempDir;
 import std.format : format;
 import std.path : buildPath;
-import std.range : chain;
+import std.range : chain, retro;
 import std.string : indexOf, lastIndexOf, strip, toLower;
 import std.typecons : Nullable, nullable;
 import std.uuid : UUID, randomUUID;
 
-import changes : ChangeFeed;
+import changes : Change, ChangeFeed;
 import config : Config, apiUrl;
-import model : Agent, AgentLogEntry, EffortLevel, Model, Project, Runtime, defaultEffort;
+import model : Agent, AgentLogEntry, EffortLevel, Lane, Model, Project, Runtime, TaskNote, defaultEffort;
 import prompt : PromptParser;
 import repository : AgentLogRepository, AgentRepository, DefaultRepository, LaneRepository, ProjectRepository,
     RuntimeRepository, TaskRepository;
@@ -475,10 +475,12 @@ class AgentChat
     }
 }
 
-/// Asks an agent which agent should work on the task, given the agents there are.
+/// Asks an agent which agent should work on the task, given the agents there are,
+/// and which lane the task moves to as that agent starts on it.
 private enum schedulePrompt = import("schedule-task.txt");
 
-/// Picks the agent that should work on a task.
+/// Picks the agent that should work on a task, and moves the task on to the
+/// lane that shows it is being worked on.
 class TaskScheduler
 {
     private AgentRepository agents;
@@ -503,23 +505,17 @@ class TaskScheduler
         this.changes = changes;
     }
 
-    /// Has the scheduler agent choose an agent for the task, in the background,
-    /// since the request that added the task should not wait on an agent.
-    public void schedule(UUID taskId)
-    {
-        runTask(() nothrow{
-            try
-            {
-                choose(taskId);
-            }
-            catch (Exception e)
-            {
-                logError("Scheduling task %s failed: %s", taskId, e.msg);
-            }
-        });
-    }
-
-    private void choose(UUID taskId)
+    /**
+     * Has the scheduler agent choose an agent and a lane for the task, then
+     * assigns the agent and moves the task. Waits on the agent, which takes a
+     * while.
+     *
+     * Returns: Whether the task was assigned to an agent, which can then work on it.
+     *
+     * Throws: `Exception` when the database fails. A scheduler that fails or
+     *   gives an answer that cannot be used is noted on the task instead.
+     */
+    public bool schedule(UUID taskId)
     {
         // TODO: Deal with paused projects.
         // The task, its lane or its project may be gone by the time it is
@@ -527,19 +523,19 @@ class TaskScheduler
         auto task = tasks.find(taskId);
         if (task.isNull)
         {
-            return;
+            return false;
         }
 
         auto lane = lanes.find(task.get.laneId);
         if (lane.isNull)
         {
-            return;
+            return false;
         }
 
         auto project = projects.find(lane.get.projectId);
         if (project.isNull)
         {
-            return;
+            return false;
         }
 
         auto all = agents.all();
@@ -548,26 +544,28 @@ class TaskScheduler
         {
             logInfo("Task %s is not scheduled, since there is no task scheduler agent.", taskId);
             noted(tasks.recordNoScheduler(taskId), taskId, project.get.id);
-            return;
+            return false;
         }
 
+        auto board = lanes.ofProject(project.get.id);
         string[string] placeholders = [
             "<project name>": project.get.name,
             "<project id>": project.get.id.toString,
             "<project description>": project.get.description.strip,
             "<lane name>": lane.get.name,
             "<task description>": task.get.description.strip,
-            "<agent list>": agentList(all)
+            "<agent list>": agentList(all),
+            "<lane list>": laneList(board)
         ];
 
         const conditions = [
-            "description": project.get.description.strip.length > 0
+            "project-description": project.get.description.strip.length > 0
         ];
         auto scheduler = schedulers.front;
         auto prompt = parser.parse(schedulePrompt, placeholders, conditions);
         auto systemPrompt = agentPrompt.systemPrompt(scheduler, "").strip;
 
-        // Caught here rather than by schedule, so the log says which scheduler failed.
+        // Caught here rather than by the caller, so the log says which scheduler failed.
         string answer;
         try
         {
@@ -579,36 +577,31 @@ class TaskScheduler
         {
             logError("Scheduler %s failed on task %s: %s", scheduler.name, taskId, e.msg);
             noted(tasks.recordSchedulingFailure(taskId, scheduler.id), taskId, project.get.id);
-            return;
+            return false;
         }
 
-        Nullable!UUID chosen;
-        if (answer != "none")
+        auto schedule = readSchedule(answer, all, board);
+        if (schedule.isNull)
         {
-            auto matches = all.filter!(agent => !agent.taskScheduler && agent.id.toString == answer
-                    .toLower);
-            if (matches.empty)
-            {
-                logError("Scheduler %s answered task %s with \"%s\", which is not an agent it could choose.",
-                    scheduler.name, taskId, answer);
-                noted(tasks.recordSchedulingFailure(taskId, scheduler.id), taskId, project.get.id);
-                return;
-            }
-
-            chosen = matches.front.id;
+            logError("Scheduler %s answered task %s with \"%s\", which is not an agent and a lane it could choose.",
+                scheduler.name, taskId, answer);
+            noted(tasks.recordSchedulingFailure(taskId, scheduler.id), taskId, project.get.id);
+            return false;
         }
 
         // An assignment is a note only when it changed the agent, which it
         // almost always did, and a needless event costs the UI only a refetch.
-        const assigned = tasks.assignAiAgent(taskId, chosen);
-        if (chosen.isNull)
+        const assigned = tasks.assignAiAgent(taskId, schedule.get.agentId);
+        if (schedule.get.agentId.isNull)
         {
             noted(tasks.recordNoAgentFound(taskId, scheduler.id), taskId, project.get.id);
+            return false;
         }
-        else
-        {
-            noted(assigned, taskId, project.get.id);
-        }
+
+        noted(assigned, taskId, project.get.id);
+        moveOn(tasks, changes, taskId, lane.get.id, schedule.get.laneId, project.get.id);
+
+        return true;
     }
 
     /// Reports a note on the task, when one was added.
@@ -641,6 +634,326 @@ class TaskScheduler
         return format("<agent>\nID: %s\nName: %s\nLabels: %s\n%s</agent>", agent.id, agent.name, labels,
             instructions.length == 0 ? "" : "Instructions:\n" ~ instructions ~ "\n");
     }
+}
+
+/// Asks the agent a task is assigned to to work on it, and which lane it goes
+/// to next.
+private enum executeTaskPrompt = import("execute-task.txt");
+
+/// Has the agent a task is assigned to work on it, then moves the task on to
+/// the lane the agent chose, adds the agent's result to its notes, and takes
+/// the task off the agent.
+class TaskExecutor
+{
+    private AgentRepository agents;
+    private TaskRepository tasks;
+    private LaneRepository lanes;
+    private ProjectRepository projects;
+    private PromptParser parser;
+    private AgentPrompt agentPrompt;
+    private RuntimeExecutor executor;
+    private ChangeFeed changes;
+
+    this(AgentRepository agents, TaskRepository tasks, LaneRepository lanes, ProjectRepository projects,
+        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, ChangeFeed changes)
+    {
+        this.agents = agents;
+        this.tasks = tasks;
+        this.lanes = lanes;
+        this.projects = projects;
+        this.parser = parser;
+        this.agentPrompt = agentPrompt;
+        this.executor = executor;
+        this.changes = changes;
+    }
+
+    /**
+     * Has the agent the task is assigned to work on it, and waits until it is
+     * done, which can take a long while. A task assigned to no agent is left
+     * alone. An agent that fails, or answers with something that is not a
+     * result, is noted on the task, which stays assigned to it.
+     *
+     * Throws: `Exception` when the database fails.
+     */
+    public void execute(UUID taskId)
+    {
+        // The task, its lane or its project may be gone by the time it is
+        // executed, and then there is nothing to execute.
+        auto task = tasks.find(taskId);
+        if (task.isNull)
+        {
+            return;
+        }
+
+        auto lane = lanes.find(task.get.laneId);
+        if (lane.isNull)
+        {
+            return;
+        }
+
+        auto project = projects.find(lane.get.projectId);
+        if (project.isNull)
+        {
+            return;
+        }
+
+        // An agent that is deleted takes its assignments with it, so a missing
+        // agent is a task assigned to none.
+        auto agentId = tasks.assignedAiAgent(taskId);
+        auto agent = agentId.isNull ? Nullable!Agent.init : agents.find(agentId.get);
+        if (agent.isNull)
+        {
+            logInfo("Task %s is not executed, since it is assigned to no agent.", taskId);
+            noted(tasks.addNote(taskId, "Not worked on, since it is assigned to no agent"), taskId,
+                project.get.id);
+            return;
+        }
+
+        auto board = lanes.ofProject(project.get.id);
+        auto notes = tasks.notes(taskId);
+        string[string] placeholders = [
+            "<project name>": project.get.name,
+            "<project id>": project.get.id.toString,
+            "<project description>": project.get.description.strip,
+            "<task id>": taskId.toString,
+            "<lane name>": lane.get.name,
+            "<task description>": task.get.description.strip,
+            "<note list>": noteList(notes),
+            "<lane list>": laneList(board)
+        ];
+
+        const conditions = [
+            "notes": notes.length > 0,
+            "project-description": project.get.description.strip.length > 0
+        ];
+
+        auto prompt = parser.parse(executeTaskPrompt, placeholders, conditions);
+        auto systemPrompt = agentPrompt.systemPrompt(agent.get, "").strip;
+
+        // Caught here rather than by the caller, so the task's notes say the agent failed.
+        string answer;
+        try
+        {
+            string noSession;
+            answer = executor.prompt(agent.get.id.toString, prompt, false, noSession, systemPrompt);
+        }
+        catch (Exception e)
+        {
+            logError("Agent %s failed on task %s: %s", agent.get.name, taskId, e.msg);
+            noted(tasks.recordExecutionFailure(taskId, agent.get.id), taskId, project.get.id);
+            return;
+        }
+
+        auto result = readTaskResult(answer, board);
+        if (result.isNull)
+        {
+            logError("Agent %s answered task %s with \"%s\", which is not a lane and a result.",
+                agent.get.name, taskId, answer);
+            noted(tasks.recordExecutionFailure(taskId, agent.get.id), taskId, project.get.id);
+            return;
+        }
+
+        if (result.get.text.length > 0)
+        {
+            noted(tasks.addNote(taskId, result.get.text), taskId, project.get.id);
+        }
+
+        moveOn(tasks, changes, taskId, lane.get.id, result.get.laneId, project.get.id);
+        tasks.assignAiAgent(taskId, Nullable!UUID.init);
+    }
+
+    /// Reports a note on the task, when one was added.
+    private void noted(bool added, UUID taskId, UUID projectId)
+    {
+        if (added)
+        {
+            changes.note(taskId, projectId);
+        }
+    }
+}
+
+/// Moves the task to the bottom of the lane an agent chose. A task that left
+/// its lane while the agent was at work was moved by someone else, whose move
+/// is kept.
+private void moveOn(TaskRepository tasks, ChangeFeed changes, UUID taskId, UUID fromLaneId, UUID toLaneId,
+    UUID projectId)
+{
+    auto task = tasks.find(taskId);
+    if (task.isNull || task.get.laneId != fromLaneId || toLaneId == fromLaneId)
+    {
+        return;
+    }
+
+    tasks.move(taskId, toLaneId, UUID.init);
+    changes.task(Change.moved, taskId, projectId, fromLaneId, toLaneId);
+}
+
+/// A lane per line, with "done" after the lanes whose tasks count as done.
+private string laneList(Lane[] board)
+{
+    return board.map!(lane => format("- ID %s: %s%s", lane.id, lane.name, lane.marksDone ? " (done)"
+            : ""))
+        .join("\n");
+}
+
+/// A note per line, oldest first, since the agent reads them as the task's
+/// history.
+private string noteList(TaskNote[] notes)
+{
+    return notes.retro
+        .map!(note => format("- %s: %s", (cast(DateTime) note.insertedAt).toISOExtString, note.note))
+        .join("\n");
+}
+
+/// What the scheduler chose for a task: an agent and the lane the task moves
+/// to, or neither when no agent can do it.
+private struct Schedule
+{
+    Nullable!UUID agentId;
+    UUID laneId;
+}
+
+/**
+ * Reads the scheduler's answer to the schedule prompt.
+ *
+ * Params:
+ *   answer = The scheduler's answer, a JSON object with an `agent-id` and a
+ *     `next-lane-id`.
+ *   all = Every agent, of which only the ones that are not task schedulers
+ *     can be chosen.
+ *   board = The lanes of the task's project, the only ones it can move to.
+ *
+ * Returns: The schedule, with no agent when the answer gives null for one, or
+ *   an empty Nullable when the answer names an agent or a lane that cannot be
+ *   chosen, or is not such an object at all.
+ */
+private Nullable!Schedule readSchedule(string answer, Agent[] all, Lane[] board)
+{
+    auto json = answerObject(answer);
+    if (json.isNull)
+    {
+        return Nullable!Schedule.init;
+    }
+
+    auto agentId = "agent-id" in json.get;
+    if (agentId is null)
+    {
+        return Nullable!Schedule.init;
+    }
+
+    if (agentId.type == Json.Type.null_)
+    {
+        return Schedule().nullable;
+    }
+
+    auto laneId = "next-lane-id" in json.get;
+    if (agentId.type != Json.Type.string || laneId is null || laneId.type != Json.Type.string)
+    {
+        return Nullable!Schedule.init;
+    }
+
+    // IDs are compared as text, since an agent may change their case.
+    auto agents = all.find!(agent => !agent.taskScheduler && agent.id.toString == agentId
+            .get!string.strip
+            .toLower);
+    auto lanes = board.find!(lane => lane.id.toString == laneId.get!string.strip.toLower);
+    if (agents.length == 0 || lanes.length == 0)
+    {
+        return Nullable!Schedule.init;
+    }
+
+    return Schedule(agents[0].id.nullable, lanes[0].id).nullable;
+}
+
+unittest
+{
+    import std.string : toUpper;
+
+    auto writer = new Agent(randomUUID, "Writer", "claude-code", "sonnet", "default", false, "", [
+        ]);
+    auto scheduler = new Agent(randomUUID, "Scheduler", "claude-code", "sonnet", "default", true, "", [
+        ]);
+    auto doing = new Lane(randomUUID, randomUUID, "Doing", 1, "#000000", false);
+    auto all = [writer, scheduler];
+    auto board = [doing];
+
+    auto chosen = readSchedule(format("```json\n{\"agent-id\": \"%s\", \"next-lane-id\": \" %s \"}\n```",
+            writer.id.toString.toUpper, doing.id), all, board);
+    assert(!chosen.isNull);
+    assert(chosen.get.agentId.get == writer.id && chosen.get.laneId == doing.id);
+
+    auto none = readSchedule(`{"agent-id": null, "next-lane-id": null}`, all, board);
+    assert(!none.isNull && none.get.agentId.isNull);
+
+    assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": "%s"}`, scheduler.id, doing.id), all, board)
+            .isNull);
+    assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": "%s"}`, writer.id, randomUUID), all, board)
+            .isNull);
+    assert(readSchedule(format(`{"agent-id": "%s"}`, writer.id), all, board).isNull);
+    assert(readSchedule(writer.id.toString, all, board).isNull);
+}
+
+/// What an agent did with a task: the lane the task goes to next, and the
+/// result that goes in its notes.
+private struct TaskResult
+{
+    UUID laneId;
+    string text;
+}
+
+/**
+ * Reads an agent's answer to the execute-task prompt.
+ *
+ * Params:
+ *   answer = The agent's answer, a JSON object with a `next-lane-id` and a
+ *     `result`.
+ *   board = The lanes of the task's project, the only ones it can move to.
+ *
+ * Returns: The result, with its text stripped, or an empty Nullable when the
+ *   answer names a lane that is not on the board, or is not such an object.
+ */
+private Nullable!TaskResult readTaskResult(string answer, Lane[] board)
+{
+    auto json = answerObject(answer);
+    if (json.isNull)
+    {
+        return Nullable!TaskResult.init;
+    }
+
+    auto laneId = "next-lane-id" in json.get;
+    auto text = "result" in json.get;
+    if (laneId is null || laneId.type != Json.Type.string || text is null || text.type != Json
+        .Type.string)
+    {
+        return Nullable!TaskResult.init;
+    }
+
+    // Compared as text, since an agent may change the IDs' case.
+    auto lanes = board.find!(lane => lane.id.toString == laneId.get!string.strip.toLower);
+    if (lanes.length == 0)
+    {
+        return Nullable!TaskResult.init;
+    }
+
+    return TaskResult(lanes[0].id, text.get!string.strip).nullable;
+}
+
+unittest
+{
+    auto done = new Lane(randomUUID, randomUUID, "Done", 2, "#000000", true);
+    auto board = [done];
+
+    auto result = readTaskResult(format("```json\n{\"next-lane-id\": \"%s\", \"result\": \" Why did the database"
+            ~ " break up? Too many relationships. \"}\n```", done.id), board);
+    assert(!result.isNull);
+    assert(result.get.laneId == done.id);
+    assert(result.get.text == "Why did the database break up? Too many relationships.");
+
+    assert(readTaskResult(format(`{"next-lane-id": "%s", "result": "Done."}`, randomUUID), board)
+            .isNull);
+    assert(readTaskResult(format(`{"next-lane-id": "%s"}`, done.id), board).isNull);
+    assert(readTaskResult(format(`{"next-lane-id": "%s", "result": null}`, done.id), board).isNull);
+    assert(readTaskResult("Done.", board).isNull);
 }
 
 /// Asks an agent to draft a new agent from a person's description of it.
@@ -777,20 +1090,11 @@ private Json draftError(string message)
     return error;
 }
 
-/**
- * Reads an agent's answer to the quick-create prompt.
- *
- * Agents are asked for a bare JSON object but often wrap it in a code fence
- * or a sentence, so the object is taken from between the first `{` and the
- * last `}`. A runtime, model and effort level that do not go together are
- * replaced by the defaults, and the labels are made lowercase and unique, so
- * the dialog shows only what it could save. Whatever else is in the object
- * is dropped.
- *
- * Returns: The draft, or an error object when the agent answered with one, or
- *   an empty Nullable when the answer is neither.
- */
-private Nullable!Json readDraft(string answer, Model[] models, string[string] defaultIds)
+/// The JSON object in an agent's answer, or an empty Nullable when there is
+/// none. Agents are asked for a bare JSON object but often wrap it in a code
+/// fence or a sentence, so the object is taken from between the first `{` and
+/// the last `}`.
+private Nullable!Json answerObject(string answer)
 {
     const start = answer.indexOf('{');
     const end = answer.lastIndexOf('}');
@@ -809,10 +1113,28 @@ private Nullable!Json readDraft(string answer, Model[] models, string[string] de
         return Nullable!Json.init;
     }
 
-    if (json.type != Json.Type.object)
+    return json.type == Json.Type.object ? json.nullable : Nullable!Json.init;
+}
+
+/**
+ * Reads an agent's answer to the quick-create prompt, as `answerObject` finds
+ * it. A runtime, model and effort level that do not go together are
+ * replaced by the defaults, and the labels are made lowercase and unique, so
+ * the dialog shows only what it could save. Whatever else is in the object
+ * is dropped.
+ *
+ * Returns: The draft, or an error object when the agent answered with one, or
+ *   an empty Nullable when the answer is neither.
+ */
+private Nullable!Json readDraft(string answer, Model[] models, string[string] defaultIds)
+{
+    auto parsed = answerObject(answer);
+    if (parsed.isNull)
     {
         return Nullable!Json.init;
     }
+
+    auto json = parsed.get;
 
     string text(string key)
     {

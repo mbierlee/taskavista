@@ -1,13 +1,15 @@
 module api.rest;
 
 import vibe.web.rest;
+import vibe.core.core : runTask;
+import vibe.core.log : logError;
 import vibe.http.common : HTTPMethod, HTTPStatusException, enforceHTTP;
 import vibe.http.status : HTTPStatus;
 
 import std.format : format;
 import std.uuid : UUID;
 
-import agent : TaskScheduler;
+import agent : TaskExecutor, TaskScheduler;
 import changes : Change, ChangeFeed;
 import api.checks : enforceNamed, enforceSlug, enforceValid;
 import model : Agent, Default, Lane, Model, Project, Runtime, Task, TaskNote;
@@ -233,13 +235,16 @@ class TaskService : TaskApi
     private TaskRepository repository;
     private ProjectRepository projects;
     private TaskScheduler scheduler;
+    private TaskExecutor executor;
     private ChangeFeed changes;
 
-    this(TaskRepository repository, ProjectRepository projects, TaskScheduler scheduler, ChangeFeed changes)
+    this(TaskRepository repository, ProjectRepository projects, TaskScheduler scheduler, TaskExecutor executor,
+        ChangeFeed changes)
     {
         this.repository = repository;
         this.projects = projects;
         this.scheduler = scheduler;
+        this.executor = executor;
         this.changes = changes;
     }
 
@@ -286,10 +291,38 @@ class TaskService : TaskApi
         changes.task(Change.created, created.id, projectId.get, UUID.init, _laneId);
         if (projects.find(projectId.get).get.managedByAi)
         {
-            scheduler.schedule(created.id);
+            // In the background, since the request that added the task should not wait on an agent.
+            auto taskId = created.id;
+            runTask(() nothrow{
+                try
+                {
+                    if (scheduler.schedule(taskId))
+                    {
+                        runTask(() nothrow{ execute(taskId); });
+                    }
+                }
+                catch (Exception e)
+                {
+                    logError("Scheduling task %s failed: %s", taskId, e.msg);
+                }
+            });
         }
 
         return created;
+    }
+
+    /// Has the task's agent work on it, logging what goes wrong, since there is
+    /// no request to answer it.
+    private void execute(UUID taskId) nothrow
+    {
+        try
+        {
+            executor.execute(taskId);
+        }
+        catch (Exception e)
+        {
+            logError("Executing task %s failed: %s", taskId, e.msg);
+        }
     }
 
     override Task replaceTask(UUID _id, Task task) @trusted

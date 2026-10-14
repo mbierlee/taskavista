@@ -18,6 +18,22 @@ Imports come in groups separated by a blank line: libraries (`vibe`, `dpq2`, `po
 Phobos (`std`), then the project's own modules. Within the `std` group, one line per module,
 sorted, with selective imports (`import std.format : format;`).
 
+## Running things in the background
+
+The caller decides what runs asynchronously, not the callee. A function does its work and
+returns when it is done; a caller that should not wait on it, such as a request handler, wraps
+the call in `runTask` itself, along with the `try`/`catch` that logs what it throws. That keeps
+a function's behaviour visible where it is called, and lets another caller run it in the
+foreground.
+
+## Telling the person what went wrong
+
+When work done for a task goes wrong or is skipped, such as an agent that fails or a task
+with no agent to work on it, add a note to the task saying so, as well as logging it. The
+log is for whoever runs the server; the note is what the person looking at the task sees,
+and without it the task just sits there with no sign of why. Only what cannot be put on a
+task, such as a task that is gone, is left to the log alone.
+
 ## Comments
 
 A comment explains **why**: the reason for a choice, the constraint behind it, the trap it avoids.

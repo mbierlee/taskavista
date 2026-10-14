@@ -669,6 +669,25 @@ class TaskRepository
         });
     }
 
+    /// The AI agent the task is assigned to, or an empty Nullable when it is
+    /// assigned to none or there is no such task.
+    Nullable!UUID assignedAiAgent(UUID id)
+    {
+        QueryParams query;
+        query.sqlCommand = "select assigned_ai_agent_id from tasks where id = $1";
+        query.argsVariadic(id);
+
+        return client.pickConnection((scope connection) {
+            auto answer = connection.execParams(query);
+            if (answer.length == 0 || answer[0]["assigned_ai_agent_id"].isNull)
+            {
+                return Nullable!UUID.init;
+            }
+
+            return answer[0]["assigned_ai_agent_id"].as!UUID.nullable;
+        });
+    }
+
     /// Assigns the task to an AI agent, or to none when `agentId` is null, and
     /// adds the assignment to its notes when it puts the task with another
     /// agent. False when no row has that id.
@@ -723,14 +742,34 @@ class TaskRepository
     /// agent. Adds nothing, and is false, when the task or the scheduler is gone.
     bool recordSchedulingFailure(UUID id, UUID schedulerId)
     {
-        return recordScheduling(id, schedulerId, `Scheduling by "%s" failed`);
+        return recordAgentOutcome(id, schedulerId, `Scheduling by "%s" failed`);
     }
 
     /// Adds to the task's notes that its scheduler found no agent for it.
     /// Adds nothing, and is false, when the task or the scheduler is gone.
     bool recordNoAgentFound(UUID id, UUID schedulerId)
     {
-        return recordScheduling(id, schedulerId, `Not assigned, since "%s" found no agent for it`);
+        return recordAgentOutcome(id, schedulerId, `Not assigned, since "%s" found no agent for it`);
+    }
+
+    /// Adds to the task's notes that the agent it is assigned to failed to work
+    /// on it. Adds nothing, and is false, when the task or the agent is gone.
+    bool recordExecutionFailure(UUID id, UUID agentId)
+    {
+        return recordAgentOutcome(id, agentId, `Working on it failed for "%s"`);
+    }
+
+    /// Adds a note of any text to the task. Adds nothing, and is false, when
+    /// the task is gone.
+    bool addNote(UUID id, string note)
+    {
+        QueryParams query;
+        query.sqlCommand = "insert into task_notes (task_id, note) select id, $2 from tasks where id = $1 returning id";
+        query.argsVariadic(id, note);
+
+        return client.pickConnection((scope connection) {
+            return connection.execParams(query).length > 0;
+        });
     }
 
     /// Adds to the task's notes that there was no task scheduler agent to
@@ -747,12 +786,12 @@ class TaskRepository
         });
     }
 
-    /// `note` is a format for SQL's format(), with the scheduler's name as its one %s.
-    private bool recordScheduling(UUID id, UUID schedulerId, string note)
+    /// `note` is a format for SQL's format(), with the agent's name as its one %s.
+    private bool recordAgentOutcome(UUID id, UUID agentId, string note)
     {
         QueryParams query;
-        query.sqlCommand = recordSchedulingOutcome;
-        query.argsVariadic(id, schedulerId, note);
+        query.sqlCommand = recordAgentOutcomeNote;
+        query.argsVariadic(id, agentId, note);
 
         return client.pickConnection((scope connection) {
             return connection.execParams(query).length > 0;
@@ -792,10 +831,10 @@ private enum recordDescriptionChange = "insert into task_notes (task_id, note) v
 private enum recordAssignment = "insert into task_notes (task_id, note)"
     ~ " select $1, format('Assigned to \"%s\"', name) from agents where id = $2";
 
-/// $1 is the task, $2 the scheduler agent that tried to assign it, and $3 the
-/// note, a format with the scheduler's name as its one %s. A join rather than
-/// values, so a task deleted while it was being scheduled gets nothing.
-private enum recordSchedulingOutcome = "insert into task_notes (task_id, note)"
+/// $1 is the task, $2 the agent that scheduled it or worked on it, and $3 the
+/// note, a format with the agent's name as its one %s. A join rather than
+/// values, so a task deleted while the agent was at it gets nothing.
+private enum recordAgentOutcomeNote = "insert into task_notes (task_id, note)"
     ~ " select t.id, format($3, a.name) from tasks t, agents a where t.id = $1 and a.id = $2 returning id";
 
 /// Thrown by a task write whose place in its lane clashes with the lane as it
