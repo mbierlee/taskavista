@@ -25,10 +25,10 @@ A project managed by AI agents shows a strip over its board saying whether the a
 work, with a button that pauses or resumes them; the pause is only recorded in the database
 for now, since no agents exist yet. The topbar's chat button opens the agent chat, a panel beside
 every screen with a tab per chat with an agent. A chat is a session on the agent's runtime, started
-with a system prompt of two parts, each filled in by `PromptParser`: `dashboard/prompts/agent.txt`,
+with a system prompt of two parts, each filled in by `PromptParser`: `dashboard/prompts/system/agent.txt`,
 which starts every interaction with an agent and gives it the API help in
 `dashboard/public/agent-help.txt` (which agents can also fetch from the server), then
-`dashboard/prompts/new-agent-chat.txt`, the chat's own part; the tabs last as long as the page. Every write
+`dashboard/prompts/system/new-agent-chat.txt`, the chat's own part; the tabs last as long as the page. Every write
 through the API is reported to the open UIs over a WebSocket
 (`/api/changes/v1`), as an event and the ids it concerns, and the UI fetches what changed, so what
 an agent does shows on screen straight away (see `docs/change-feed.md`).

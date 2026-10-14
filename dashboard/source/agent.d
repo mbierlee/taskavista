@@ -228,7 +228,9 @@ class ClaudeCodeRuntime : IRuntime
     this(Config config)
     {
         auto url = config.apiUrl;
-        allowedTools = [format("Bash(curl %s/*)", url), format("Bash(curl * %s/*)", url)];
+        allowedTools = [
+            format("Bash(curl %s/*)", url), format("Bash(curl * %s/*)", url)
+        ];
     }
 
     /**
@@ -245,16 +247,16 @@ class ClaudeCodeRuntime : IRuntime
         if (!createSession)
         {
             return run(agent, prompt, systemPrompt, createAgentWorkDir(agent.id, randomUUID()), [
-                "--no-session-persistence"
-            ]);
+                    "--no-session-persistence"
+                ]);
         }
 
         if (sessionId is null)
         {
             auto newSessionId = randomUUID();
             auto answer = run(agent, prompt, systemPrompt, createAgentWorkDir(agent.id, newSessionId), [
-                "--session-id", newSessionId.toString
-            ]);
+                    "--session-id", newSessionId.toString
+                ]);
 
             sessionId = newSessionId.toString;
 
@@ -274,8 +276,8 @@ class ClaudeCodeRuntime : IRuntime
         }
 
         return run(agent, prompt, systemPrompt, createAgentWorkDir(agent.id, session), [
-            "--resume", session.toString
-        ]);
+                "--resume", session.toString
+            ]);
     }
 
     public string runTimeType()
@@ -296,7 +298,10 @@ class ClaudeCodeRuntime : IRuntime
         string[] systemPromptArgs;
         if (systemPrompt !is null)
         {
-            systemPromptArgs = ["--append-system-prompt-file", createSystemPromptFile(systemPrompt)];
+            systemPromptArgs = [
+                "--append-system-prompt-file",
+                createSystemPromptFile(systemPrompt)
+            ];
         }
 
         // Not std.process, which would block the event loop, and with it every
@@ -341,11 +346,11 @@ class ClaudeCodeRuntime : IRuntime
 
 /// Tells an agent who it is and how it uses the API. Comes first in the system
 /// prompt of every interaction with an agent.
-private enum agentPromptTemplate = import("agent.txt");
+private enum agentPromptTemplate = import("system/agent.txt");
 
 /// Introduces the agent to the person chatting with it. Follows the agent prompt
 /// in the system prompt of a chat.
-private enum newChatPrompt = import("new-agent-chat.txt");
+private enum newChatPrompt = import("system/new-agent-chat.txt");
 
 /// How an agent uses the API, with the API's URL left to fill in.
 private enum agentHelpTemplate = import("agent-help.txt");
@@ -398,9 +403,13 @@ class AgentPrompt
             "<agent help>": help.text
         ];
 
-        const conditions = ["labels": agent.labels.length > 0, "instructions": agent.instructions.strip.length > 0];
+        const conditions = [
+            "labels": agent.labels.length > 0,
+            "instructions": agent.instructions.strip.length > 0
+        ];
 
-        return parser.parse(agentPromptTemplate, placeholders, conditions).strip
+        return parser.parse(agentPromptTemplate, placeholders, conditions)
+            .strip
             ~ "\n\n" ~ interactionPrompt.strip;
     }
 }
@@ -458,6 +467,7 @@ class AgentChat
             "project": !project.isNull,
             "description": !project.isNull && project.get.description.strip.length > 0
         ];
+
         auto chatPrompt = parser.parse(newChatPrompt, placeholders, conditions);
 
         return executor.prompt(agent.id.toString, message, true, sessionId,
@@ -497,7 +507,7 @@ class TaskScheduler
     /// since the request that added the task should not wait on an agent.
     public void schedule(UUID taskId)
     {
-        runTask(() nothrow {
+        runTask(() nothrow{
             try
             {
                 choose(taskId);
@@ -550,7 +560,9 @@ class TaskScheduler
             "<agent list>": agentList(all)
         ];
 
-        const conditions = ["description": project.get.description.strip.length > 0];
+        const conditions = [
+            "description": project.get.description.strip.length > 0
+        ];
         auto scheduler = schedulers.front;
         auto prompt = parser.parse(schedulePrompt, placeholders, conditions);
         auto systemPrompt = agentPrompt.systemPrompt(scheduler, "").strip;
@@ -560,7 +572,8 @@ class TaskScheduler
         try
         {
             string noSession;
-            answer = executor.prompt(scheduler.id.toString, prompt, false, noSession, systemPrompt).strip;
+            answer = executor.prompt(scheduler.id.toString, prompt, false, noSession, systemPrompt)
+                .strip;
         }
         catch (Exception e)
         {
@@ -572,7 +585,8 @@ class TaskScheduler
         Nullable!UUID chosen;
         if (answer != "none")
         {
-            auto matches = all.filter!(agent => !agent.taskScheduler && agent.id.toString == answer.toLower);
+            auto matches = all.filter!(agent => !agent.taskScheduler && agent.id.toString == answer
+                    .toLower);
             if (matches.empty)
             {
                 logError("Scheduler %s answered task %s with \"%s\", which is not an agent it could choose.",
@@ -676,7 +690,8 @@ class AgentDrafter
             .array;
         if (drafters.length == 0)
         {
-            return draftError("There is no agent to draft one with. Add an agent named Generic, or a task scheduler.");
+            return draftError(
+                "There is no agent to draft one with. Add an agent named Generic, or a task scheduler.");
         }
 
         auto models = runtimes.models();
@@ -694,7 +709,9 @@ class AgentDrafter
             "<runtime list>": runtimeList(runtimes.all(), models),
             "<agent list>": all.map!(agent => describe(agent)).join("\n")
         ];
-        auto prompt = parser.parse(quickCreatePrompt, placeholders, ["agents": all.length > 0]);
+        auto prompt = parser.parse(quickCreatePrompt, placeholders, [
+                "agents": all.length > 0
+            ]);
 
         foreach (drafter; drafters)
         {
@@ -739,7 +756,7 @@ class AgentDrafter
                 runtime.name, models
                 .filter!(model => model.runtime == runtime.id)
                 .map!(model => format("- ID %s (%s), effort levels: %s\n", model.id, model.name,
-                    model.effortLevels.map!(level => level.id).join(", ")))
+                model.effortLevels.map!(level => level.id).join(", ")))
                 .join))
             .join("\n\n");
     }
@@ -747,7 +764,8 @@ class AgentDrafter
     /// An existing agent, by the name it is known by and its labels.
     private static string describe(Agent agent)
     {
-        return format("- %s (labels: %s)", agent.name, agent.labels.length == 0 ? "none" : agent.labels.join(", "));
+        return format("- %s (labels: %s)", agent.name, agent.labels.length == 0 ? "none" : agent.labels.join(
+                ", "));
     }
 }
 
@@ -857,7 +875,8 @@ private Nullable!Json readDraft(string answer, Model[] models, string[string] de
     draft["effort"] = effort;
     draft["instructions"] = text("instructions");
     draft["labels"] = serializeToJson(labels);
-    draft["taskScheduler"] = scheduler !is null && scheduler.type == Json.Type.bool_ && scheduler.get!bool;
+    draft["taskScheduler"] = scheduler !is null && scheduler.type == Json.Type.bool_ && scheduler
+        .get!bool;
 
     return draft.nullable;
 }
@@ -866,10 +885,13 @@ unittest
 {
     auto models = [
         new Model("sonnet", "Claude Sonnet", "claude-code", [
-            new EffortLevel("default", "Default"), new EffortLevel("high", "High")
-        ])
+                new EffortLevel("default", "Default"),
+                new EffortLevel("high", "High")
+            ])
     ];
-    auto defaultIds = ["runtime": "claude-code", "model": "sonnet", "effort": "default"];
+    auto defaultIds = [
+        "runtime": "claude-code", "model": "sonnet", "effort": "default"
+    ];
 
     auto fenced = readDraft("```json\n{\"name\": \" Writer \", \"runtime\": \"claude-code\", \"model\": \"sonnet\","
             ~ " \"effort\": \"high\", \"labels\": [\"Docs\", \"docs\", \" \", 3], \"taskScheduler\": true}\n```",
