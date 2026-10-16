@@ -42,10 +42,13 @@ goes stale the first time the code changes. If the what matters, because it is n
 name or because a side effect is easy to miss, give it in one line as a summary rather than step
 by step.
 
-In the D source, a public method's doc comment, when it has one, follows
+In the D source, the doc comment of a public class, interface or method, when it has one, follows
 [Ddoc](https://dlang.org/spec/ddoc.html): a summary line, then a description if one is needed,
-then whichever of the `Params:`, `Returns:` and `Throws:` sections apply. A short `///` sentence
-is enough for anything else: private methods, free functions, classes and fields.
+then whichever of the `Params:`, `Returns:` and `Throws:` sections apply. A short sentence is
+enough for anything else: private methods, free functions and fields.
+
+A doc comment that fits on one line is written with `///`. One that runs over more lines goes in a
+`/** … */` block, never in a run of `///` lines. A plain `//` comment is not a doc comment.
 
 ```d
 /**

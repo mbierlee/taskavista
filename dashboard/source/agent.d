@@ -29,8 +29,10 @@ import prompt : PromptParser;
 import repository : AgentLogRepository, AgentRepository, DefaultRepository, LaneRepository, ProjectRepository,
     RuntimeRepository, TaskRepository;
 
-/// The permission mode Claude Code runs in. Auto, since in print mode there is
-/// nobody to answer a permission prompt.
+/**
+ * The permission mode Claude Code runs in. Auto, since in print mode there is
+ * nobody to answer a permission prompt.
+ */
 private enum claudeCodePermissionMode = "auto";
 
 interface IRuntime
@@ -61,12 +63,14 @@ interface IRuntime
     public string runTimeType();
 }
 
-/// Creates the directory an agent runs in for one run, or for every run of
-/// one session, if it is not there yet, and returns its path. Every runtime
-/// runs its agents in one, so an agent does not start out among the
-/// dashboard's files or pick up the settings of the project it would otherwise
-/// run in. They share a parent of their own, since tempDir falls back to the
-/// current directory when it finds no temp directory.
+/**
+ * Creates the directory an agent runs in for one run, or for every run of
+ * one session, if it is not there yet, and returns its path. Every runtime
+ * runs its agents in one, so an agent does not start out among the
+ * dashboard's files or pick up the settings of the project it would otherwise
+ * run in. They share a parent of their own, since tempDir falls back to the
+ * current directory when it finds no temp directory.
+ */
 string createAgentWorkDir(UUID agentId, UUID runId)
 {
     auto workDir = buildPath(tempDir, "taskavista-tmp", format("taskavista-agent-%s-%s", agentId, runId));
@@ -75,12 +79,14 @@ string createAgentWorkDir(UUID agentId, UUID runId)
     return workDir;
 }
 
-/// Writes a system prompt to a file, for a runtime that reads it from one, and
-/// returns the file's path. The file is named after a hash of the prompt, so
-/// the same prompt reuses the file it was written to before. It is never
-/// removed, since a run of another agent may be reading it. Written under a
-/// name of its own first and then moved into place, so a run started meanwhile
-/// with the same prompt never reads half of it.
+/**
+ * Writes a system prompt to a file, for a runtime that reads it from one, and
+ * returns the file's path. The file is named after a hash of the prompt, so
+ * the same prompt reuses the file it was written to before. It is never
+ * removed, since a run of another agent may be reading it. Written under a
+ * name of its own first and then moved into place, so a run started meanwhile
+ * with the same prompt never reads half of it.
+ */
 string createSystemPromptFile(string systemPrompt)
 {
     auto dir = buildPath(tempDir, "taskavista-tmp", "system-prompts");
@@ -99,16 +105,20 @@ string createSystemPromptFile(string systemPrompt)
     return path;
 }
 
-/// Runs a prompt on whichever runtime the agent runs on, and records the
-/// prompt and its answer in the agent's log, so no runtime has to look up the
-/// agent or do its own logging.
+/**
+ * Runs a prompt on whichever runtime the agent runs on, and records the
+ * prompt and its answer in the agent's log, so no runtime has to look up the
+ * agent or do its own logging.
+ */
 class RuntimeExecutor
 {
     private AgentRepository agents;
     private AgentLogRepository log;
 
-    /// Every registered runtime. A field, since Poodinis injects arrays only
-    /// into fields, not constructor parameters.
+    /**
+     * Every registered runtime. A field, since Poodinis injects arrays only
+     * into fields, not constructor parameters.
+     */
     @Inject private IRuntime[] runtimes;
 
     this(AgentRepository agents, AgentLogRepository log)
@@ -157,10 +167,12 @@ class RuntimeExecutor
         return result;
     }
 
-    /// Logs an error for every agent whose runtime is not one of the
-    /// registered ones, since its prompts would all fail. Logs rather than
-    /// throws, like the rest of start-up, so the server still starts when the
-    /// database is down.
+    /**
+     * Logs an error for every agent whose runtime is not one of the
+     * registered ones, since its prompts would all fail. Logs rather than
+     * throws, like the rest of start-up, so the server still starts when the
+     * database is down.
+     */
     public void logAgentsWithoutRuntime() nothrow
     {
         try
@@ -211,18 +223,22 @@ class RuntimeExecutor
     }
 }
 
-/// Runs an agent's prompt through the Claude Code command line, in print mode,
-/// with the model the agent is configured with.
+/**
+ * Runs an agent's prompt through the Claude Code command line, in print mode,
+ * with the model the agent is configured with.
+ */
 class ClaudeCodeRuntime : IRuntime
 {
     /// The id of this runtime in the runtimes table.
     enum id = "claude-code";
 
-    /// Lets agents call the API without auto mode's classifier, which judges
-    /// every command afresh and blocks one call while allowing the next. Given
-    /// on the command line rather than in a settings file, so it holds whatever
-    /// directory the agent runs in. The rules match the command as written, so
-    /// agent-help.txt asks for curl with the URL unquoted and nothing piped.
+    /**
+     * Lets agents call the API without auto mode's classifier, which judges
+     * every command afresh and blocks one call while allowing the next. Given
+     * on the command line rather than in a settings file, so it holds whatever
+     * directory the agent runs in. The rules match the command as written, so
+     * agent-help.txt asks for curl with the URL unquoted and nothing piped.
+     */
     private string[] allowedTools;
 
     this(Config config)
@@ -336,28 +352,36 @@ class ClaudeCodeRuntime : IRuntime
         return answer.strip;
     }
 
-    /// Claude Code has no name for its default effort level; it picks it
-    /// when none is given.
+    /**
+     * Claude Code has no name for its default effort level; it picks it
+     * when none is given.
+     */
     private static string[] effortArgs(Agent agent)
     {
         return agent.effort == defaultEffort ? [] : ["--effort", agent.effort];
     }
 }
 
-/// Tells an agent who it is and how it uses the API. Comes first in the system
-/// prompt of every interaction with an agent.
+/**
+ * Tells an agent who it is and how it uses the API. Comes first in the system
+ * prompt of every interaction with an agent.
+ */
 private enum agentPromptTemplate = import("system/agent.txt");
 
-/// Introduces the agent to the person chatting with it. Follows the agent prompt
-/// in the system prompt of a chat.
+/**
+ * Introduces the agent to the person chatting with it. Follows the agent prompt
+ * in the system prompt of a chat.
+ */
 private enum newChatPrompt = import("system/new-agent-chat.txt");
 
 /// How an agent uses the API, with the API's URL left to fill in.
 private enum agentHelpTemplate = import("agent-help.txt");
 
-/// How an agent uses the API. Given to an agent at the start of every
-/// interaction, and served to agents at /agent-help.txt, so it is written to
-/// make sense on its own.
+/**
+ * How an agent uses the API. Given to an agent at the start of every
+ * interaction, and served to agents at /agent-help.txt, so it is written to
+ * make sense on its own.
+ */
 class AgentHelp
 {
     /// The help, filled in once, since the URL comes from the config.
@@ -370,9 +394,11 @@ class AgentHelp
     }
 }
 
-/// The part of a system prompt that every interaction with an agent starts
-/// with, whatever the interaction is: who the agent is, its own instructions,
-/// and the API help.
+/**
+ * The part of a system prompt that every interaction with an agent starts
+ * with, whatever the interaction is: who the agent is, its own instructions,
+ * and the API help.
+ */
 class AgentPrompt
 {
     private PromptParser parser;
@@ -414,10 +440,12 @@ class AgentPrompt
     }
 }
 
-/// Passes a person's chat messages on to an agent. A chat is a session on the
-/// agent's runtime, started with the agent prompt and the new-chat prompt as its
-/// system prompt, which tell the agent who it is and where the person is. Every
-/// message goes as it is.
+/**
+ * Passes a person's chat messages on to an agent. A chat is a session on the
+ * agent's runtime, started with the agent prompt and the new-chat prompt as its
+ * system prompt, which tell the agent who it is and where the person is. Every
+ * message goes as it is.
+ */
 class AgentChat
 {
     private RuntimeExecutor executor;
@@ -475,12 +503,16 @@ class AgentChat
     }
 }
 
-/// Asks an agent which agent should work on the task, given the agents there are,
-/// and which lane the task moves to as that agent starts on it.
+/**
+ * Asks an agent which agent should work on the task, given the agents there are,
+ * and which lane the task moves to as that agent starts on it.
+ */
 private enum schedulePrompt = import("schedule-task.txt");
 
-/// Picks the agent that should work on a task, and moves the task on to the
-/// lane that shows it is being worked on.
+/**
+ * Picks the agent that should work on a task, and moves the task on to the
+ * lane that shows it is being worked on.
+ */
 class TaskScheduler
 {
     private AgentRepository agents;
@@ -613,9 +645,11 @@ class TaskScheduler
         }
     }
 
-    /// One block per agent that can be given a task, set apart by tags since an
-    /// agent's instructions run over several lines. Schedulers are left out,
-    /// since they hand out tasks rather than work on them.
+    /**
+     * One block per agent that can be given a task, set apart by tags since an
+     * agent's instructions run over several lines. Schedulers are left out,
+     * since they hand out tasks rather than work on them.
+     */
     private static string agentList(Agent[] all)
     {
         return all
@@ -624,8 +658,10 @@ class TaskScheduler
             .join("\n\n");
     }
 
-    /// An agent as the scheduler sees it. Labels are always given, as "none" when
-    /// there are none, while instructions are left out when there are none.
+    /**
+     * An agent as the scheduler sees it. Labels are always given, as "none" when
+     * there are none, while instructions are left out when there are none.
+     */
     private static string describe(Agent agent)
     {
         auto labels = agent.labels.length == 0 ? "none" : agent.labels.join(", ");
@@ -636,13 +672,17 @@ class TaskScheduler
     }
 }
 
-/// Asks the agent a task is assigned to to work on it, and which lane it goes
-/// to next.
+/**
+ * Asks the agent a task is assigned to to work on it, and which lane it goes
+ * to next.
+ */
 private enum executeTaskPrompt = import("execute-task.txt");
 
-/// Has the agent a task is assigned to work on it, then moves the task on to
-/// the lane the agent chose, adds the agent's result to its notes, and takes
-/// the task off the agent.
+/**
+ * Has the agent a task is assigned to work on it, then moves the task on to
+ * the lane the agent chose, adds the agent's result to its notes, and takes
+ * the task off the agent.
+ */
 class TaskExecutor
 {
     private AgentRepository agents;
@@ -772,9 +812,11 @@ class TaskExecutor
     }
 }
 
-/// Moves the task to the bottom of the lane an agent chose. A task that left
-/// its lane while the agent was at work was moved by someone else, whose move
-/// is kept.
+/**
+ * Moves the task to the bottom of the lane an agent chose. A task that left
+ * its lane while the agent was at work was moved by someone else, whose move
+ * is kept.
+ */
 private void moveOn(TaskRepository tasks, ChangeFeed changes, UUID taskId, UUID fromLaneId, UUID toLaneId,
     UUID projectId)
 {
@@ -796,8 +838,10 @@ private string laneList(Lane[] board)
         .join("\n");
 }
 
-/// A note per line, oldest first, since the agent reads them as the task's
-/// history.
+/**
+ * A note per line, oldest first, since the agent reads them as the task's
+ * history.
+ */
 private string noteList(TaskNote[] notes)
 {
     return notes.retro
@@ -805,8 +849,10 @@ private string noteList(TaskNote[] notes)
         .join("\n");
 }
 
-/// What the scheduler chose for a task: an agent and the lane the task moves
-/// to, or neither when no agent can do it.
+/**
+ * What the scheduler chose for a task: an agent and the lane the task moves
+ * to, or neither when no agent can do it.
+ */
 private struct Schedule
 {
     Nullable!UUID agentId;
@@ -893,8 +939,10 @@ unittest
     assert(readSchedule(writer.id.toString, all, board).isNull);
 }
 
-/// What an agent did with a task: the lane the task goes to next, and the
-/// result that goes in its notes.
+/**
+ * What an agent did with a task: the lane the task goes to next, and the
+ * result that goes in its notes.
+ */
 private struct TaskResult
 {
     UUID laneId;
@@ -959,10 +1007,12 @@ unittest
 /// Asks an agent to draft a new agent from a person's description of it.
 private enum quickCreatePrompt = import("quick-create-agent.txt");
 
-/// Drafts a new agent from a person's description of it, for the person to
-/// review in the new agent dialog before anything is created. Any agent can
-/// draft one, so the one named Generic is asked first, as the chat offers it
-/// first, and then each task scheduler, since there is always meant to be one.
+/**
+ * Drafts a new agent from a person's description of it, for the person to
+ * review in the new agent dialog before anything is created. Any agent can
+ * draft one, so the one named Generic is asked first, as the chat offers it
+ * first, and then each task scheduler, since there is always meant to be one.
+ */
 class AgentDrafter
 {
     private AgentRepository agents;
@@ -1055,8 +1105,10 @@ class AgentDrafter
         return draftError("No agent could draft one. The server's log says why.");
     }
 
-    /// Found by name, as the chat finds it, since it is an ordinary agent with
-    /// nothing else to tell it by.
+    /**
+     * Found by name, as the chat finds it, since it is an ordinary agent with
+     * nothing else to tell it by.
+     */
     private static bool isGeneric(Agent agent)
     {
         return agent.name.toLower == "generic";
@@ -1090,10 +1142,12 @@ private Json draftError(string message)
     return error;
 }
 
-/// The JSON object in an agent's answer, or an empty Nullable when there is
-/// none. Agents are asked for a bare JSON object but often wrap it in a code
-/// fence or a sentence, so the object is taken from between the first `{` and
-/// the last `}`.
+/**
+ * The JSON object in an agent's answer, or an empty Nullable when there is
+ * none. Agents are asked for a bare JSON object but often wrap it in a code
+ * fence or a sentence, so the object is taken from between the first `{` and
+ * the last `}`.
+ */
 private Nullable!Json answerObject(string answer)
 {
     const start = answer.indexOf('{');

@@ -10,10 +10,12 @@ import std.uuid : UUID;
 import model : Agent, AgentLogEntry, Default, EffortLevel, Lane, Model, Project, Runtime, Task, TaskAddRule, TaskNote,
     toTaskAddRule;
 
-/// The assignment to ai_paused in an update that sets managed_by_ai to $6. A
-/// project that stops being managed by AI has its agents paused, and one
-/// that starts being managed has them running; otherwise they stay as they
-/// were. On the right of a set, managed_by_ai is still the old value.
+/**
+ * The assignment to ai_paused in an update that sets managed_by_ai to $6. A
+ * project that stops being managed by AI has its agents paused, and one
+ * that starts being managed has them running; otherwise they stay as they
+ * were. On the right of a set, managed_by_ai is still the old value.
+ */
 private enum pausedOnceManaged =
     "ai_paused = case when managed_by_ai = $6 then ai_paused else not $6 end";
 
@@ -27,7 +29,11 @@ class ProjectRepository
         this.client = client;
     }
 
-    /// Every project, by name.
+    /**
+     * Gets every project.
+     *
+     * Returns: Every project, by name.
+     */
     Project[] all()
     {
         QueryParams query;
@@ -48,7 +54,14 @@ class ProjectRepository
         });
     }
 
-    /// The project with this id, or an empty Nullable when there is none.
+    /**
+     * Finds a project.
+     *
+     * Params:
+     *   id = The project's id.
+     *
+     * Returns: The project with this id, or an empty Nullable when there is none.
+     */
     Nullable!Project find(UUID id)
     {
         QueryParams query;
@@ -62,9 +75,17 @@ class ProjectRepository
         });
     }
 
-    /// The name of the project other than the one with id `except` that already
-    /// has this slug, or null when none has. Pass UUID.init for `except` to
-    /// check against every project.
+    /**
+     * Finds the project that already has a slug.
+     *
+     * Params:
+     *   slug = The slug to look for.
+     *   except = The id of the project not to count, or UUID.init to check against every
+     *     project.
+     *
+     * Returns: The name of the project other than `except` that has this slug, or an empty
+     *   Nullable when none has.
+     */
     Nullable!string slugOwner(string slug, UUID except)
     {
         QueryParams query;
@@ -79,9 +100,17 @@ class ProjectRepository
         });
     }
 
-    /// Inserts the project and fills in the id the database assigned it, and
-    /// whether its AI agents are paused, which they are unless it is managed
-    /// by AI. Returns the same instance, so it can be used as an expression.
+    /**
+     * Inserts a project.
+     *
+     * Fills in the id the database assigned it, and whether its AI agents are paused, which
+     * they are unless it is managed by AI.
+     *
+     * Params:
+     *   project = The project to insert.
+     *
+     * Returns: The same instance, so it can be used as an expression.
+     */
     Project add(Project project)
     {
         QueryParams query;
@@ -98,10 +127,17 @@ class ProjectRepository
         return project;
     }
 
-    /// Writes the project back over the row with its id, and fills in whether
-    /// its AI agents are paused now (see pausedOnceManaged); the aiPaused it
-    /// carries is not written. False when no row has that id, in which case
-    /// nothing was written.
+    /**
+     * Writes a project back over the row with its id.
+     *
+     * Fills in whether its AI agents are paused now (see pausedOnceManaged); the aiPaused it
+     * carries is not written.
+     *
+     * Params:
+     *   project = The project to write.
+     *
+     * Returns: False when no row has that id, in which case nothing was written.
+     */
     bool update(Project project)
     {
         QueryParams query;
@@ -122,8 +158,15 @@ class ProjectRepository
         });
     }
 
-    /// Pauses or resumes the project's AI agents. False when no row has that
-    /// id, in which case nothing was written.
+    /**
+     * Pauses or resumes a project's AI agents.
+     *
+     * Params:
+     *   id = The project's id.
+     *   paused = Whether its AI agents are to be paused.
+     *
+     * Returns: False when no row has that id, in which case nothing was written.
+     */
     bool setAiPaused(UUID id, bool paused)
     {
         QueryParams query;
@@ -135,9 +178,16 @@ class ProjectRepository
         });
     }
 
-    /// Inserts the project and its lanes, at the positions they carry, in one
-    /// transaction, and fills in the ids the database assigned them and, as
-    /// add does, whether the project's AI agents are paused.
+    /**
+     * Inserts a project and its lanes in one transaction.
+     *
+     * The lanes go in at the positions they carry. Fills in the ids the database assigned them
+     * and, as add does, whether the project's AI agents are paused.
+     *
+     * Params:
+     *   project = The project to insert.
+     *   lanes = Its lanes.
+     */
     void addWithLanes(Project project, Lane[] lanes)
     {
         client.pickConnection((scope connection) {
@@ -170,13 +220,20 @@ class ProjectRepository
         });
     }
 
-    /// Writes the project back over its row and gives it exactly these lanes,
-    /// in one transaction: the lanes with ids in `removed` are deleted, tasks
-    /// and all, the rest are written at the positions they carry, and a lane
-    /// with no id yet is inserted and given the one the database assigned. The
-    /// position constraint is deferred to the commit, since lanes trading
-    /// places briefly share one. Whether the project's AI agents are paused is
-    /// written and filled in as update does it.
+    /**
+     * Writes a project back over its row and gives it exactly these lanes, in one transaction.
+     *
+     * The lanes in `removed` are deleted, tasks and all, the rest are written at the positions
+     * they carry, and a lane with no id yet is inserted and given the one the database
+     * assigned. The position constraint is deferred to the commit, since lanes trading places
+     * briefly share one. Whether the project's AI agents are paused is written and filled in as
+     * update does it.
+     *
+     * Params:
+     *   project = The project to write.
+     *   lanes = The lanes it keeps or gains.
+     *   removed = The ids of the lanes it loses.
+     */
     void replaceWithLanes(Project project, Lane[] lanes, UUID[] removed)
     {
         client.pickConnection((scope connection) {
@@ -227,7 +284,14 @@ class ProjectRepository
         });
     }
 
-    /// Deletes the project with this id. False when no row had it.
+    /**
+     * Deletes a project.
+     *
+     * Params:
+     *   id = The project's id.
+     *
+     * Returns: False when no row had it.
+     */
     bool remove(UUID id)
     {
         QueryParams query;
@@ -263,7 +327,14 @@ class LaneRepository
         this.client = client;
     }
 
-    /// Every lane of the project, in board order.
+    /**
+     * Gets a project's lanes.
+     *
+     * Params:
+     *   projectId = The project's id.
+     *
+     * Returns: Every lane of the project, in board order.
+     */
     Lane[] ofProject(UUID projectId)
     {
         QueryParams query;
@@ -285,7 +356,14 @@ class LaneRepository
         });
     }
 
-    /// The lane with this id, or an empty Nullable when there is none.
+    /**
+     * Finds a lane.
+     *
+     * Params:
+     *   id = The lane's id.
+     *
+     * Returns: The lane with this id, or an empty Nullable when there is none.
+     */
     Nullable!Lane find(UUID id)
     {
         QueryParams query;
@@ -310,9 +388,17 @@ class LaneRepository
         });
     }
 
-    /// The position just after the project's last lane, not counting the lane
-    /// with id `except`; 0 when there are no others. Pass UUID.init for
-    /// `except` to count every lane of the project.
+    /**
+     * Gets the position just after a project's last lane.
+     *
+     * Params:
+     *   projectId = The project's id.
+     *   except = The id of the lane not to count, or UUID.init to count every lane of the
+     *     project.
+     *
+     * Returns: The position just after the last lane other than `except`; 0 when there are no
+     *   others.
+     */
     int nextPosition(UUID projectId, UUID except)
     {
         QueryParams query;
@@ -324,9 +410,17 @@ class LaneRepository
         });
     }
 
-    /// Whether a lane of the project other than the one with id `except`
-    /// already sits at this position. Pass UUID.init for `except` to check
-    /// against every lane of the project.
+    /**
+     * Checks whether a lane of a project already sits at a position.
+     *
+     * Params:
+     *   projectId = The project's id.
+     *   position = The position to check.
+     *   except = The id of the lane not to count, or UUID.init to check against every lane of
+     *     the project.
+     *
+     * Returns: Whether a lane other than `except` sits at this position.
+     */
     bool positionTaken(UUID projectId, int position, UUID except)
     {
         QueryParams query;
@@ -338,8 +432,16 @@ class LaneRepository
         });
     }
 
-    /// Inserts the lane and fills in the id the database assigned it.
-    /// Returns the same instance, so it can be used as an expression.
+    /**
+     * Inserts a lane.
+     *
+     * Fills in the id the database assigned it.
+     *
+     * Params:
+     *   lane = The lane to insert.
+     *
+     * Returns: The same instance, so it can be used as an expression.
+     */
     Lane add(Lane lane)
     {
         QueryParams query;
@@ -353,8 +455,14 @@ class LaneRepository
         return lane;
     }
 
-    /// Writes the lane back over the row with its id, leaving its project as
-    /// it is. False when no row has that id, in which case nothing was written.
+    /**
+     * Writes a lane back over the row with its id, leaving its project as it is.
+     *
+     * Params:
+     *   lane = The lane to write.
+     *
+     * Returns: False when no row has that id, in which case nothing was written.
+     */
     bool update(Lane lane)
     {
         QueryParams query;
@@ -366,7 +474,14 @@ class LaneRepository
         });
     }
 
-    /// Deletes the lane with this id. False when no row had it.
+    /**
+     * Deletes a lane.
+     *
+     * Params:
+     *   id = The lane's id.
+     *
+     * Returns: False when no row had it.
+     */
     bool remove(UUID id)
     {
         QueryParams query;
@@ -401,7 +516,14 @@ class TaskRepository
         this.client = client;
     }
 
-    /// Every task of the lane, in lane order.
+    /**
+     * Gets a lane's tasks.
+     *
+     * Params:
+     *   laneId = The lane's id.
+     *
+     * Returns: Every task of the lane, in lane order.
+     */
     Task[] ofLane(UUID laneId)
     {
         QueryParams query;
@@ -413,8 +535,15 @@ class TaskRepository
         });
     }
 
-    /// Every task of the project, lane by lane in board order, and in lane
-    /// order within each lane.
+    /**
+     * Gets a project's tasks.
+     *
+     * Params:
+     *   projectId = The project's id.
+     *
+     * Returns: Every task of the project, lane by lane in board order, and in lane order within
+     *   each lane.
+     */
     Task[] ofProject(UUID projectId)
     {
         QueryParams query;
@@ -427,7 +556,14 @@ class TaskRepository
         });
     }
 
-    /// The task with this id, or an empty Nullable when there is none.
+    /**
+     * Finds a task.
+     *
+     * Params:
+     *   id = The task's id.
+     *
+     * Returns: The task with this id, or an empty Nullable when there is none.
+     */
     Nullable!Task find(UUID id)
     {
         QueryParams query;
@@ -441,8 +577,15 @@ class TaskRepository
         });
     }
 
-    /// The task's notes, newest first. Empty both for a task with none and
-    /// for no task at all.
+    /**
+     * Gets a task's notes.
+     *
+     * Params:
+     *   taskId = The task's id.
+     *
+     * Returns: The task's notes, newest first. Empty both for a task with none and for no task
+     *   at all.
+     */
     TaskNote[] notes(UUID taskId)
     {
         QueryParams query;
@@ -483,8 +626,14 @@ class TaskRepository
         });
     }
 
-    /// The project the lane belongs to, or an empty Nullable when no lane has
-    /// that id.
+    /**
+     * Finds the project a lane belongs to.
+     *
+     * Params:
+     *   laneId = The lane's id.
+     *
+     * Returns: The project's id, or an empty Nullable when no lane has that id.
+     */
     Nullable!UUID projectOfLane(UUID laneId)
     {
         QueryParams query;
@@ -499,9 +648,16 @@ class TaskRepository
         });
     }
 
-    /// Whether the lane's project lets a new task be added to it: any lane
-    /// when its rule is any_lane, otherwise only the project's first lane.
-    /// False when no lane has that id.
+    /**
+     * Checks whether a lane's project lets a new task be added to it.
+     *
+     * Any lane does when the project's rule is any_lane, otherwise only its first lane does.
+     *
+     * Params:
+     *   laneId = The lane's id.
+     *
+     * Returns: Whether a new task may be added to the lane. False when no lane has that id.
+     */
     bool acceptsNewTasks(UUID laneId)
     {
         QueryParams query;
@@ -517,11 +673,18 @@ class TaskRepository
         });
     }
 
-    /// Inserts the task, with its creation in its notes, and fills in the
-    /// id the database assigned it, and its position when it carries none.
-    /// Returns the same instance, so it can be used as an expression.
-    ///
-    /// Throws: `PositionConflict` when another task of the lane is at its position.
+    /**
+     * Inserts a task, with its creation in its notes.
+     *
+     * Fills in the id the database assigned it, and its position when it carries none.
+     *
+     * Params:
+     *   task = The task to insert.
+     *
+     * Returns: The same instance, so it can be used as an expression.
+     *
+     * Throws: `PositionConflict` when another task of the lane is at its position.
+     */
     Task add(Task task)
     {
         client.pickConnection((scope connection) {
@@ -549,12 +712,19 @@ class TaskRepository
         return task;
     }
 
-    /// Writes the task back over the row with its id, lane included, and adds
-    /// a change of lane or description to its notes. A task carrying no
-    /// position goes to the bottom of its lane, and is given that position.
-    /// False when no row has that id, in which case nothing was written.
-    ///
-    /// Throws: `PositionConflict` when another task of the lane is at its position.
+    /**
+     * Writes a task back over the row with its id, lane included.
+     *
+     * Adds a change of lane or description to its notes. A task carrying no position goes to
+     * the bottom of its lane, and is given that position.
+     *
+     * Params:
+     *   task = The task to write.
+     *
+     * Returns: False when no row has that id, in which case nothing was written.
+     *
+     * Throws: `PositionConflict` when another task of the lane is at its position.
+     */
     bool update(Task task)
     {
         return client.pickConnection((scope connection) {
@@ -603,12 +773,19 @@ class TaskRepository
         });
     }
 
-    /// Puts the task in lane `laneId` just above `before`, or at the bottom
-    /// for UUID.init, and adds a change of lane to its notes. The position
-    /// constraint is deferred to the commit, since the shift can briefly give
-    /// two tasks the same position.
-    ///
-    /// Throws: `PositionConflict` when `before` is no longer in the lane.
+    /**
+     * Moves a task, and adds a change of lane to its notes.
+     *
+     * The position constraint is deferred to the commit, since the shift can briefly give two
+     * tasks the same position.
+     *
+     * Params:
+     *   id = The task's id.
+     *   laneId = The lane it moves to.
+     *   before = The task it goes just above, or UUID.init for the bottom of the lane.
+     *
+     * Throws: `PositionConflict` when `before` is no longer in the lane.
+     */
     void move(UUID id, UUID laneId, UUID before)
     {
         client.pickConnection((scope connection) {
@@ -669,8 +846,15 @@ class TaskRepository
         });
     }
 
-    /// The AI agent the task is assigned to, or an empty Nullable when it is
-    /// assigned to none or there is no such task.
+    /**
+     * Finds the AI agent a task is assigned to.
+     *
+     * Params:
+     *   id = The task's id.
+     *
+     * Returns: The agent's id, or an empty Nullable when the task is assigned to none or there
+     *   is no such task.
+     */
     Nullable!UUID assignedAiAgent(UUID id)
     {
         QueryParams query;
@@ -688,9 +872,17 @@ class TaskRepository
         });
     }
 
-    /// Assigns the task to an AI agent, or to none when `agentId` is null, and
-    /// adds the assignment to its notes when it puts the task with another
-    /// agent. False when no row has that id.
+    /**
+     * Assigns a task to an AI agent.
+     *
+     * Adds the assignment to its notes when it puts the task with another agent.
+     *
+     * Params:
+     *   id = The task's id.
+     *   agentId = The agent's id, or null to assign the task to none.
+     *
+     * Returns: False when no row has that id.
+     */
     bool assignAiAgent(UUID id, Nullable!UUID agentId)
     {
         return client.pickConnection((scope connection) {
@@ -738,29 +930,57 @@ class TaskRepository
         });
     }
 
-    /// Adds to the task's notes that its scheduler failed to assign it to an
-    /// agent. Adds nothing, and is false, when the task or the scheduler is gone.
+    /**
+     * Adds to a task's notes that its scheduler failed to assign it to an agent.
+     *
+     * Params:
+     *   id = The task's id.
+     *   schedulerId = The scheduler's id.
+     *
+     * Returns: False, with nothing added, when the task or the scheduler is gone.
+     */
     bool recordSchedulingFailure(UUID id, UUID schedulerId)
     {
         return recordAgentOutcome(id, schedulerId, `Scheduling by "%s" failed`);
     }
 
-    /// Adds to the task's notes that its scheduler found no agent for it.
-    /// Adds nothing, and is false, when the task or the scheduler is gone.
+    /**
+     * Adds to a task's notes that its scheduler found no agent for it.
+     *
+     * Params:
+     *   id = The task's id.
+     *   schedulerId = The scheduler's id.
+     *
+     * Returns: False, with nothing added, when the task or the scheduler is gone.
+     */
     bool recordNoAgentFound(UUID id, UUID schedulerId)
     {
         return recordAgentOutcome(id, schedulerId, `Not assigned, since "%s" found no agent for it`);
     }
 
-    /// Adds to the task's notes that the agent it is assigned to failed to work
-    /// on it. Adds nothing, and is false, when the task or the agent is gone.
+    /**
+     * Adds to a task's notes that the agent it is assigned to failed to work on it.
+     *
+     * Params:
+     *   id = The task's id.
+     *   agentId = The agent's id.
+     *
+     * Returns: False, with nothing added, when the task or the agent is gone.
+     */
     bool recordExecutionFailure(UUID id, UUID agentId)
     {
         return recordAgentOutcome(id, agentId, `Working on it failed for "%s"`);
     }
 
-    /// Adds a note of any text to the task. Adds nothing, and is false, when
-    /// the task is gone.
+    /**
+     * Adds a note of any text to a task.
+     *
+     * Params:
+     *   id = The task's id.
+     *   note = The note's text.
+     *
+     * Returns: False, with nothing added, when the task is gone.
+     */
     bool addNote(UUID id, string note)
     {
         QueryParams query;
@@ -772,8 +992,14 @@ class TaskRepository
         });
     }
 
-    /// Adds to the task's notes that there was no task scheduler agent to
-    /// assign it. Adds nothing, and is false, when the task is gone.
+    /**
+     * Adds to a task's notes that there was no task scheduler agent to assign it.
+     *
+     * Params:
+     *   id = The task's id.
+     *
+     * Returns: False, with nothing added, when the task is gone.
+     */
     bool recordNoScheduler(UUID id)
     {
         QueryParams query;
@@ -798,7 +1024,14 @@ class TaskRepository
         });
     }
 
-    /// Deletes the task with this id. False when no row had it.
+    /**
+     * Deletes a task.
+     *
+     * Params:
+     *   id = The task's id.
+     *
+     * Returns: False when no row had it.
+     */
     bool remove(UUID id)
     {
         QueryParams query;
@@ -831,14 +1064,20 @@ private enum recordDescriptionChange = "insert into task_notes (task_id, note) v
 private enum recordAssignment = "insert into task_notes (task_id, note)"
     ~ " select $1, format('Assigned to \"%s\"', name) from agents where id = $2";
 
-/// $1 is the task, $2 the agent that scheduled it or worked on it, and $3 the
-/// note, a format with the agent's name as its one %s. A join rather than
-/// values, so a task deleted while the agent was at it gets nothing.
+/**
+ * $1 is the task, $2 the agent that scheduled it or worked on it, and $3 the
+ * note, a format with the agent's name as its one %s. A join rather than
+ * values, so a task deleted while the agent was at it gets nothing.
+ */
 private enum recordAgentOutcomeNote = "insert into task_notes (task_id, note)"
     ~ " select t.id, format($3, a.name) from tasks t, agents a where t.id = $1 and a.id = $2 returning id";
 
-/// Thrown by a task write whose place in its lane clashes with the lane as it
-/// stands once locked, which a check made before the write cannot rule out.
+/**
+ * Thrown by a task write whose place in its lane clashes with the lane as it stands once
+ * locked.
+ *
+ * A check made before the write cannot rule this out.
+ */
 class PositionConflict : Exception
 {
     this(string message) @safe pure nothrow
@@ -847,10 +1086,12 @@ class PositionConflict : Exception
     }
 }
 
-/// Locks the lane's row until the transaction ends. Every write that picks or
-/// checks a task's position in the lane takes this lock first, so that writes
-/// arriving together run one after the other instead of all reading the same
-/// free position and failing on the unique constraint at commit.
+/**
+ * Locks the lane's row until the transaction ends. Every write that picks or
+ * checks a task's position in the lane takes this lock first, so that writes
+ * arriving together run one after the other instead of all reading the same
+ * free position and failing on the unique constraint at commit.
+ */
 private void lockLane(Connection)(scope Connection connection, UUID laneId)
 {
     QueryParams query;
@@ -859,9 +1100,11 @@ private void lockLane(Connection)(scope Connection connection, UUID laneId)
     connection.execParams(query);
 }
 
-/// Gives a task carrying no position the one just after its lane's last other
-/// task, and throws `PositionConflict` when another task of the lane already
-/// has the one it carries. The lane must be locked.
+/**
+ * Gives a task carrying no position the one just after its lane's last other
+ * task, and throws `PositionConflict` when another task of the lane already
+ * has the one it carries. The lane must be locked.
+ */
 private void placeTask(Connection)(scope Connection connection, Task task)
 {
     if (task.position.isNull)
@@ -905,8 +1148,11 @@ private Task toTask(immutable Row row)
     );
 }
 
-/// Reads the runtimes and models tables, which hold fixed data: they are
-/// written only by the schema, never through the application.
+/**
+ * Reads the runtimes and models tables.
+ *
+ * They hold fixed data: they are written only by the schema, never through the application.
+ */
 class RuntimeRepository
 {
     private PostgresClient client;
@@ -916,7 +1162,11 @@ class RuntimeRepository
         this.client = client;
     }
 
-    /// Every runtime, by name.
+    /**
+     * Gets every runtime.
+     *
+     * Returns: Every runtime, by name.
+     */
     Runtime[] all()
     {
         QueryParams query;
@@ -938,7 +1188,11 @@ class RuntimeRepository
         });
     }
 
-    /// Every model, by runtime and then by name, with the effort levels it takes.
+    /**
+     * Gets every model.
+     *
+     * Returns: Every model, by runtime and then by name, with the effort levels it takes.
+     */
     Model[] models()
     {
         QueryParams query;
@@ -976,7 +1230,14 @@ class RuntimeRepository
         });
     }
 
-    /// The name of the runtime with this id, or an empty Nullable when there is none.
+    /**
+     * Finds a runtime's name.
+     *
+     * Params:
+     *   id = The runtime's id.
+     *
+     * Returns: The name of the runtime with this id, or an empty Nullable when there is none.
+     */
     Nullable!string name(string id)
     {
         QueryParams query;
@@ -991,7 +1252,15 @@ class RuntimeRepository
         });
     }
 
-    /// Whether the runtime offers a model with this id.
+    /**
+     * Checks whether a runtime offers a model.
+     *
+     * Params:
+     *   runtime = The runtime's id.
+     *   model = The model's id.
+     *
+     * Returns: Whether the runtime offers the model.
+     */
     bool offers(string runtime, string model)
     {
         QueryParams query;
@@ -1003,7 +1272,15 @@ class RuntimeRepository
         });
     }
 
-    /// Whether the model takes the effort level with this id.
+    /**
+     * Checks whether a model takes an effort level.
+     *
+     * Params:
+     *   model = The model's id.
+     *   effort = The effort level's id.
+     *
+     * Returns: Whether the model takes the effort level.
+     */
     bool takes(string model, string effort)
     {
         QueryParams query;
@@ -1026,8 +1303,14 @@ class AgentRepository
         this.client = client;
     }
 
-    /// Every agent, the task schedulers first, since they direct the others,
-    /// and by name within each group. There can be any number of schedulers.
+    /**
+     * Gets every agent.
+     *
+     * There can be any number of task schedulers.
+     *
+     * Returns: Every agent, the task schedulers first, since they direct the others, and by
+     *   name within each group.
+     */
     Agent[] all()
     {
         QueryParams query;
@@ -1061,7 +1344,14 @@ class AgentRepository
         });
     }
 
-    /// The agent with this id, or an empty Nullable when there is none.
+    /**
+     * Finds an agent.
+     *
+     * Params:
+     *   id = The agent's id.
+     *
+     * Returns: The agent with this id, or an empty Nullable when there is none.
+     */
     Nullable!Agent find(UUID id)
     {
         QueryParams query;
@@ -1083,8 +1373,15 @@ class AgentRepository
         });
     }
 
-    /// Whether an agent other than the one with id `except` already has this
-    /// name. Pass UUID.init for `except` to check against every agent.
+    /**
+     * Checks whether an agent already has a name.
+     *
+     * Params:
+     *   name = The name to look for.
+     *   except = The id of the agent not to count, or UUID.init to check against every agent.
+     *
+     * Returns: Whether an agent other than `except` has this name.
+     */
     bool nameTaken(string name, UUID except)
     {
         QueryParams query;
@@ -1096,9 +1393,16 @@ class AgentRepository
         });
     }
 
-    /// Inserts the agent and its labels in one transaction, and fills in the
-    /// id the database assigned it. Returns the same instance, so it can be
-    /// used as an expression.
+    /**
+     * Inserts an agent and its labels in one transaction.
+     *
+     * Fills in the id the database assigned it.
+     *
+     * Params:
+     *   agent = The agent to insert.
+     *
+     * Returns: The same instance, so it can be used as an expression.
+     */
     Agent add(Agent agent)
     {
         QueryParams query;
@@ -1121,9 +1425,15 @@ class AgentRepository
         return agent;
     }
 
-    /// Writes the agent back over the row with its id, and gives it exactly
-    /// its labels, in one transaction. False when no row has that id, in
-    /// which case nothing was written.
+    /**
+     * Writes an agent back over the row with its id, and gives it exactly its labels, in one
+     * transaction.
+     *
+     * Params:
+     *   agent = The agent to write.
+     *
+     * Returns: False when no row has that id, in which case nothing was written.
+     */
     bool update(Agent agent)
     {
         QueryParams query;
@@ -1154,7 +1464,14 @@ class AgentRepository
         });
     }
 
-    /// Deletes the agent. False when no row has that id.
+    /**
+     * Deletes an agent.
+     *
+     * Params:
+     *   id = The agent's id.
+     *
+     * Returns: False when no row has that id.
+     */
     bool remove(UUID id)
     {
         QueryParams query;
@@ -1220,8 +1537,15 @@ class AgentLogRepository
         this.client = client;
     }
 
-    /// The agent's log, newest first. Empty both for an agent with none and
-    /// for no agent at all.
+    /**
+     * Gets an agent's log.
+     *
+     * Params:
+     *   agentId = The agent's id.
+     *
+     * Returns: The agent's log, newest first. Empty both for an agent with none and for no agent
+     *   at all.
+     */
     AgentLogEntry[] ofAgent(UUID agentId)
     {
         QueryParams query;
@@ -1252,8 +1576,16 @@ class AgentLogRepository
         });
     }
 
-    /// Inserts the entry and fills in the id and time the database assigned
-    /// it. Returns the same instance, so it can be used as an expression.
+    /**
+     * Inserts a log entry.
+     *
+     * Fills in the id and time the database assigned it.
+     *
+     * Params:
+     *   entry = The entry to insert.
+     *
+     * Returns: The same instance, so it can be used as an expression.
+     */
     AgentLogEntry add(AgentLogEntry entry)
     {
         QueryParams query;
@@ -1269,8 +1601,15 @@ class AgentLogRepository
         return entry;
     }
 
-    /// Records the agent's answer to the entry's prompt. False when no row has
-    /// that id, in which case nothing was written.
+    /**
+     * Records an agent's answer to a log entry's prompt.
+     *
+     * Params:
+     *   id = The entry's id.
+     *   result = The agent's answer.
+     *
+     * Returns: False when no row has that id, in which case nothing was written.
+     */
     bool setResult(UUID id, string result)
     {
         QueryParams query;
@@ -1283,8 +1622,11 @@ class AgentLogRepository
     }
 }
 
-/// Reads the defaults table, a value per key. Written only by the schema for
-/// now: nothing in the UI changes a default yet.
+/**
+ * Reads the defaults table, a value per key.
+ *
+ * Written only by the schema for now: nothing in the UI changes a default yet.
+ */
 class DefaultRepository
 {
     private PostgresClient client;
@@ -1294,7 +1636,11 @@ class DefaultRepository
         this.client = client;
     }
 
-    /// Every default, by key.
+    /**
+     * Gets every default.
+     *
+     * Returns: Every default, by key.
+     */
     Default[] all()
     {
         QueryParams query;

@@ -9,8 +9,10 @@ import vibe.http.websockets : WebSocket;
 import std.algorithm.mutation : remove;
 import std.uuid : UUID;
 
-/// What happened to a resource. Only a task can be moved, as the moveTask
-/// call does; any other write to one is a change.
+/**
+ * What happened to a resource. Only a task can be moved, as the moveTask
+ * call does; any other write to one is a change.
+ */
 enum Change : string
 {
     created = "created",
@@ -71,16 +73,20 @@ class ChangeFeed
         publish("lane", change, ["laneId": laneId, "projectId": projectId]);
     }
 
-    /// A project was created, changed or deleted. A change to it may have
-    /// changed its lanes as well, as the saveProjectSettings call does.
+    /**
+     * A project was created, changed or deleted. A change to it may have
+     * changed its lanes as well, as the saveProjectSettings call does.
+     */
     public void project(Change change, UUID projectId)
     {
         publish("project", change, ["projectId": projectId]);
     }
 
-    /// A note was added to the task `taskId` of the project `projectId` by
-    /// anything other than a write to the task itself, whose own event already
-    /// stands for its note.
+    /**
+     * A note was added to the task `taskId` of the project `projectId` by
+     * anything other than a write to the task itself, whose own event already
+     * stands for its note.
+     */
     public void note(UUID taskId, UUID projectId)
     {
         publish("note", Change.created, ["taskId": taskId, "projectId": projectId]);
@@ -140,8 +146,10 @@ class ChangeFeed
         }
     }
 
-    /// Logs rather than throws, since a socket that fails is only a UI that
-    /// will reconnect.
+    /**
+     * Logs rather than throws, since a socket that fails is only a UI that
+     * will reconnect.
+     */
     private static void forward(Subscriber subscriber, WebSocket socket) nothrow
     {
         try

@@ -6,10 +6,12 @@ import std.ascii : isDigit;
 import std.format : format;
 import std.uni : NFC, isAlpha, isMark, isNumber, normalize, toLower;
 
-/// Whether `value` is a slug: words of lowercase letters, digits and the
-/// marks that go with them, in any script, joined by single hyphens and in
-/// NFC, as `slugify` makes them. The slug check constraint in sql/init.sql
-/// cannot say "letter" for every script, so it only checks the shape.
+/**
+ * Whether `value` is a slug: words of lowercase letters, digits and the
+ * marks that go with them, in any script, joined by single hyphens and in
+ * NFC, as `slugify` makes them. The slug check constraint in sql/init.sql
+ * cannot say "letter" for every script, so it only checks the shape.
+ */
 bool isSlug(string value) @safe pure
 {
     return value.length > 0 && value.normalize!NFC == value
@@ -18,11 +20,13 @@ bool isSlug(string value) @safe pure
                 && word.all!(c => c.isWordChar && c.toLower == c));
 }
 
-/// Lowercases `name` and joins its runs of letters, digits and marks, in any
-/// script, with single hyphens: "Q3 finance" becomes "q3-finance" and
-/// "Café Ü" becomes "café-ü". Anything else is dropped as a separator, so the
-/// result can be empty. NFC, so that a name typed with a combining accent and
-/// one typed with an accented letter make the same slug.
+/**
+ * Lowercases `name` and joins its runs of letters, digits and marks, in any
+ * script, with single hyphens: "Q3 finance" becomes "q3-finance" and
+ * "Café Ü" becomes "café-ü". Anything else is dropped as a separator, so the
+ * result can be empty. NFC, so that a name typed with a combining accent and
+ * one typed with an accented letter make the same slug.
+ */
 string slugify(string name) @safe pure
 {
     string slug;
@@ -48,9 +52,11 @@ string slugify(string name) @safe pure
     return slug;
 }
 
-/// Whether `name` has a letter or digit in it, in any script, which is what
-/// the name check constraint in sql/init.sql asks of a project's name. A
-/// mark alone does not count: it belongs to a letter.
+/**
+ * Whether `name` has a letter or digit in it, in any script, which is what
+ * the name check constraint in sql/init.sql asks of a project's name. A
+ * mark alone does not count: it belongs to a letter.
+ */
 bool hasLetterOrDigit(string name) @safe pure
 {
     return name.any!(c => (c.isAlpha && !c.isMark) || c.isNumber);
@@ -93,8 +99,10 @@ unittest
     assert(!hasLetterOrDigit("\u0301"));
 }
 
-/// Whether `value` passes the color check constraint in sql/init.sql:
-/// ^#[0-9a-f]{6}$
+/**
+ * Whether `value` passes the color check constraint in sql/init.sql:
+ * ^#[0-9a-f]{6}$
+ */
 bool isHexColor(string value) @safe pure
 {
     return value.length == 7 && value[0] == '#'
@@ -112,8 +120,10 @@ unittest
     assert(!isHexColor(""));
 }
 
-/// Single-quotes a value for a libpq connection string, escaping backslashes
-/// and quotes.
+/**
+ * Single-quotes a value for a libpq connection string, escaping backslashes
+ * and quotes.
+ */
 string quoted(string value)
 {
     return "'" ~ value.replace(`\`, `\\`).replace("'", `\'`) ~ "'";

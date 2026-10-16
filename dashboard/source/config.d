@@ -9,8 +9,10 @@ import std.format : format;
 
 import helpers : quoted;
 
-/// Config is a class rather than a struct so the container can hand it out;
-/// Poodinis resolves by class type.
+/**
+ * Config is a class rather than a struct so the container can hand it out;
+ * Poodinis resolves by class type.
+ */
 class Config
 {
     @optional string[] bindAddresses = ["::1", "127.0.0.1"];
@@ -30,8 +32,10 @@ struct DatabaseConfig
 
 enum configPath = "config.json";
 
-/// Reads the config file, falling back to defaults when it is not present.
-/// Fields left out of the file keep their default as well.
+/**
+ * Reads the config file, falling back to defaults when it is not present.
+ * Fields left out of the file keep their default as well.
+ */
 Config loadConfig()
 {
     if (!existsFile(configPath))
@@ -43,8 +47,10 @@ Config loadConfig()
     return deserializeJson!Config(readFileUTF8(configPath));
 }
 
-/// Builds the libpq connection string. Values are quoted, since a password is
-/// free to contain spaces or quotes.
+/**
+ * Builds the libpq connection string. Values are quoted, since a password is
+ * free to contain spaces or quotes.
+ */
 string connectionString(DatabaseConfig database)
 {
     return format("host=%s port=%s dbname=%s user=%s password=%s",
@@ -52,9 +58,11 @@ string connectionString(DatabaseConfig database)
         database.user.quoted, database.password.quoted);
 }
 
-/// Where agents reach the API, without a trailing slash. Localhost, since agents
-/// run on the same machine as the server, and the default bind addresses are
-/// both of localhost's.
+/**
+ * Where agents reach the API, without a trailing slash. Localhost, since agents
+ * run on the same machine as the server, and the default bind addresses are
+ * both of localhost's.
+ */
 string apiUrl(Config config)
 {
     return format("http://localhost:%s", config.port);

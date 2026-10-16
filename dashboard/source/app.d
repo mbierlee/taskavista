@@ -20,8 +20,10 @@ import api.rpc : RpcApi, RpcService, answerNoSuchCall, enforceJsonObjectBody;
 import changes : ChangeFeed;
 import schema : installSchemaWhenEmpty;
 
-/// Wires the application together. Everything resolvable is registered here, so
-/// the classes themselves stay free of container knowledge.
+/**
+ * Wires the application together. Everything resolvable is registered here, so
+ * the classes themselves stay free of container knowledge.
+ */
 class DashboardContext : ApplicationContext
 {
     @Inject private Config config;
@@ -55,9 +57,11 @@ class DashboardContext : ApplicationContext
         container.register!AgentDrafter;
     }
 
-    /// The pool comes from a factory method because its connection string is
-    /// config, not a dependency. One instance is shared, which is the point of a
-    /// pool. It connects lazily, so the server still starts with no database running.
+    /**
+     * The pool comes from a factory method because its connection string is
+     * config, not a dependency. One instance is shared, which is the point of a
+     * pool. It connects lazily, so the server still starts with no database running.
+     */
     @Component PostgresClient postgresClient()
     {
         return new PostgresClient(config.database.connectionString,
@@ -126,11 +130,13 @@ void main()
     runApplication();
 }
 
-/// Serves the web UI's page for a path no file matched. Its screens are client-side
-/// routes (see public/app.js), so the server does not know them: each gets the
-/// same page, and app.js works out which screen to show from the URL. A path
-/// under /api/ or ending in a file extension is left alone, since it is a
-/// mistyped endpoint or a missing file, and a 404 says so better than a page of HTML.
+/**
+ * Serves the web UI's page for a path no file matched. Its screens are client-side
+ * routes (see public/app.js), so the server does not know them: each gets the
+ * same page, and app.js works out which screen to show from the URL. A path
+ * under /api/ or ending in a file extension is left alone, since it is a
+ * mistyped endpoint or a missing file, and a 404 says so better than a page of HTML.
+ */
 HTTPServerRequestDelegateS serveUiRoutes(string page, HTTPFileServerSettings settings)
 {
     return (scope HTTPServerRequest req, scope HTTPServerResponse res) {

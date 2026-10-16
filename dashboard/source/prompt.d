@@ -98,10 +98,12 @@ class PromptParser
         return result[];
     }
 
-    /// One pass from left to right, rather than a replace per placeholder, so that
-    /// a value that contains a placeholder's text, as the person's message may, is
-    /// put in as it is instead of being replaced in turn. Where two placeholders
-    /// match at the same place, the longer one wins.
+    /**
+     * One pass from left to right, rather than a replace per placeholder, so that
+     * a value that contains a placeholder's text, as the person's message may, is
+     * put in as it is instead of being replaced in turn. Where two placeholders
+     * match at the same place, the longer one wins.
+     */
     private string replacePlaceholders(string text, const string[string] placeholders)
     {
         auto result = appender!string;

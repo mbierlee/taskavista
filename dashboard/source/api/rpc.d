@@ -20,16 +20,20 @@ import api.checks : enforceNamed, enforceSlug, enforceValid;
 import model : Lane, Project, TaskAddRule;
 import repository : AgentRepository, LaneRepository, PositionConflict, ProjectRepository, TaskRepository;
 
-/// The outcome of a move: the destination lane's order afterwards, which is
-/// all a caller that already holds the tasks lacks.
+/**
+ * The outcome of a move: the destination lane's order afterwards, which is
+ * all a caller that already holds the tasks lacks.
+ */
 struct MoveTaskResult
 {
     UUID laneId;
     UUID[] taskIds;
 }
 
-/// A lane as the project settings screen drafts it. Its place in the list it
-/// is sent in is its position, so it carries none of its own.
+/**
+ * A lane as the project settings screen drafts it. Its place in the list it
+ * is sent in is its position, so it carries none of its own.
+ */
 struct LaneDraft
 {
     /// Null for a lane the draft adds.
@@ -64,10 +68,12 @@ struct SendChatMessageResult
     string sessionId;
 }
 
-/// Operations that are not reading or writing one resource. Every call is a
-/// POST, and its arguments are the fields of the JSON body, named as the
-/// parameters are. Arguments and results are ids and the values the call
-/// needs, never whole resources: those are the REST API's to serve.
+/**
+ * Operations that are not reading or writing one resource. Every call is a
+ * POST, and its arguments are the fields of the JSON body, named as the
+ * parameters are. Arguments and results are ids and the values the call
+ * needs, never whole resources: those are the REST API's to serve.
+ */
 @path("/api/rpc/v1")
 interface RpcApi
 {
@@ -76,37 +82,47 @@ interface RpcApi
     MoveTaskResult moveTask(UUID taskId, UUID laneId,
         Nullable!UUID beforeTaskId = Nullable!UUID.init) @safe;
 
-    /// Creates the project with these lanes, in this order, or nothing at all.
-    /// A project managed by AI starts with its agents running.
+    /**
+     * Creates the project with these lanes, in this order, or nothing at all.
+     * A project managed by AI starts with its agents running.
+     */
     @method(HTTPMethod.POST) @path("createProject")
     CreateProjectResult createProject(string name, string description = null,
         TaskAddRule taskAddRule = TaskAddRule.firstLane, bool managedByAi = false,
         LaneDraft[] lanes = null) @safe;
 
-    /// Gives the project this name, description, rule, AI setting and exactly
-    /// these lanes, in this order, or changes nothing. A lane of the project
-    /// left out is deleted. Turning the AI setting off pauses the project's
-    /// agents, and turning it on starts them.
+    /**
+     * Gives the project this name, description, rule, AI setting and exactly
+     * these lanes, in this order, or changes nothing. A lane of the project
+     * left out is deleted. Turning the AI setting off pauses the project's
+     * agents, and turning it on starts them.
+     */
     @method(HTTPMethod.POST) @path("saveProjectSettings")
     SaveProjectSettingsResult saveProjectSettings(UUID projectId, string name, string description,
         TaskAddRule taskAddRule, bool managedByAi, LaneDraft[] lanes) @safe;
 
-    /// Pauses the project's AI agents, or resumes them, and changes nothing
-    /// else about the project. Only a project managed by AI can be resumed.
+    /**
+     * Pauses the project's AI agents, or resumes them, and changes nothing
+     * else about the project. Only a project managed by AI can be resumed.
+     */
     @method(HTTPMethod.POST) @path("setAiPaused")
     SetAiPausedResult setAiPaused(UUID projectId, bool paused) @safe;
 
-    /// Sends a chat message to an agent and answers with its reply, once the
-    /// agent has given one. `sessionId` null starts a chat, in the project
-    /// `projectId`, or in none when that is null; otherwise the message goes
-    /// in that chat, and `projectId` is not read.
+    /**
+     * Sends a chat message to an agent and answers with its reply, once the
+     * agent has given one. `sessionId` null starts a chat, in the project
+     * `projectId`, or in none when that is null; otherwise the message goes
+     * in that chat, and `projectId` is not read.
+     */
     @method(HTTPMethod.POST) @path("sendChatMessage")
     SendChatMessageResult sendChatMessage(UUID agentId, string message,
         Nullable!UUID projectId = Nullable!UUID.init, Nullable!string sessionId = Nullable!string.init) @safe;
 
-    /// Has an agent draft a new agent from what the person wrote it should do,
-    /// without creating it. Answers with the agent's fields, for the new agent
-    /// dialog to show, or with only an `error` when no agent could draft one.
+    /**
+     * Has an agent draft a new agent from what the person wrote it should do,
+     * without creating it. Answers with the agent's fields, for the new agent
+     * dialog to show, or with only an `error` when no agent could draft one.
+     */
     @method(HTTPMethod.POST) @path("draftAgent")
     Json draftAgent(string description) @safe;
 }
@@ -272,8 +288,10 @@ class RpcService : RpcApi
     }
 }
 
-/// The drafts as lanes, each at the position of its place in the list, and
-/// checked as the lanes REST API checks a lane.
+/**
+ * The drafts as lanes, each at the position of its place in the list, and
+ * checked as the lanes REST API checks a lane.
+ */
 private Lane[] toLanes(LaneDraft[] drafts)
 {
     Lane[] lanes;
@@ -323,8 +341,10 @@ void enforceJsonObjectBody(HTTPServerRequest request, HTTPServerResponse respons
     }
 }
 
-/// Answers a request under `/api/rpc/v1` that no call took, with a 404 that has
-/// a `statusMessage` like every other failure, rather than vibe's plain-text page.
+/**
+ * Answers a request under `/api/rpc/v1` that no call took, with a 404 that has
+ * a `statusMessage` like every other failure, rather than vibe's plain-text page.
+ */
 void answerNoSuchCall(HTTPServerRequest request, HTTPServerResponse response) @safe
 {
     const message = request.method == HTTPMethod.POST

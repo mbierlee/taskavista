@@ -91,8 +91,10 @@ class ProjectService : ProjectApi
     }
 }
 
-/// The lanes REST API. A project's lanes are listed and created under the
-/// project; a single lane is addressed by its own id.
+/**
+ * The lanes REST API. A project's lanes are listed and created under the
+ * project; a single lane is addressed by its own id.
+ */
 @path("/api/rest/v1")
 interface LaneApi
 {
@@ -182,8 +184,10 @@ class LaneService : LaneApi
     }
 }
 
-/// The lane itself is left out of the count, so that a replace does not
-/// place it after its own old position.
+/**
+ * The lane itself is left out of the count, so that a replace does not
+ * place it after its own old position.
+ */
 private void placeAtEndWhenUnplaced(Lane lane, LaneRepository repository)
 {
     if (lane.position.isNull)
@@ -192,18 +196,22 @@ private void placeAtEndWhenUnplaced(Lane lane, LaneRepository repository)
     }
 }
 
-/// Applies the unique (project_id, position) constraint early, so that a clash
-/// comes back as a 409. The lane's own id is left out, so a replace may keep
-/// its position.
+/**
+ * Applies the unique (project_id, position) constraint early, so that a clash
+ * comes back as a 409. The lane's own id is left out, so a replace may keep
+ * its position.
+ */
 private void enforcePositionFree(Lane lane, LaneRepository repository)
 {
     enforceHTTP(!repository.positionTaken(lane.projectId, lane.position.get, lane.id),
         HTTPStatus.conflict, format("Another lane of the project is already at position %s.", lane.position.get));
 }
 
-/// The tasks REST API. A lane's tasks are listed and created under the lane,
-/// and a whole board's can be listed under the project; a single task is
-/// addressed by its own id, and so are its notes.
+/**
+ * The tasks REST API. A lane's tasks are listed and created under the lane,
+ * and a whole board's can be listed under the project; a single task is
+ * addressed by its own id, and so are its notes.
+ */
 @path("/api/rest/v1")
 interface TaskApi
 {
@@ -311,8 +319,10 @@ class TaskService : TaskApi
         return created;
     }
 
-    /// Has the task's agent work on it, logging what goes wrong, since there is
-    /// no request to answer it.
+    /**
+     * Has the task's agent work on it, logging what goes wrong, since there is
+     * no request to answer it.
+     */
     private void execute(UUID taskId) nothrow
     {
         try
@@ -364,8 +374,10 @@ class TaskService : TaskApi
     }
 }
 
-/// Answers a task's place in its lane being taken with a 409. The repository
-/// checks it, since only there is the lane locked against other writes.
+/**
+ * Answers a task's place in its lane being taken with a 409. The repository
+ * checks it, since only there is the lane locked against other writes.
+ */
 private T answerConflict(T)(lazy T write)
 {
     try
@@ -378,8 +390,10 @@ private T answerConflict(T)(lazy T write)
     }
 }
 
-/// The runtimes and models REST API. Both are fixed data, installed with the
-/// schema, so they can only be read.
+/**
+ * The runtimes and models REST API. Both are fixed data, installed with the
+ * schema, so they can only be read.
+ */
 @path("/api/rest/v1")
 interface RuntimeApi
 {
@@ -431,8 +445,10 @@ interface AgentApi
     void deleteAgent(UUID _id) @safe;
 }
 
-/// Serves the agents API out of the repository, checking an agent's runtime
-/// and model against the runtimes'.
+/**
+ * Serves the agents API out of the repository, checking an agent's runtime
+ * and model against the runtimes'.
+ */
 class AgentService : AgentApi
 {
     private AgentRepository repository;
@@ -491,9 +507,11 @@ class AgentService : AgentApi
     }
 }
 
-/// Applies the agents' foreign keys early, so that an unknown runtime, a
-/// model its runtime does not offer, or an effort level the model does not
-/// take, comes back as a 400 rather than as a failed write.
+/**
+ * Applies the agents' foreign keys early, so that an unknown runtime, a
+ * model its runtime does not offer, or an effort level the model does not
+ * take, comes back as a 400 rather than as a failed write.
+ */
 private void enforceModelOffered(Agent agent, RuntimeRepository runtimes)
 {
     const runtime = runtimes.name(agent.runtime);
@@ -504,17 +522,21 @@ private void enforceModelOffered(Agent agent, RuntimeRepository runtimes)
         format("The model '%s' takes no effort level '%s'.", agent.model, agent.effort));
 }
 
-/// Applies the unique name constraint early, so that a clash comes back as a
-/// 409. The agent's own id is left out, so a replace may keep its name.
+/**
+ * Applies the unique name constraint early, so that a clash comes back as a
+ * 409. The agent's own id is left out, so a replace may keep its name.
+ */
 private void enforceNameFree(Agent agent, AgentRepository repository)
 {
     enforceHTTP(!repository.nameTaken(agent.name, agent.id), HTTPStatus.conflict,
         format("An agent called “%s” already exists. Pick another name.", agent.name));
 }
 
-/// The defaults REST API: the value each app-wide setting starts from, such
-/// as the runtime, model and effort level a new agent is offered. Read-only, since nothing
-/// changes a default yet.
+/**
+ * The defaults REST API: the value each app-wide setting starts from, such
+ * as the runtime, model and effort level a new agent is offered. Read-only, since nothing
+ * changes a default yet.
+ */
 @path("/api/rest/v1")
 interface DefaultApi
 {

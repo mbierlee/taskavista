@@ -12,9 +12,11 @@ import helpers : hasLetterOrDigit, isHexColor, isSlug, slugify;
 import model : Agent, Lane, Project, Task;
 import repository : ProjectRepository;
 
-/// The same rules as the name check constraints, applied early so that a bad
-/// name comes back as a 400 rather than as a failed insert. A letter or digit
-/// is asked for so that a slug can always be made from the name.
+/**
+ * The same rules as the name check constraints, applied early so that a bad
+ * name comes back as a 400 rather than as a failed insert. A letter or digit
+ * is asked for so that a slug can always be made from the name.
+ */
 void enforceNamed(Project project) @safe
 {
     enforceHTTP(project !is null && project.name.strip.length > 0,
@@ -23,15 +25,19 @@ void enforceNamed(Project project) @safe
         "That name is not allowed. A name needs at least one letter or digit.");
 }
 
-/// Slugs the web UI's routes use for screens of their own under /projects/,
-/// which a project's URL would collide with.
+/**
+ * Slugs the web UI's routes use for screens of their own under /projects/,
+ * which a project's URL would collide with.
+ */
 immutable string[] reservedSlugs = ["new"];
 
-/// Checked before the write so that a bad slug comes back as a 400 or 409, not
-/// as a failed insert. Sets `project.slug` when the client sent none, which
-/// needs the name to have passed `enforceNamed`. A clash of a slug the client
-/// never chose is reported against the name, since the name is all a person
-/// in the UI can change.
+/**
+ * Checked before the write so that a bad slug comes back as a 400 or 409, not
+ * as a failed insert. Sets `project.slug` when the client sent none, which
+ * needs the name to have passed `enforceNamed`. A clash of a slug the client
+ * never chose is reported against the name, since the name is all a person
+ * in the UI can change.
+ */
 void enforceSlug(Project project, ProjectRepository repository)
 {
     const derived = project.slug.length == 0;
@@ -52,9 +58,11 @@ void enforceSlug(Project project, ProjectRepository repository)
         : format("Another project already has the slug '%s'.", project.slug));
 }
 
-/// The lane check constraints in sql/init.sql, applied early so that a bad
-/// field comes back as a 400 rather than as a failed write. The colour is
-/// lowercased first, since the column only takes lowercase hex.
+/**
+ * The lane check constraints in sql/init.sql, applied early so that a bad
+ * field comes back as a 400 rather than as a failed write. The colour is
+ * lowercased first, since the column only takes lowercase hex.
+ */
 void enforceValid(Lane lane) @safe
 {
     enforceHTTP(lane !is null && lane.name.strip.length > 0,
@@ -67,8 +75,10 @@ void enforceValid(Lane lane) @safe
         "A lane's color is '#' and six hex digits, like #8fa6ff.");
 }
 
-/// The task check constraints in sql/init.sql, applied early so that a bad
-/// field comes back as a 400 rather than as a failed write.
+/**
+ * The task check constraints in sql/init.sql, applied early so that a bad
+ * field comes back as a 400 rather than as a failed write.
+ */
 void enforceValid(Task task) @safe
 {
     enforceHTTP(task !is null && task.description.strip.length > 0,
@@ -77,9 +87,11 @@ void enforceValid(Task task) @safe
         "A task's position is 0 or more.");
 }
 
-/// The agent check constraints in sql/init.sql, applied early so that a bad
-/// field comes back as a 400 rather than as a failed write. The labels are
-/// lowercased first, since the column only takes lowercase.
+/**
+ * The agent check constraints in sql/init.sql, applied early so that a bad
+ * field comes back as a 400 rather than as a failed write. The labels are
+ * lowercased first, since the column only takes lowercase.
+ */
 void enforceValid(Agent agent) @safe
 {
     enforceHTTP(agent !is null && agent.name.strip.length > 0,

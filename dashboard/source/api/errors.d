@@ -11,20 +11,24 @@ import std.conv : to;
 import std.string : stripRight;
 import std.uuid : UUIDParsingException;
 
-/// Answers a request under `/api/rest/v1` that no endpoint took, with a 404
-/// that has a `statusMessage` like every other failure, rather than vibe's
-/// plain-text page. A trailing slash and an unsupported method end up here too.
+/**
+ * Answers a request under `/api/rest/v1` that no endpoint took, with a 404
+ * that has a `statusMessage` like every other failure, rather than vibe's
+ * plain-text page. A trailing slash and an unsupported method end up here too.
+ */
 void answerNoSuchEndpoint(HTTPServerRequest request, HTTPServerResponse response) @safe
 {
     response.writeJsonBody(["statusMessage": "There is no " ~ request.method.to!string ~ " "
         ~ request.requestPath.toString ~ "."], HTTPStatus.notFound);
 }
 
-/// Answers a failed request as vibe does, except that a message vibe wrote
-/// about the body, the path or the arguments is put in the caller's terms. vibe's own words are about vibe
-/// and D: a missing argument is a "`body_` parameter", after a kind of
-/// parameter in its REST generator, a JSON type is `int_`, a field names its D
-/// struct, and a malformed UUID is told in the words of Phobos's parser.
+/**
+ * Answers a failed request as vibe does, except that a message vibe wrote
+ * about the body, the path or the arguments is put in the caller's terms. vibe's own words are about vibe
+ * and D: a missing argument is a "`body_` parameter", after a kind of
+ * parameter in its REST generator, a JSON type is `int_`, a field names its D
+ * struct, and a malformed UUID is told in the words of Phobos's parser.
+ */
 void renderApiError(HTTPServerRequest request, HTTPServerResponse response, RestErrorInformation error) @safe
 {
     auto message = error.exception.msg;
@@ -55,9 +59,11 @@ void renderApiError(HTTPServerRequest request, HTTPServerResponse response, Rest
     response.writeJsonBody(["statusMessage": message]);
 }
 
-/// The message for a body, path id or argument vibe could not read, in the
-/// caller's terms, or null when `exception` is not about reading one. The formats are vibe's, so
-/// a vibe upgrade can change them; an unmatched one passes through as it is.
+/**
+ * The message for a body, path id or argument vibe could not read, in the
+ * caller's terms, or null when `exception` is not about reading one. The formats are vibe's, so
+ * a vibe upgrade can change them; an unmatched one passes through as it is.
+ */
 private string argumentMessage(Exception exception) @safe
 {
     if (auto malformed = cast(UUIDParsingException) exception)
