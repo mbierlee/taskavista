@@ -7,6 +7,18 @@ other projects alone.
 [else]
 The person is not currently in a project.
 [end]
+[if working-dir]
+
+The project's files are in its working directory, <working dir>. Other agents may be at work
+in it at the same time, so read a file again just before you change it.
+[end]
+
+Your current directory is your scratch space, which is yours alone for this chat. Keep
+anything temporary in it, such as drafts, downloads and the output of commands you only need
+for a moment.
+[if working-dir]
+Keep it out of the project's working directory, which is only for what should be left behind.
+[end]
 [if description]
 
 The project's description says what it is about, and may give directions for the agents

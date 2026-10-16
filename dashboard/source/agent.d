@@ -28,6 +28,7 @@ import model : Agent, AgentLogEntry, EffortLevel, Lane, Model, Project, Runtime,
 import prompt : PromptParser;
 import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
     IRuntimeRepository, ITaskRepository;
+import workingdir : ProjectWorkingDirs;
 
 /**
  * The permission mode Claude Code runs in. Auto, since in print mode there is
@@ -51,6 +52,12 @@ interface IRuntime
      *   systemPrompt = Instructions that frame the conversation, or null for
      *     none. Given with the prompt that starts a session, the runtime keeps
      *     them for the rest of it where it can.
+     *   workingDir = The directory the agent works on, such as its project's
+     *     working directory, or null for none.
+     *   scratchSpace = The directory the agent keeps what is temporary in, or
+     *     null for one the runtime makes, of the run or of the session.
+     *   runIn = Which of the two the agent runs in; the other is open to it
+     *     too. A session is continued in the directory it started in.
      *
      * Returns: The agent's answer, with leading and trailing whitespace stripped.
      *
@@ -58,25 +65,37 @@ interface IRuntime
      *   runtime fails.
      */
     public string prompt(Agent agent, string prompt, bool createSession, ref string sessionId,
-        string systemPrompt = null);
+        string systemPrompt = null, string workingDir = null, string scratchSpace = null,
+        RunIn runIn = RunIn.workingDir);
 
     public string runTimeType();
 }
 
 /**
- * Creates the directory an agent runs in for one run, or for every run of
- * one session, if it is not there yet, and returns its path. Every runtime
- * runs its agents in one, so an agent does not start out among the
- * dashboard's files or pick up the settings of the project it would otherwise
- * run in. They share a parent of their own, since tempDir falls back to the
+ * Which directory an agent runs in. The working directory when there is one,
+ * except for a session that has to outlast it being renamed, which runs in
+ * its scratch space.
+ */
+enum RunIn
+{
+    workingDir,
+    scratchSpace
+}
+
+/**
+ * Creates the scratch space of an agent's run, or of every run of one session,
+ * if it is not there yet, and returns its path. It is where the agent keeps
+ * what is temporary, and where it runs when it has no working directory, so
+ * an agent does not start out among the dashboard's files or pick up its
+ * settings. They share a parent of their own, since tempDir falls back to the
  * current directory when it finds no temp directory.
  */
-string createAgentWorkDir(UUID agentId, UUID runId)
+string createAgentScratchSpace(UUID agentId, UUID runId)
 {
-    auto workDir = buildPath(tempDir, "taskavista-tmp", format("taskavista-agent-%s-%s", agentId, runId));
-    mkdirRecurse(workDir);
+    auto scratchSpace = buildPath(tempDir, "taskavista-tmp", format("taskavista-scratch-%s-%s", agentId, runId));
+    mkdirRecurse(scratchSpace);
 
-    return workDir;
+    return scratchSpace;
 }
 
 /**
@@ -139,6 +158,10 @@ class RuntimeExecutor
      *     id it is set to.
      *   systemPrompt = Instructions that frame the conversation, or null for
      *     none.
+     *   workingDir = The directory the agent works on, or null for none.
+     *   scratchSpace = The directory for what is temporary, or null for one
+     *     the runtime makes.
+     *   runIn = Which of the two the agent runs in.
      *
      * Returns: The agent's answer.
      *
@@ -146,7 +169,8 @@ class RuntimeExecutor
      *   agent has no session `sessionId`, or the runtime throws.
      */
     public string prompt(string agentId, string prompt, bool createSession, ref string sessionId,
-        string systemPrompt = null)
+        string systemPrompt = null, string workingDir = null, string scratchSpace = null,
+        RunIn runIn = RunIn.workingDir)
     {
         auto agent = agents.find(UUID(agentId));
         if (agent.isNull)
@@ -161,7 +185,8 @@ class RuntimeExecutor
         auto entry = log.add(new AgentLogEntry(UUID.init, agent.get.id, SysTime.init, prompt,
                 Nullable!string.init));
 
-        auto result = runtime.prompt(agent.get, prompt, createSession, sessionId, systemPrompt);
+        auto result = runtime.prompt(agent.get, prompt, createSession, sessionId, systemPrompt, workingDir,
+            scratchSpace, runIn);
         log.setResult(entry.id, result);
 
         return result;
@@ -251,18 +276,38 @@ class ClaudeCodeRuntime : IRuntime
 
     /**
      * Claude Code resumes a session only from the directory it ran in, so
-     * every run of a session runs in the directory named after it.
+     * every run of a session that runs in a scratch space of the runtime's
+     * runs in the one named after it.
      *
-     * The directory is made again if it has gone, since the session is kept
+     * The scratch space is made again if it has gone, since the session is kept
      * in Claude Code's own files, not in it. Running in it also keeps one
      * agent from resuming another's session.
      */
     public string prompt(Agent agent, string prompt, bool createSession, ref string sessionId,
-        string systemPrompt = null)
+        string systemPrompt = null, string workingDir = null, string scratchSpace = null,
+        RunIn runIn = RunIn.workingDir)
     {
+        // Claude Code lets an agent write only in the directory it runs in and
+        // the ones added to it.
+        static string[] addDir(string dir)
+        {
+            return dir is null ? [] : ["--add-dir", dir];
+        }
+
+        string runAs(UUID runId, string[] sessionArgs)
+        {
+            if (runIn == RunIn.workingDir && workingDir !is null)
+            {
+                return run(agent, prompt, systemPrompt, workingDir, addDir(scratchSpace) ~ sessionArgs);
+            }
+
+            auto scratch = scratchSpace is null ? createAgentScratchSpace(agent.id, runId) : scratchSpace;
+            return run(agent, prompt, systemPrompt, scratch, addDir(workingDir) ~ sessionArgs);
+        }
+
         if (!createSession)
         {
-            return run(agent, prompt, systemPrompt, createAgentWorkDir(agent.id, randomUUID()), [
+            return runAs(randomUUID(), [
                     "--no-session-persistence"
                 ]);
         }
@@ -270,7 +315,7 @@ class ClaudeCodeRuntime : IRuntime
         if (sessionId is null)
         {
             auto newSessionId = randomUUID();
-            auto answer = run(agent, prompt, systemPrompt, createAgentWorkDir(agent.id, newSessionId), [
+            auto answer = runAs(newSessionId, [
                     "--session-id", newSessionId.toString
                 ]);
 
@@ -291,7 +336,7 @@ class ClaudeCodeRuntime : IRuntime
             throw new Exception(format("Agent %s has no session %s.", agent.name, sessionId));
         }
 
-        return run(agent, prompt, systemPrompt, createAgentWorkDir(agent.id, session), [
+        return runAs(session, [
                 "--resume", session.toString
             ]);
     }
@@ -302,15 +347,15 @@ class ClaudeCodeRuntime : IRuntime
     }
 
     /// Returns Claude Code's answer. Throws when Claude Code exits with an error.
-    private string run(Agent agent, string prompt, string systemPrompt, string workDir, string[] sessionArgs)
+    private string run(Agent agent, string prompt, string systemPrompt, string dir, string[] runArgs)
     {
         // Appended to Claude Code's own system prompt, since replacing that
         // would take away its instructions for using its tools. Claude Code
         // records the one a session starts with and reuses it on resume. Given
         // in a file rather than as an argument, which the kernel caps at 128 KiB
-        // and cuts off at the first NUL. The file is kept out of the work
-        // directory, which is meant to become the project's own directory, so
-        // nothing of the dashboard's should be left in it.
+        // and cuts off at the first NUL. The file is kept out of the directory
+        // the agent runs in, so nothing of the dashboard's is left among the
+        // project's files.
         string[] systemPromptArgs;
         if (systemPrompt !is null)
         {
@@ -336,8 +381,8 @@ class ClaudeCodeRuntime : IRuntime
             // Right after the rules, since --allowedTools takes every argument
             // up to the next option.
             "--model", agent.model
-        ] ~ effortArgs(agent) ~ sessionArgs ~ systemPromptArgs,
-        Redirect.stdin | Redirect.stdout, null, ProcessConfig.none, NativePath(workDir));
+        ] ~ effortArgs(agent) ~ runArgs ~ systemPromptArgs,
+        Redirect.stdin | Redirect.stdout, null, ProcessConfig.none, NativePath(dir));
 
         claude.stdin.write(prompt);
         claude.stdin.close();
@@ -445,18 +490,25 @@ class AgentPrompt
  * agent's runtime, started with the agent prompt and the new-chat prompt as its
  * system prompt, which tell the agent who it is and where the person is. Every
  * message goes as it is.
+ *
+ * A chat in a project runs in its scratch space with the project's working
+ * directory open to it, rather than in the working directory, since a session
+ * is continued in the directory it started in, and the working directory moves
+ * when the project's slug changes.
  */
 class AgentChat
 {
     private RuntimeExecutor executor;
     private PromptParser parser;
     private AgentPrompt agentPrompt;
+    private ProjectWorkingDirs workingDirs;
 
-    this(RuntimeExecutor executor, PromptParser parser, AgentPrompt agentPrompt)
+    this(RuntimeExecutor executor, PromptParser parser, AgentPrompt agentPrompt, ProjectWorkingDirs workingDirs)
     {
         this.executor = executor;
         this.parser = parser;
         this.agentPrompt = agentPrompt;
+        this.workingDirs = workingDirs;
     }
 
     /**
@@ -465,8 +517,9 @@ class AgentChat
      *
      * Params:
      *   agent = The agent to chat with.
-     *   project = The project the person is in, or null when they are in none.
-     *     Only told to the agent when the chat starts.
+     *   project = The project the chat started in, or null when it started in
+     *     none. Only told to the agent when the chat starts, but its working
+     *     directory is opened to the agent with every message.
      *   message = What the person wrote.
      *   sessionId = The chat's session, or null to start a new chat, whose
      *     session it is set to.
@@ -478,12 +531,14 @@ class AgentChat
      */
     public string send(Agent agent, Nullable!Project project, string message, ref string sessionId)
     {
+        auto workingDir = project.isNull ? null : workingDirs.ensure(project.get.slug);
         if (sessionId !is null)
         {
-            return executor.prompt(agent.id.toString, message, true, sessionId);
+            return executor.prompt(agent.id.toString, message, true, sessionId, null, workingDir, null,
+                RunIn.scratchSpace);
         }
 
-        string[string] placeholders;
+        string[string] placeholders = ["<working dir>": workingDir];
         if (!project.isNull)
         {
             placeholders["<project name>"] = project.get.name;
@@ -493,13 +548,14 @@ class AgentChat
 
         const conditions = [
             "project": !project.isNull,
-            "description": !project.isNull && project.get.description.strip.length > 0
+            "description": !project.isNull && project.get.description.strip.length > 0,
+            "working-dir": workingDir !is null
         ];
 
         auto chatPrompt = parser.parse(newChatPrompt, placeholders, conditions);
 
         return executor.prompt(agent.id.toString, message, true, sessionId,
-            agentPrompt.systemPrompt(agent, chatPrompt));
+            agentPrompt.systemPrompt(agent, chatPrompt), workingDir, null, RunIn.scratchSpace);
     }
 }
 
@@ -713,9 +769,11 @@ class TaskExecutor : ITaskExecutor
     private AgentPrompt agentPrompt;
     private RuntimeExecutor executor;
     private IEventPublisher events;
+    private ProjectWorkingDirs workingDirs;
 
     this(IAgentRepository agents, ITaskRepository tasks, ILaneRepository lanes, IProjectRepository projects,
-        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events)
+        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events,
+        ProjectWorkingDirs workingDirs)
     {
         this.agents = agents;
         this.tasks = tasks;
@@ -725,6 +783,7 @@ class TaskExecutor : ITaskExecutor
         this.agentPrompt = agentPrompt;
         this.executor = executor;
         this.events = events;
+        this.workingDirs = workingDirs;
     }
 
     public void execute(UUID taskId)
@@ -761,6 +820,21 @@ class TaskExecutor : ITaskExecutor
             return;
         }
 
+        // Made before the prompt, which names them. Caught here, so the task's
+        // notes say the agent could not get to work.
+        auto workingDir = workingDirs.ensure(project.get.slug);
+        string scratchSpace;
+        try
+        {
+            scratchSpace = createAgentScratchSpace(agent.get.id, randomUUID());
+        }
+        catch (Exception e)
+        {
+            logError("Agent %s could not work on task %s: %s", agent.get.name, taskId, e.msg);
+            noted(tasks.recordExecutionFailure(taskId, agent.get.id), taskId, project.get.id);
+            return;
+        }
+
         auto board = lanes.ofProject(project.get.id);
         auto notes = tasks.notes(taskId);
         string[string] placeholders = [
@@ -771,12 +845,15 @@ class TaskExecutor : ITaskExecutor
             "<lane name>": lane.get.name,
             "<task description>": task.get.description.strip,
             "<note list>": noteList(notes),
-            "<lane list>": laneList(board)
+            "<lane list>": laneList(board),
+            "<working dir>": workingDir,
+            "<scratch space>": scratchSpace
         ];
 
         const conditions = [
             "notes": notes.length > 0,
-            "project-description": project.get.description.strip.length > 0
+            "project-description": project.get.description.strip.length > 0,
+            "working-dir": workingDir !is null
         ];
 
         auto prompt = parser.parse(executeTaskPrompt, placeholders, conditions);
@@ -787,7 +864,8 @@ class TaskExecutor : ITaskExecutor
         try
         {
             string noSession;
-            answer = executor.prompt(agent.get.id.toString, prompt, false, noSession, systemPrompt);
+            answer = executor.prompt(agent.get.id.toString, prompt, false, noSession, systemPrompt, workingDir,
+                scratchSpace);
         }
         catch (Exception e)
         {

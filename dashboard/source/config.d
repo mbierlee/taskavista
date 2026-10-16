@@ -18,6 +18,14 @@ class Config
     @optional string[] bindAddresses = ["::1", "127.0.0.1"];
     @optional ushort port = 8080;
     @optional DatabaseConfig database;
+
+    /**
+     * The directory under which each project gets its own working directory,
+     * the one its agents work in. Outside the repository, since Claude Code
+     * also reads the settings and CLAUDE.md of the directories above the one
+     * it runs in. Not used yet.
+     */
+    @optional string projectWorkingDirRoot = "~/taskavista-projects";
 }
 
 struct DatabaseConfig

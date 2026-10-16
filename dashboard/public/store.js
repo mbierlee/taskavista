@@ -62,8 +62,8 @@ export const store = new Store({
   agents: { status: "loading", list: [], runtimes: [], models: [] },
   /* The agent chat: whether it shows, its tabs, and the session of the one
      showing. A session is { id, agentId, messages, unread, waiting,
-     agentSessionId }, with agentId null while it is a "New chat" tab with no
-     agent picked. Kept for the page's lifetime only, so a reload ends every
+     agentSessionId, projectId }, with agentId null while it is a "New chat"
+     tab with no agent picked, and projectId the project the chat started in. Kept for the page's lifetime only, so a reload ends every
      chat. */
   chat: { open: false, sessions: [], current: null },
 });

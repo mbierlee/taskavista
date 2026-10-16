@@ -852,6 +852,7 @@ function newChat() {
     unread: 0,
     waiting: false,
     agentSessionId: null,
+    projectId: null,
   };
   updateChat({ open: true, sessions: [...sessions, session], current: session.id });
 }
@@ -907,7 +908,9 @@ function pickAgent(sessionId, agentId) {
    message is answered before the next is sent, since each continues the
    last. The project the person is in is the selected one, which the
    Taskavista settings keep too; it is only told to the agent when the chat
-   starts. A reply for a chat that has ended in the meantime is dropped. */
+   starts, but is sent with every message after that, since the agent reaches
+   the project's working directory only through it. A reply for a chat that
+   has ended in the meantime is dropped. */
 async function sendMessage(sessionId, text) {
   const session = store.state.chat.sessions.find((s) => s.id === sessionId);
   if (!session || session.waiting) {
@@ -920,15 +923,16 @@ async function sendMessage(sessionId, text) {
   }));
 
   const { list } = store.state.projects;
-  const project =
-    list.find((p) => p.slug === store.state.currentProjectSlug) ?? null;
+  const projectId = session.agentSessionId
+    ? session.projectId
+    : (list.find((p) => p.slug === store.state.currentProjectSlug)?.id ?? null);
   let reply;
   let agentSessionId = session.agentSessionId;
   try {
     const result = await sendJson("POST", "/api/rpc/v1/sendChatMessage", {
       agentId: session.agentId,
       message: text,
-      projectId: project?.id ?? null,
+      projectId,
       sessionId: session.agentSessionId,
     });
     reply = { from: "agent", text: result.reply };
@@ -945,6 +949,7 @@ async function sendMessage(sessionId, text) {
     messages: [...s.messages, reply],
     waiting: false,
     agentSessionId,
+    projectId: agentSessionId ? projectId : null,
     unread: seen ? s.unread : s.unread + 1,
   }));
 }

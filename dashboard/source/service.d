@@ -15,6 +15,7 @@ import repository : IAgentRepository, IDefaultRepository, ILaneRepository, IProj
     ITaskRepository, PositionConflict;
 import result : OperationResult, Result, failure, success;
 import servicemodel : ProjectWithLanes;
+import workingdir : ProjectWorkingDirs;
 
 /**
  * Slugs the web UI's routes use for screens of their own under /projects/,
@@ -24,19 +25,23 @@ immutable string[] reservedSlugs = ["new"];
 
 /**
  * The rules a project and its lanes are read and written by. Every write it makes is reported to
- * the event stream once it has succeeded.
+ * the event stream once it has succeeded. A project's working directory is made along with it and
+ * moves along with its slug.
  */
 class ProjectService
 {
     private IProjectRepository repository;
     private ILaneRepository lanes;
     private IEventPublisher events;
+    private ProjectWorkingDirs workingDirs;
 
-    this(IProjectRepository repository, ILaneRepository lanes, IEventPublisher events)
+    this(IProjectRepository repository, ILaneRepository lanes, IEventPublisher events,
+        ProjectWorkingDirs workingDirs)
     {
         this.repository = repository;
         this.lanes = lanes;
         this.events = events;
+        this.workingDirs = workingDirs;
     }
 
     /**
@@ -69,15 +74,18 @@ class ProjectService
         if (project.id == UUID.init)
         {
             repository.add(project);
+            workingDirs.createIfRootExists(project.slug);
             events.project(Event.created, project.id);
             return projectSuccess(project);
         }
 
-        if (!repository.update(project))
+        auto old = repository.find(project.id);
+        if (old.isNull || !repository.update(project))
         {
             return projectFailure!Project(new ProjectNotFoundError);
         }
 
+        workingDirs.rename(old.get.slug, project.slug);
         events.project(Event.changed, project.id);
         return projectSuccess(project);
     }
@@ -123,11 +131,13 @@ class ProjectService
             }
 
             repository.addWithLanes(project, projectWithLanes.lanes);
+            workingDirs.createIfRootExists(project.slug);
             events.project(Event.created, project.id);
             return projectSuccess(projectWithLanes);
         }
 
-        if (repository.find(project.id).isNull)
+        auto old = repository.find(project.id);
+        if (old.isNull)
         {
             return projectFailure!ProjectWithLanes(new ProjectNotFoundError);
         }
@@ -171,6 +181,7 @@ class ProjectService
 
         auto removed = existing.filter!(id => id !in kept).array;
         repository.replaceWithLanes(project, projectWithLanes.lanes, removed);
+        workingDirs.rename(old.get.slug, project.slug);
         // One event for the project and its lanes, which the UI reads as "its lanes may have
         // changed too", rather than one per lane.
         events.project(Event.changed, project.id);

@@ -22,6 +22,7 @@ import api.rpc : RpcApi, RpcController, answerNoSuchCall, enforceJsonObjectBody;
 import eventing : EventStream, IEventPublisher, IEventStream;
 import schema : installSchemaWhenEmpty;
 import service : AgentService, DefaultService, LaneService, ProjectService, RuntimeService, TaskService;
+import workingdir : ProjectWorkingDirs;
 
 /**
  * Wires the application together. Everything resolvable is registered here, so
@@ -38,6 +39,7 @@ class DashboardContext : ApplicationContext
         auto events = new EventStream;
         container.register!(IEventPublisher, EventStream).existingInstance(events);
         container.register!(IEventStream, EventStream).existingInstance(events);
+        container.register!ProjectWorkingDirs;
         container.register!(IProjectRepository, PostgresProjectRepository);
         container.register!ProjectService;
         container.register!(ProjectApi, ProjectController);

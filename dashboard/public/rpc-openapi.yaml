@@ -342,8 +342,10 @@ paths:
       description: |
         Sends a person's chat message to an AI agent and answers with the agent's reply. The
         first message, sent without a `sessionId`, starts a chat, and the agent is told which
-        project the person is in. Every later message, sent with the `sessionId` the first one
-        returned, continues that chat, and the agent remembers what was said in it.
+        project the person is in, and where its working directory is. Every later message, sent
+        with the `sessionId` the first one returned, continues that chat, and the agent remembers
+        what was said in it. Send the project the chat started in with every message, since the
+        agent can reach the project's working directory only when it is sent.
 
         The call waits for the agent, which can take anywhere from seconds to minutes. Send a
         chat's next message only once the last one is answered, since each one continues the one
@@ -369,8 +371,10 @@ paths:
                   default: null
                   description: |
                     The project the person is in, told to the agent when the chat starts. Left out
-                    or `null`, the agent is told the person is in none. Not read when `sessionId`
-                    is sent.
+                    or `null`, the agent is told the person is in none. With a `sessionId`, the
+                    project the chat started in, whose working directory the agent can reach; a
+                    project that has since been deleted is passed over rather than answered with a
+                    404.
                 sessionId:
                   type: [string, "null"]
                   default: null
@@ -383,7 +387,7 @@ paths:
                 value: { agentId: 00539d3f-0291-4589-89a6-472afa0166cb, message: "My name is Sam. Which project am I in? One line.", projectId: a06eb28a-ff4d-414b-95be-3c661fa3f7f7 }
               continue:
                 summary: Continuing it
-                value: { agentId: 00539d3f-0291-4589-89a6-472afa0166cb, message: "What is my name?", sessionId: 0b6f2c3e-5d1a-4f7e-9a8b-3c2d1e0f9a7b }
+                value: { agentId: 00539d3f-0291-4589-89a6-472afa0166cb, message: "What is my name?", projectId: a06eb28a-ff4d-414b-95be-3c661fa3f7f7, sessionId: 0b6f2c3e-5d1a-4f7e-9a8b-3c2d1e0f9a7b }
       responses:
         "200":
           description: The agent's reply, and the chat's session.

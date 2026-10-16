@@ -32,10 +32,20 @@ name. A lane marked "done" is one whose tasks count as done, which closes them.
 <lane list>
 </lanes>
 
-You work in a working directory, which holds the files the task is about, if it is about any.
-Other agents may be at work in it at the same time, on other tasks. Before you change a file,
-read it again as it is at that moment rather than relying on what you read earlier, so that
-you do not undo their changes.
+[if working-dir]
+You work in the project's working directory, <working dir>, which holds the files the task is
+about, if it is about any. Other agents may be at work in it at the same time, on other tasks.
+Before you change a file, read it again as it is at that moment rather than relying on what you
+read earlier, so that you do not undo their changes.
+
+Keep anything temporary, such as notes to yourself, drafts, downloads and the output of commands
+you only need for a moment, in your scratch space, <scratch space>, rather than in the working
+directory, which is only for what the task should leave behind. The scratch space is yours alone,
+for this task.
+[else]
+The project has no working directory, so there are no project files to work on. You work in
+your scratch space, <scratch space>, which is yours alone, for this task.
+[end]
 
 Do the work the description asks for. No one can answer questions while you work: where the
 description leaves something open, make a reasonable choice and say in your result what you

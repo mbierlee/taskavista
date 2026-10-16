@@ -112,7 +112,8 @@ interface RpcApi
      * Sends a chat message to an agent and answers with its reply, once the
      * agent has given one. `sessionId` null starts a chat, in the project
      * `projectId`, or in none when that is null; otherwise the message goes
-     * in that chat, and `projectId` is not read.
+     * in that chat, and `projectId` is the project it started in, whose
+     * working directory the agent keeps.
      */
     @method(HTTPMethod.POST) @path("sendChatMessage")
     SendChatMessageResult sendChatMessage(UUID agentId, string message,
@@ -223,16 +224,20 @@ class RpcController : RpcApi
             throw toHTTPError(agent.error, null);
         }
 
+        // A chat whose project has since been deleted goes on without it.
         Nullable!Project project;
-        if (sessionId.isNull && !projectId.isNull)
+        if (!projectId.isNull)
         {
             auto found = projects.get(projectId.get);
-            if (found.isFailure)
+            if (found.isFailure && sessionId.isNull)
             {
                 throw toHTTPError(found.error, null);
             }
 
-            project = found.value;
+            if (!found.isFailure)
+            {
+                project = found.value;
+            }
         }
 
         // What is left is the agent failing to answer. A session the agent does

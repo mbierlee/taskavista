@@ -29,7 +29,11 @@ every screen with a tab per chat with an agent. A chat is a session on the agent
 with a system prompt of two parts, each filled in by `PromptParser`: `dashboard/prompts/system/agent.txt`,
 which starts every interaction with an agent and gives it the API help in
 `dashboard/public/agent-help.txt` (which agents can also fetch from the server), then
-`dashboard/prompts/system/new-agent-chat.txt`, the chat's own part; the tabs last as long as the page. Every write
+`dashboard/prompts/system/new-agent-chat.txt`, the chat's own part; the tabs last as long as the page.
+A project can have a working directory for its files, named after its slug under `projectWorkingDirRoot`
+in `config.json`, when that root exists (see `workingdir.d`): task agents run in it, and a chat started in a
+project runs in its own scratch space with the working directory open to it, so it can still be resumed
+after the slug changes. With no working directory, agents work in their scratch space. Every write
 through the API is reported to the open UIs over a WebSocket
 (`/api/events/v1`), as an event and the ids it concerns, and the UI fetches what changed, so what
 an agent does shows on screen straight away (see `docs/event-stream.md`).
