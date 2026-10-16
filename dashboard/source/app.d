@@ -6,19 +6,22 @@ import std.algorithm : startsWith;
 import std.functional : toDelegate;
 import std.path : baseName, extension;
 
-import agent : AgentChat, AgentDrafter, AgentHelp, AgentPrompt, ClaudeCodeRuntime, IRuntime, RuntimeExecutor, TaskExecutor,
-    TaskScheduler;
+import agent : AgentChat, AgentDrafter, AgentHelp, AgentPrompt, ClaudeCodeRuntime, IRuntime, ITaskExecutor,
+    ITaskScheduler, RuntimeExecutor, TaskExecutor, TaskScheduler;
 import config : Config, connectionString, loadConfig;
 import helpers : formatURL;
 import prompt : PromptParser;
-import repository : AgentLogRepository, AgentRepository, DefaultRepository, LaneRepository, ProjectRepository,
-    RuntimeRepository, TaskRepository;
-import api.rest : AgentApi, AgentService, DefaultApi, DefaultService, LaneApi, LaneService, ProjectApi,
-    ProjectService, RuntimeApi, RuntimeService, TaskApi, TaskService;
+import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
+    IRuntimeRepository, ITaskRepository;
+import repository.postgres : PostgresAgentLogRepository, PostgresAgentRepository, PostgresDefaultRepository,
+    PostgresLaneRepository, PostgresProjectRepository, PostgresRuntimeRepository, PostgresTaskRepository;
+import api.rest : AgentApi, AgentController, DefaultApi, DefaultController, LaneApi, LaneController, ProjectApi,
+    ProjectController, RuntimeApi, RuntimeController, TaskApi, TaskController;
 import api.errors : answerNoSuchEndpoint, renderApiError;
-import api.rpc : RpcApi, RpcService, answerNoSuchCall, enforceJsonObjectBody;
-import changes : ChangeFeed;
+import api.rpc : RpcApi, RpcController, answerNoSuchCall, enforceJsonObjectBody;
+import eventing : EventStream, IEventPublisher, IEventStream;
 import schema : installSchemaWhenEmpty;
+import service : AgentService, DefaultService, LaneService, ProjectService, RuntimeService, TaskService;
 
 /**
  * Wires the application together. Everything resolvable is registered here, so
@@ -31,25 +34,34 @@ class DashboardContext : ApplicationContext
     override void registerDependencies(shared(DependencyContainer) container)
     {
         container.register!Config.existingInstance(loadConfig());
-        container.register!ChangeFeed;
-        container.register!ProjectRepository;
-        container.register!(ProjectApi, ProjectService);
-        container.register!LaneRepository;
-        container.register!(LaneApi, LaneService);
-        container.register!TaskRepository;
-        container.register!(TaskApi, TaskService);
-        container.register!RuntimeRepository;
-        container.register!(RuntimeApi, RuntimeService);
-        container.register!AgentRepository;
-        container.register!AgentLogRepository;
-        container.register!(AgentApi, AgentService);
-        container.register!DefaultRepository;
-        container.register!(DefaultApi, DefaultService);
-        container.register!(RpcApi, RpcService);
+        // One stream for both, so that what is published reaches the sockets it serves.
+        auto events = new EventStream;
+        container.register!(IEventPublisher, EventStream).existingInstance(events);
+        container.register!(IEventStream, EventStream).existingInstance(events);
+        container.register!(IProjectRepository, PostgresProjectRepository);
+        container.register!ProjectService;
+        container.register!(ProjectApi, ProjectController);
+        container.register!(ILaneRepository, PostgresLaneRepository);
+        container.register!LaneService;
+        container.register!(LaneApi, LaneController);
+        container.register!(ITaskRepository, PostgresTaskRepository);
+        container.register!TaskService;
+        container.register!(TaskApi, TaskController);
+        container.register!(IRuntimeRepository, PostgresRuntimeRepository);
+        container.register!RuntimeService;
+        container.register!(RuntimeApi, RuntimeController);
+        container.register!(IAgentRepository, PostgresAgentRepository);
+        container.register!(IAgentLogRepository, PostgresAgentLogRepository);
+        container.register!AgentService;
+        container.register!(AgentApi, AgentController);
+        container.register!(IDefaultRepository, PostgresDefaultRepository);
+        container.register!DefaultService;
+        container.register!(DefaultApi, DefaultController);
+        container.register!(RpcApi, RpcController);
         container.register!(IRuntime, ClaudeCodeRuntime);
         container.register!RuntimeExecutor;
-        container.register!TaskScheduler;
-        container.register!TaskExecutor;
+        container.register!(ITaskScheduler, TaskScheduler);
+        container.register!(ITaskExecutor, TaskExecutor);
         container.register!PromptParser;
         container.register!AgentHelp;
         container.register!AgentPrompt;
@@ -98,7 +110,7 @@ void main()
     router.post("/api/rpc/v1/*", &enforceJsonObjectBody);
     router.registerRestInterface(container.resolve!RpcApi, apiSettings);
     router.any("/api/rpc/v1/*", &answerNoSuchCall);
-    router.get("/api/changes/v1", handleWebSockets(&container.resolve!ChangeFeed.serve));
+    router.get("/api/events/v1", handleWebSockets(&container.resolve!IEventStream.serve));
 
     // Before the static files, since the file has the API's URL left to fill in.
     auto agentHelp = container.resolve!AgentHelp;

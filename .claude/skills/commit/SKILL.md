@@ -134,7 +134,7 @@ in. For example:
 >
 > Not committed, as it is not part of this chat's work:
 > - `dashboard/public/app.css` — the topbar spacing change
-> - `dashboard/source/repository.d`
+> - `dashboard/source/repository/postgres.d`
 > - `dashboard/sql/init.sql` (still staged, as before)
 
 If nothing was left out, say so.

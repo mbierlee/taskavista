@@ -959,22 +959,22 @@ function updateSession(sessionId, change) {
 /* ---------- changes made elsewhere ---------- */
 
 /* The server reports every write, whoever made it, over a WebSocket (see
-   ChangeFeed in changes.d), so that what an AI agent does through the API
+   EventStream in eventing.d), so that what an AI agent does through the API
    shows straight away. A message is only an event and the ids it concerns,
    such as { type: "task-moved", taskId, projectId, fromLaneId, toLaneId };
    what the screen needs of it is fetched here. The writes made on this page are reported as well, and
    the screen already shows those, so what is fetched is compared with what is
    drawn, and only what differs is drawn again. */
 
-const changesUrl = new URL("/api/changes/v1", location.href);
-changesUrl.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+const eventsUrl = new URL("/api/events/v1", location.href);
+eventsUrl.protocol = location.protocol === "https:" ? "wss:" : "ws:";
 
 /* A socket that drops, or cannot connect, is tried again after a pause. The
    changes made while no socket was open are never reported, which includes
    those between the first fetches and the first socket opening, so
    everything on screen is fetched again whenever one opens. */
 function listenForChanges() {
-  const socket = new WebSocket(changesUrl);
+  const socket = new WebSocket(eventsUrl);
   socket.addEventListener("open", () => {
     refreshEverything();
   });

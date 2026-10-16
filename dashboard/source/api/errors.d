@@ -8,8 +8,20 @@ import vibe.web.rest : RestErrorInformation;
 import std.algorithm : canFind, findSplit, map, startsWith, uniq;
 import std.array : join, split;
 import std.conv : to;
-import std.string : stripRight;
+import std.format : format;
+import std.string : strip, stripRight;
 import std.uuid : UUIDParsingException;
+
+import model : Agent, Lane, Project, Task;
+import service : AgentModelMissingError, AgentNameMissingError, AgentNameTakenError, AgentNotFoundError,
+    AgentRuntimeMissingError, BeforeTaskNotFoundError, BeforeTaskNotInLaneError, EffortNotTakenError,
+    IAgentError, ILaneError, IProjectError, ITaskError, LabelBlankError, LabelRepeatedError,
+    LaneClosedToNewTasksError, LaneColorInvalidError, LaneListedTwiceError, LaneNameMissingError,
+    LaneNotFoundError, LaneOfOtherProjectError, LanePositionNegativeError, LanePositionTakenError,
+    ModelNotOfferedError, NameReservedError, NameTakenError, ProjectNameMissingError,
+    ProjectNameUnusableError, ProjectNotFoundError, ProjectNotManagedByAiError, RuntimeNotFoundError,
+    SlugInvalidError, SlugReservedError, SlugTakenError, TaskBeforeItselfError, TaskDescriptionMissingError,
+    TaskLeavesProjectError, TaskNotFoundError, TaskPositionNegativeError, TaskPositionTakenError;
 
 /**
  * Answers a request under `/api/rest/v1` that no endpoint took, with a 404
@@ -152,4 +164,286 @@ private string jsonTypeName(string type) @safe
 private string between(string text, string open, string close) @safe
 {
     return text.findSplit(open)[2].findSplit(close)[0];
+}
+
+/**
+ * The HTTP error a project error is answered with. A clash of a slug the client never chose
+ * is reported against the name, since the name is all a person in the UI can change.
+ */
+HTTPStatusException toHTTPError(IProjectError error, Project project)
+{
+    if (cast(ProjectNotManagedByAiError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            "The project is not managed by AI agents, so its agents cannot be resumed.");
+    }
+
+    if (cast(ProjectNameMissingError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "A project needs a name.");
+    }
+
+    if (cast(ProjectNameUnusableError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest,
+            "That name is not allowed. A name needs at least one letter or digit.");
+    }
+
+    if (auto laneCheck = laneCheckError(cast(Object) error))
+    {
+        return laneCheck;
+    }
+
+    if (cast(ProjectNotFoundError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.notFound, "No project has that id.");
+    }
+
+    if (cast(SlugInvalidError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest,
+            "A slug is lowercase letters and digits, in any script, in words joined by single hyphens.");
+    }
+
+    if (cast(SlugReservedError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            format("The slug '%s' is reserved for a page of the web UI.", project.slug));
+    }
+
+    if (cast(SlugTakenError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            format("Another project already has the slug '%s'.", project.slug));
+    }
+
+    if (cast(NameReservedError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            format("A project cannot be called “%s”. Pick another name.", project.name.strip));
+    }
+
+    if (auto taken = cast(NameTakenError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            format("A project called “%s” already exists. Pick another name.", taken.ownerName));
+    }
+
+    if (cast(LaneOfOtherProjectError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "A lane sent belongs to another project.");
+    }
+
+    if (cast(LaneNotFoundError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.notFound, "No lane has one of the lane ids sent.");
+    }
+
+    if (cast(LaneListedTwiceError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "A lane is listed twice.");
+    }
+
+    return unanswered(error);
+}
+
+/**
+ * The 400s for the lane checks, which both a project's lanes and a lane on its own go through.
+ *
+ * Returns: The HTTP error, or null for an error that is not one of the lane checks.
+ */
+private HTTPStatusException laneCheckError(Object error)
+{
+    if (cast(LaneNameMissingError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "A lane needs a name.");
+    }
+
+    if (cast(LanePositionNegativeError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "A lane's position is 0 or more.");
+    }
+
+    if (cast(LaneColorInvalidError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest,
+            "A lane's color is '#' and six hex digits, like #8fa6ff.");
+    }
+
+    return null;
+}
+
+/// The 500 for an error a service added without an answer in its toHTTPError.
+private HTTPStatusException unanswered(E)(E error)
+{
+    return new HTTPStatusException(HTTPStatus.internalServerError,
+        format("No answer for the error %s.", typeid(cast(Object) error)));
+}
+
+/**
+ * The HTTP error a lane error is answered with.
+ *
+ * Params:
+ *   error = The error.
+ *   lane = The lane that was being written, or null for none.
+ */
+HTTPStatusException toHTTPError(ILaneError error, Lane lane)
+{
+    if (auto laneCheck = laneCheckError(cast(Object) error))
+    {
+        return laneCheck;
+    }
+
+    if (cast(ProjectNotFoundError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.notFound, "No project has that id.");
+    }
+
+    if (cast(LaneNotFoundError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.notFound, "No lane has that id.");
+    }
+
+    if (cast(LanePositionTakenError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            format("Another lane of the project is already at position %s.", lane.position.get));
+    }
+
+    return unanswered(error);
+}
+
+/**
+ * The HTTP error a task error is answered with.
+ *
+ * Params:
+ *   error = The error.
+ *   task = The task that was being written, or null for none.
+ */
+HTTPStatusException toHTTPError(ITaskError error, Task task)
+{
+    if (cast(TaskDescriptionMissingError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "A task needs a description.");
+    }
+
+    if (cast(TaskPositionNegativeError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "A task's position is 0 or more.");
+    }
+
+    if (cast(ProjectNotFoundError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.notFound, "No project has that id.");
+    }
+
+    if (cast(LaneNotFoundError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.notFound, "No lane has that id.");
+    }
+
+    if (cast(TaskNotFoundError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.notFound, "No task has that id.");
+    }
+
+    if (cast(LaneClosedToNewTasksError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict, "The project only takes new tasks in its first lane.");
+    }
+
+    if (cast(TaskLeavesProjectError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "A task can only move to a lane of its own project.");
+    }
+
+    if (cast(TaskBeforeItselfError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "A task cannot move before itself.");
+    }
+
+    if (cast(BeforeTaskNotFoundError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.notFound, "No task has the beforeTaskId sent.");
+    }
+
+    if (cast(BeforeTaskNotInLaneError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "The beforeTaskId task is not in that lane.");
+    }
+
+    if (cast(TaskPositionTakenError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            format("Another task of the lane is already at position %s.", task.position.get));
+    }
+
+    return unanswered(error);
+}
+
+/**
+ * The HTTP error an agent error is answered with. A runtime, model or effort level that does
+ * not fit is a 400, as it would have been a failed foreign key.
+ *
+ * Params:
+ *   error = The error.
+ *   agent = The agent that was being written, or null for none.
+ */
+HTTPStatusException toHTTPError(IAgentError error, Agent agent)
+{
+    if (cast(AgentNameMissingError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "An agent needs a name.");
+    }
+
+    if (cast(AgentRuntimeMissingError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "An agent needs a runtime.");
+    }
+
+    if (cast(AgentModelMissingError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "An agent needs a model.");
+    }
+
+    if (cast(LabelBlankError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, "A label cannot be blank.");
+    }
+
+    if (auto repeated = cast(LabelRepeatedError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest,
+            format("The label “%s” is given twice.", repeated.label));
+    }
+
+    if (cast(AgentNotFoundError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.notFound, "No agent has that id.");
+    }
+
+    if (cast(RuntimeNotFoundError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest, format("There is no runtime '%s'.", agent.runtime));
+    }
+
+    if (auto notOffered = cast(ModelNotOfferedError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest,
+            format("%s offers no model '%s'.", notOffered.runtimeName, agent.model));
+    }
+
+    if (cast(EffortNotTakenError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest,
+            format("The model '%s' takes no effort level '%s'.", agent.model, agent.effort));
+    }
+
+    if (cast(AgentNameTakenError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            format("An agent called “%s” already exists. Pick another name.", agent.name));
+    }
+
+    return unanswered(error);
 }

@@ -22,12 +22,12 @@ import std.string : indexOf, lastIndexOf, strip, toLower;
 import std.typecons : Nullable, nullable;
 import std.uuid : UUID, randomUUID;
 
-import changes : Change, ChangeFeed;
+import eventing : Event, IEventPublisher;
 import config : Config, apiUrl;
 import model : Agent, AgentLogEntry, EffortLevel, Lane, Model, Project, Runtime, TaskNote, defaultEffort;
 import prompt : PromptParser;
-import repository : AgentLogRepository, AgentRepository, DefaultRepository, LaneRepository, ProjectRepository,
-    RuntimeRepository, TaskRepository;
+import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
+    IRuntimeRepository, ITaskRepository;
 
 /**
  * The permission mode Claude Code runs in. Auto, since in print mode there is
@@ -112,8 +112,8 @@ string createSystemPromptFile(string systemPrompt)
  */
 class RuntimeExecutor
 {
-    private AgentRepository agents;
-    private AgentLogRepository log;
+    private IAgentRepository agents;
+    private IAgentLogRepository log;
 
     /**
      * Every registered runtime. A field, since Poodinis injects arrays only
@@ -121,7 +121,7 @@ class RuntimeExecutor
      */
     @Inject private IRuntime[] runtimes;
 
-    this(AgentRepository agents, AgentLogRepository log)
+    this(IAgentRepository agents, IAgentLogRepository log)
     {
         this.agents = agents;
         this.log = log;
@@ -513,30 +513,8 @@ private enum schedulePrompt = import("schedule-task.txt");
  * Picks the agent that should work on a task, and moves the task on to the
  * lane that shows it is being worked on.
  */
-class TaskScheduler
+interface ITaskScheduler
 {
-    private AgentRepository agents;
-    private TaskRepository tasks;
-    private LaneRepository lanes;
-    private ProjectRepository projects;
-    private PromptParser parser;
-    private AgentPrompt agentPrompt;
-    private RuntimeExecutor executor;
-    private ChangeFeed changes;
-
-    this(AgentRepository agents, TaskRepository tasks, LaneRepository lanes, ProjectRepository projects,
-        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, ChangeFeed changes)
-    {
-        this.agents = agents;
-        this.tasks = tasks;
-        this.lanes = lanes;
-        this.projects = projects;
-        this.parser = parser;
-        this.agentPrompt = agentPrompt;
-        this.executor = executor;
-        this.changes = changes;
-    }
-
     /**
      * Has the scheduler agent choose an agent and a lane for the task, then
      * assigns the agent and moves the task. Waits on the agent, which takes a
@@ -547,6 +525,34 @@ class TaskScheduler
      * Throws: `Exception` when the database fails. A scheduler that fails or
      *   gives an answer that cannot be used is noted on the task instead.
      */
+    bool schedule(UUID taskId);
+}
+
+/// ITaskScheduler with the task scheduler agent on its runtime.
+class TaskScheduler : ITaskScheduler
+{
+    private IAgentRepository agents;
+    private ITaskRepository tasks;
+    private ILaneRepository lanes;
+    private IProjectRepository projects;
+    private PromptParser parser;
+    private AgentPrompt agentPrompt;
+    private RuntimeExecutor executor;
+    private IEventPublisher events;
+
+    this(IAgentRepository agents, ITaskRepository tasks, ILaneRepository lanes, IProjectRepository projects,
+        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events)
+    {
+        this.agents = agents;
+        this.tasks = tasks;
+        this.lanes = lanes;
+        this.projects = projects;
+        this.parser = parser;
+        this.agentPrompt = agentPrompt;
+        this.executor = executor;
+        this.events = events;
+    }
+
     public bool schedule(UUID taskId)
     {
         // TODO: Deal with paused projects.
@@ -631,7 +637,7 @@ class TaskScheduler
         }
 
         noted(assigned, taskId, project.get.id);
-        moveOn(tasks, changes, taskId, lane.get.id, schedule.get.laneId, project.get.id);
+        moveOn(tasks, events, taskId, lane.get.id, schedule.get.laneId, project.get.id);
 
         return true;
     }
@@ -641,7 +647,7 @@ class TaskScheduler
     {
         if (added)
         {
-            changes.note(taskId, projectId);
+            events.note(taskId, projectId);
         }
     }
 
@@ -683,30 +689,8 @@ private enum executeTaskPrompt = import("execute-task.txt");
  * the lane the agent chose, adds the agent's result to its notes, and takes
  * the task off the agent.
  */
-class TaskExecutor
+interface ITaskExecutor
 {
-    private AgentRepository agents;
-    private TaskRepository tasks;
-    private LaneRepository lanes;
-    private ProjectRepository projects;
-    private PromptParser parser;
-    private AgentPrompt agentPrompt;
-    private RuntimeExecutor executor;
-    private ChangeFeed changes;
-
-    this(AgentRepository agents, TaskRepository tasks, LaneRepository lanes, ProjectRepository projects,
-        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, ChangeFeed changes)
-    {
-        this.agents = agents;
-        this.tasks = tasks;
-        this.lanes = lanes;
-        this.projects = projects;
-        this.parser = parser;
-        this.agentPrompt = agentPrompt;
-        this.executor = executor;
-        this.changes = changes;
-    }
-
     /**
      * Has the agent the task is assigned to work on it, and waits until it is
      * done, which can take a long while. A task assigned to no agent is left
@@ -715,6 +699,34 @@ class TaskExecutor
      *
      * Throws: `Exception` when the database fails.
      */
+    void execute(UUID taskId);
+}
+
+/// ITaskExecutor with the assigned agent on its runtime.
+class TaskExecutor : ITaskExecutor
+{
+    private IAgentRepository agents;
+    private ITaskRepository tasks;
+    private ILaneRepository lanes;
+    private IProjectRepository projects;
+    private PromptParser parser;
+    private AgentPrompt agentPrompt;
+    private RuntimeExecutor executor;
+    private IEventPublisher events;
+
+    this(IAgentRepository agents, ITaskRepository tasks, ILaneRepository lanes, IProjectRepository projects,
+        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events)
+    {
+        this.agents = agents;
+        this.tasks = tasks;
+        this.lanes = lanes;
+        this.projects = projects;
+        this.parser = parser;
+        this.agentPrompt = agentPrompt;
+        this.executor = executor;
+        this.events = events;
+    }
+
     public void execute(UUID taskId)
     {
         // The task, its lane or its project may be gone by the time it is
@@ -798,7 +810,7 @@ class TaskExecutor
             noted(tasks.addNote(taskId, result.get.text), taskId, project.get.id);
         }
 
-        moveOn(tasks, changes, taskId, lane.get.id, result.get.laneId, project.get.id);
+        moveOn(tasks, events, taskId, lane.get.id, result.get.laneId, project.get.id);
         tasks.assignAiAgent(taskId, Nullable!UUID.init);
     }
 
@@ -807,7 +819,7 @@ class TaskExecutor
     {
         if (added)
         {
-            changes.note(taskId, projectId);
+            events.note(taskId, projectId);
         }
     }
 }
@@ -817,7 +829,7 @@ class TaskExecutor
  * its lane while the agent was at work was moved by someone else, whose move
  * is kept.
  */
-private void moveOn(TaskRepository tasks, ChangeFeed changes, UUID taskId, UUID fromLaneId, UUID toLaneId,
+private void moveOn(ITaskRepository tasks, IEventPublisher events, UUID taskId, UUID fromLaneId, UUID toLaneId,
     UUID projectId)
 {
     auto task = tasks.find(taskId);
@@ -827,7 +839,7 @@ private void moveOn(TaskRepository tasks, ChangeFeed changes, UUID taskId, UUID 
     }
 
     tasks.move(taskId, toLaneId, UUID.init);
-    changes.task(Change.moved, taskId, projectId, fromLaneId, toLaneId);
+    events.task(Event.moved, taskId, projectId, fromLaneId, toLaneId);
 }
 
 /// A lane per line, with "done" after the lanes whose tasks count as done.
@@ -1015,14 +1027,14 @@ private enum quickCreatePrompt = import("quick-create-agent.txt");
  */
 class AgentDrafter
 {
-    private AgentRepository agents;
-    private RuntimeRepository runtimes;
-    private DefaultRepository defaults;
+    private IAgentRepository agents;
+    private IRuntimeRepository runtimes;
+    private IDefaultRepository defaults;
     private PromptParser parser;
     private AgentPrompt agentPrompt;
     private RuntimeExecutor executor;
 
-    this(AgentRepository agents, RuntimeRepository runtimes, DefaultRepository defaults, PromptParser parser,
+    this(IAgentRepository agents, IRuntimeRepository runtimes, IDefaultRepository defaults, PromptParser parser,
         AgentPrompt agentPrompt, RuntimeExecutor executor)
     {
         this.agents = agents;

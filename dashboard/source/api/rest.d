@@ -3,18 +3,14 @@ module api.rest;
 import vibe.web.rest;
 import vibe.core.core : runTask;
 import vibe.core.log : logError;
-import vibe.http.common : HTTPMethod, HTTPStatusException, enforceHTTP;
+import vibe.http.common : HTTPMethod, enforceHTTP;
 import vibe.http.status : HTTPStatus;
 
-import std.format : format;
 import std.uuid : UUID;
 
-import agent : TaskExecutor, TaskScheduler;
-import changes : Change, ChangeFeed;
-import api.checks : enforceNamed, enforceSlug, enforceValid;
 import model : Agent, Default, Lane, Model, Project, Runtime, Task, TaskNote;
-import repository : AgentRepository, DefaultRepository, LaneRepository, PositionConflict, ProjectRepository, RuntimeRepository,
-    TaskRepository;
+import api.errors : toHTTPError;
+import service : AgentService, DefaultService, LaneService, ProjectService, RuntimeService, TaskService;
 
 /// The projects REST API.
 @path("/api/rest/v1")
@@ -27,68 +23,81 @@ interface ProjectApi
     Project readProject(UUID _id) @safe;
 
     @method(HTTPMethod.POST) @path("projects")
-    Project createProject(@viaBody() Project project) @safe;
+    Project createProject(@viaBody() Project project)@safe;
 
     @method(HTTPMethod.PUT) @path("projects/:id")
-    Project replaceProject(UUID _id, @viaBody() Project project) @safe;
+    Project replaceProject(UUID _id, @viaBody() Project project)@safe;
 
     @method(HTTPMethod.DELETE) @path("projects/:id")
     void deleteProject(UUID _id) @safe;
 }
 
-/// Serves the projects API out of the repository.
-class ProjectService : ProjectApi
+/// Serves the projects API out of the service.
+class ProjectController : ProjectApi
 {
-    private ProjectRepository repository;
-    private ChangeFeed changes;
+    private ProjectService service;
 
-    this(ProjectRepository repository, ChangeFeed changes)
+    this(ProjectService service)
     {
-        this.repository = repository;
-        this.changes = changes;
+        this.service = service;
     }
 
     override Project[] listProjects() @trusted
     {
-        return repository.all();
+        return service.getAll();
     }
 
     override Project readProject(UUID _id) @trusted
     {
-        auto project = repository.find(_id);
-        enforceHTTP(!project.isNull, HTTPStatus.notFound, "No project has that id.");
+        auto project = service.get(_id);
+        enforceHTTP(project.isSuccessful, HTTPStatus.notFound, "No project has that id.");
 
-        return project.get;
+        return project.value;
     }
 
     override Project createProject(Project project) @trusted
     {
-        project.enforceNamed();
-        project.enforceSlug(repository);
+        enforceBody(project);
+        // A client cannot pick the id; one in the body is ignored, or the save would be an update.
+        project.id = UUID.init;
 
-        auto created = repository.add(project);
-        changes.project(Change.created, created.id);
+        auto created = service.save(project);
+        if (created.isFailure)
+        {
+            throw toHTTPError(created.error, project);
+        }
 
-        return created;
+        return created.value;
     }
 
     override Project replaceProject(UUID _id, Project project) @trusted
     {
-        project.enforceNamed();
+        // The service would read the nil UUID as a new project to create.
+        enforceHTTP(_id != UUID.init, HTTPStatus.notFound, "A project id is required.");
+        enforceBody(project);
         // The path is what says which project this is; an id in the body is ignored.
         project.id = _id;
-        project.enforceSlug(repository);
-        enforceHTTP(repository.update(project), HTTPStatus.notFound, "No project has that id.");
-        changes.project(Change.changed, _id);
+        auto replaced = service.save(project);
+        if (replaced.isFailure)
+        {
+            throw toHTTPError(replaced.error, project);
+        }
 
-        return project;
+        return replaced.value;
     }
 
     override void deleteProject(UUID _id) @trusted
     {
-        enforceHTTP(repository.remove(_id), HTTPStatus.notFound, "No project has that id.");
-        changes.project(Change.deleted, _id);
+        enforceHTTP(service.remove(_id).isSuccessful, HTTPStatus.notFound, "No project has that id.");
     }
+}
+
+/**
+ * Answers a body of JSON null, which reads as a null object, with a 400 before anything uses it.
+ */
+private void enforceBody(T)(T received)
+{
+    enforceHTTP(received !is null, HTTPStatus.badRequest, "The body is not a JSON object.");
 }
 
 /**
@@ -105,106 +114,90 @@ interface LaneApi
     Lane readLane(UUID _id) @safe;
 
     @method(HTTPMethod.POST) @path("projects/:projectId/lanes")
-    Lane createLane(UUID _projectId, @viaBody() Lane lane) @safe;
+    Lane createLane(UUID _projectId, @viaBody() Lane lane)@safe;
 
     @method(HTTPMethod.PUT) @path("lanes/:id")
-    Lane replaceLane(UUID _id, @viaBody() Lane lane) @safe;
+    Lane replaceLane(UUID _id, @viaBody() Lane lane)@safe;
 
     @method(HTTPMethod.DELETE) @path("lanes/:id")
     void deleteLane(UUID _id) @safe;
 }
 
-/// Serves the lanes API out of the repository.
-class LaneService : LaneApi
+/// Serves the lanes API out of the service.
+class LaneController : LaneApi
 {
-    private LaneRepository repository;
-    private ChangeFeed changes;
+    private LaneService service;
 
-    this(LaneRepository repository, ChangeFeed changes)
+    this(LaneService service)
     {
-        this.repository = repository;
-        this.changes = changes;
+        this.service = service;
     }
 
     override Lane[] listLanes(UUID _projectId) @trusted
     {
-        enforceHTTP(repository.projectExists(_projectId), HTTPStatus.notFound, "No project has that id.");
+        auto lanes = service.getOfProject(_projectId);
+        if (lanes.isFailure)
+        {
+            throw toHTTPError(lanes.error, null);
+        }
 
-        return repository.ofProject(_projectId);
+        return lanes.value;
     }
 
     override Lane readLane(UUID _id) @trusted
     {
-        auto lane = repository.find(_id);
-        enforceHTTP(!lane.isNull, HTTPStatus.notFound, "No lane has that id.");
+        auto lane = service.get(_id);
+        if (lane.isFailure)
+        {
+            throw toHTTPError(lane.error, null);
+        }
 
-        return lane.get;
+        return lane.value;
     }
 
     override Lane createLane(UUID _projectId, Lane lane) @trusted
     {
-        lane.enforceValid();
-        enforceHTTP(repository.projectExists(_projectId), HTTPStatus.notFound, "No project has that id.");
-        // The path is what says which project the lane goes in.
+        enforceBody(lane);
+        // The path is what says which project the lane goes in. A client cannot pick the id; one
+        // in the body is ignored, or the save would be an update.
+        lane.id = UUID.init;
         lane.projectId = _projectId;
-        lane.placeAtEndWhenUnplaced(repository);
-        lane.enforcePositionFree(repository);
 
-        auto created = repository.add(lane);
-        changes.lane(Change.created, created.id, _projectId);
+        auto created = service.save(lane);
+        if (created.isFailure)
+        {
+            throw toHTTPError(created.error, lane);
+        }
 
-        return created;
+        return created.value;
     }
 
     override Lane replaceLane(UUID _id, Lane lane) @trusted
     {
-        lane.enforceValid();
-
-        auto stored = repository.find(_id);
-        enforceHTTP(!stored.isNull, HTTPStatus.notFound, "No lane has that id.");
-        // The path is what says which lane this is, and it stays in its project;
-        // an id or projectId in the body is ignored.
+        // The service would read the nil UUID as a new lane to create.
+        enforceHTTP(_id != UUID.init, HTTPStatus.notFound, "A lane id is required.");
+        enforceBody(lane);
+        // The path is what says which lane this is, and the service keeps it in its project; an
+        // id or projectId in the body is ignored.
         lane.id = _id;
-        lane.projectId = stored.get.projectId;
-        lane.placeAtEndWhenUnplaced(repository);
-        lane.enforcePositionFree(repository);
-        enforceHTTP(repository.update(lane), HTTPStatus.notFound, "No lane has that id.");
-        changes.lane(Change.changed, _id, lane.projectId);
 
-        return lane;
+        auto replaced = service.save(lane);
+        if (replaced.isFailure)
+        {
+            throw toHTTPError(replaced.error, lane);
+        }
+
+        return replaced.value;
     }
 
     override void deleteLane(UUID _id) @trusted
     {
-        // Looked up first, since the lane is gone afterwards.
-        auto lane = repository.find(_id);
-        enforceHTTP(!lane.isNull, HTTPStatus.notFound, "No lane has that id.");
-        enforceHTTP(repository.remove(_id), HTTPStatus.notFound, "No lane has that id.");
-        changes.lane(Change.deleted, _id, lane.get.projectId);
+        auto removed = service.remove(_id);
+        if (removed.isFailure)
+        {
+            throw toHTTPError(removed.error, null);
+        }
     }
-}
-
-/**
- * The lane itself is left out of the count, so that a replace does not
- * place it after its own old position.
- */
-private void placeAtEndWhenUnplaced(Lane lane, LaneRepository repository)
-{
-    if (lane.position.isNull)
-    {
-        lane.position = repository.nextPosition(lane.projectId, lane.id);
-    }
-}
-
-/**
- * Applies the unique (project_id, position) constraint early, so that a clash
- * comes back as a 409. The lane's own id is left out, so a replace may keep
- * its position.
- */
-private void enforcePositionFree(Lane lane, LaneRepository repository)
-{
-    enforceHTTP(!repository.positionTaken(lane.projectId, lane.position.get, lane.id),
-        HTTPStatus.conflict, format("Another lane of the project is already at position %s.", lane.position.get));
 }
 
 /**
@@ -228,165 +221,123 @@ interface TaskApi
     TaskNote[] listTaskNotes(UUID _id) @safe;
 
     @method(HTTPMethod.POST) @path("lanes/:laneId/tasks")
-    Task createTask(UUID _laneId, @viaBody() Task task) @safe;
+    Task createTask(UUID _laneId, @viaBody() Task task)@safe;
 
     @method(HTTPMethod.PUT) @path("tasks/:id")
-    Task replaceTask(UUID _id, @viaBody() Task task) @safe;
+    Task replaceTask(UUID _id, @viaBody() Task task)@safe;
 
     @method(HTTPMethod.DELETE) @path("tasks/:id")
     void deleteTask(UUID _id) @safe;
 }
 
-/// Serves the tasks API out of the repository.
-class TaskService : TaskApi
+/// Serves the tasks API out of the service.
+class TaskController : TaskApi
 {
-    private TaskRepository repository;
-    private ProjectRepository projects;
-    private TaskScheduler scheduler;
-    private TaskExecutor executor;
-    private ChangeFeed changes;
+    private TaskService service;
 
-    this(TaskRepository repository, ProjectRepository projects, TaskScheduler scheduler, TaskExecutor executor,
-        ChangeFeed changes)
+    this(TaskService service)
     {
-        this.repository = repository;
-        this.projects = projects;
-        this.scheduler = scheduler;
-        this.executor = executor;
-        this.changes = changes;
+        this.service = service;
     }
 
     override Task[] listProjectTasks(UUID _projectId) @trusted
     {
-        enforceHTTP(repository.projectExists(_projectId), HTTPStatus.notFound, "No project has that id.");
+        auto tasks = service.getOfProject(_projectId);
+        if (tasks.isFailure)
+        {
+            throw toHTTPError(tasks.error, null);
+        }
 
-        return repository.ofProject(_projectId);
+        return tasks.value;
     }
 
     override Task[] listLaneTasks(UUID _laneId) @trusted
     {
-        enforceHTTP(!repository.projectOfLane(_laneId).isNull, HTTPStatus.notFound, "No lane has that id.");
+        auto tasks = service.getOfLane(_laneId);
+        if (tasks.isFailure)
+        {
+            throw toHTTPError(tasks.error, null);
+        }
 
-        return repository.ofLane(_laneId);
+        return tasks.value;
     }
 
     override Task readTask(UUID _id) @trusted
     {
-        auto task = repository.find(_id);
-        enforceHTTP(!task.isNull, HTTPStatus.notFound, "No task has that id.");
+        auto task = service.get(_id);
+        if (task.isFailure)
+        {
+            throw toHTTPError(task.error, null);
+        }
 
-        return task.get;
+        return task.value;
     }
 
     override TaskNote[] listTaskNotes(UUID _id) @trusted
     {
-        enforceHTTP(!repository.find(_id).isNull, HTTPStatus.notFound, "No task has that id.");
+        auto notes = service.getNotes(_id);
+        if (notes.isFailure)
+        {
+            throw toHTTPError(notes.error, null);
+        }
 
-        return repository.notes(_id);
+        return notes.value;
     }
 
     override Task createTask(UUID _laneId, Task task) @trusted
     {
-        task.enforceValid();
-        auto projectId = repository.projectOfLane(_laneId);
-        enforceHTTP(!projectId.isNull, HTTPStatus.notFound, "No lane has that id.");
-        enforceHTTP(repository.acceptsNewTasks(_laneId), HTTPStatus.conflict,
-            "The project only takes new tasks in its first lane.");
-        // The path is what says which lane the task goes in.
+        enforceBody(task);
+        // The path is what says which lane the task goes in. A client cannot pick the id; one in
+        // the body is ignored, or the save would be an update.
+        task.id = UUID.init;
         task.laneId = _laneId;
 
-        auto created = answerConflict(repository.add(task));
-        changes.task(Change.created, created.id, projectId.get, UUID.init, _laneId);
-        if (projects.find(projectId.get).get.managedByAi)
+        auto created = service.save(task);
+        if (created.isFailure)
         {
-            // In the background, since the request that added the task should not wait on an agent.
-            auto taskId = created.id;
-            runTask(() nothrow{
-                try
-                {
-                    if (scheduler.schedule(taskId))
-                    {
-                        runTask(() nothrow{ execute(taskId); });
-                    }
-                }
-                catch (Exception e)
-                {
-                    logError("Scheduling task %s failed: %s", taskId, e.msg);
-                }
-            });
+            throw toHTTPError(created.error, task);
         }
 
-        return created;
-    }
+        // In the background, since the request that added the task should not wait on an agent.
+        auto taskId = created.value.id;
+        runTask(() nothrow{
+            try
+            {
+                service.handToAgent(taskId);
+            }
+            catch (Exception e)
+            {
+                logError("Handing task %s to an agent failed: %s", taskId, e.msg);
+            }
+        });
 
-    /**
-     * Has the task's agent work on it, logging what goes wrong, since there is
-     * no request to answer it.
-     */
-    private void execute(UUID taskId) nothrow
-    {
-        try
-        {
-            executor.execute(taskId);
-        }
-        catch (Exception e)
-        {
-            logError("Executing task %s failed: %s", taskId, e.msg);
-        }
+        return created.value;
     }
 
     override Task replaceTask(UUID _id, Task task) @trusted
     {
-        task.enforceValid();
-
-        auto stored = repository.find(_id);
-        enforceHTTP(!stored.isNull, HTTPStatus.notFound, "No task has that id.");
+        // The service would read the nil UUID as a new task to create.
+        enforceHTTP(_id != UUID.init, HTTPStatus.notFound, "A task id is required.");
+        enforceBody(task);
         // The path is what says which task this is; an id in the body is ignored.
         task.id = _id;
 
-        if (task.laneId == UUID.init)
+        auto replaced = service.save(task);
+        if (replaced.isFailure)
         {
-            task.laneId = stored.get.laneId;
-        }
-        else if (task.laneId != stored.get.laneId)
-        {
-            // A task may move to another lane, but not out of its project.
-            auto project = repository.projectOfLane(task.laneId);
-            enforceHTTP(!project.isNull, HTTPStatus.notFound, "No lane has that id.");
-            enforceHTTP(project.get == repository.projectOfLane(stored.get.laneId).get,
-                HTTPStatus.badRequest, "A task can only move to a lane of its own project.");
+            throw toHTTPError(replaced.error, task);
         }
 
-        enforceHTTP(answerConflict(repository.update(task)), HTTPStatus.notFound, "No task has that id.");
-        changes.task(Change.changed, _id, repository.projectOfLane(task.laneId).get, stored.get.laneId, task.laneId);
-
-        return task;
+        return replaced.value;
     }
 
     override void deleteTask(UUID _id) @trusted
     {
-        // Looked up first, since the task and the way to its project are gone afterwards.
-        auto task = repository.find(_id);
-        enforceHTTP(!task.isNull, HTTPStatus.notFound, "No task has that id.");
-        auto projectId = repository.projectOfLane(task.get.laneId);
-        enforceHTTP(repository.remove(_id), HTTPStatus.notFound, "No task has that id.");
-        changes.task(Change.deleted, _id, projectId.get, task.get.laneId, UUID.init);
-    }
-}
-
-/**
- * Answers a task's place in its lane being taken with a 409. The repository
- * checks it, since only there is the lane locked against other writes.
- */
-private T answerConflict(T)(lazy T write)
-{
-    try
-    {
-        return write;
-    }
-    catch (PositionConflict conflict)
-    {
-        throw new HTTPStatusException(HTTPStatus.conflict, conflict.msg);
+        auto removed = service.remove(_id);
+        if (removed.isFailure)
+        {
+            throw toHTTPError(removed.error, null);
+        }
     }
 }
 
@@ -404,24 +355,24 @@ interface RuntimeApi
     Model[] listModels() @safe;
 }
 
-/// Serves the runtimes and models API out of the repository.
-class RuntimeService : RuntimeApi
+/// Serves the runtimes and models API out of the service.
+class RuntimeController : RuntimeApi
 {
-    private RuntimeRepository repository;
+    private RuntimeService service;
 
-    this(RuntimeRepository repository)
+    this(RuntimeService service)
     {
-        this.repository = repository;
+        this.service = service;
     }
 
     override Runtime[] listRuntimes() @trusted
     {
-        return repository.all();
+        return service.getAll();
     }
 
     override Model[] listModels() @trusted
     {
-        return repository.models();
+        return service.getModels();
     }
 }
 
@@ -436,100 +387,81 @@ interface AgentApi
     Agent readAgent(UUID _id) @safe;
 
     @method(HTTPMethod.POST) @path("agents")
-    Agent createAgent(@viaBody() Agent agent) @safe;
+    Agent createAgent(@viaBody() Agent agent)@safe;
 
     @method(HTTPMethod.PUT) @path("agents/:id")
-    Agent replaceAgent(UUID _id, @viaBody() Agent agent) @safe;
+    Agent replaceAgent(UUID _id, @viaBody() Agent agent)@safe;
 
     @method(HTTPMethod.DELETE) @path("agents/:id")
     void deleteAgent(UUID _id) @safe;
 }
 
-/**
- * Serves the agents API out of the repository, checking an agent's runtime
- * and model against the runtimes'.
- */
-class AgentService : AgentApi
+/// Serves the agents API out of the service.
+class AgentController : AgentApi
 {
-    private AgentRepository repository;
-    private RuntimeRepository runtimes;
-    private ChangeFeed changes;
+    private AgentService service;
 
-    this(AgentRepository repository, RuntimeRepository runtimes, ChangeFeed changes)
+    this(AgentService service)
     {
-        this.repository = repository;
-        this.runtimes = runtimes;
-        this.changes = changes;
+        this.service = service;
     }
 
     override Agent[] listAgents() @trusted
     {
-        return repository.all();
+        return service.getAll();
     }
 
     override Agent readAgent(UUID _id) @trusted
     {
-        auto agent = repository.find(_id);
-        enforceHTTP(!agent.isNull, HTTPStatus.notFound, "No agent has that id.");
+        auto agent = service.get(_id);
+        if (agent.isFailure)
+        {
+            throw toHTTPError(agent.error, null);
+        }
 
-        return agent.get;
+        return agent.value;
     }
 
     override Agent createAgent(Agent agent) @trusted
     {
-        agent.enforceValid();
-        agent.enforceModelOffered(runtimes);
-        agent.enforceNameFree(repository);
+        enforceBody(agent);
+        // A client cannot pick the id; one in the body is ignored, or the save would be an update.
+        agent.id = UUID.init;
 
-        auto created = repository.add(agent);
-        changes.agent(Change.created, created.id);
+        auto created = service.save(agent);
+        if (created.isFailure)
+        {
+            throw toHTTPError(created.error, agent);
+        }
 
-        return created;
+        return created.value;
     }
 
     override Agent replaceAgent(UUID _id, Agent agent) @trusted
     {
-        agent.enforceValid();
+        // The service would read the nil UUID as a new agent to create.
+        enforceHTTP(_id != UUID.init, HTTPStatus.notFound, "An agent id is required.");
+        enforceBody(agent);
         // The path is what says which agent this is; an id in the body is ignored.
         agent.id = _id;
-        agent.enforceModelOffered(runtimes);
-        agent.enforceNameFree(repository);
-        enforceHTTP(repository.update(agent), HTTPStatus.notFound, "No agent has that id.");
-        changes.agent(Change.changed, _id);
 
-        return agent;
+        auto replaced = service.save(agent);
+        if (replaced.isFailure)
+        {
+            throw toHTTPError(replaced.error, agent);
+        }
+
+        return replaced.value;
     }
 
     override void deleteAgent(UUID _id) @trusted
     {
-        enforceHTTP(repository.remove(_id), HTTPStatus.notFound, "No agent has that id.");
-        changes.agent(Change.deleted, _id);
+        auto removed = service.remove(_id);
+        if (removed.isFailure)
+        {
+            throw toHTTPError(removed.error, null);
+        }
     }
-}
-
-/**
- * Applies the agents' foreign keys early, so that an unknown runtime, a
- * model its runtime does not offer, or an effort level the model does not
- * take, comes back as a 400 rather than as a failed write.
- */
-private void enforceModelOffered(Agent agent, RuntimeRepository runtimes)
-{
-    const runtime = runtimes.name(agent.runtime);
-    enforceHTTP(!runtime.isNull, HTTPStatus.badRequest, format("There is no runtime '%s'.", agent.runtime));
-    enforceHTTP(runtimes.offers(agent.runtime, agent.model), HTTPStatus.badRequest,
-        format("%s offers no model '%s'.", runtime.get, agent.model));
-    enforceHTTP(runtimes.takes(agent.model, agent.effort), HTTPStatus.badRequest,
-        format("The model '%s' takes no effort level '%s'.", agent.model, agent.effort));
-}
-
-/**
- * Applies the unique name constraint early, so that a clash comes back as a
- * 409. The agent's own id is left out, so a replace may keep its name.
- */
-private void enforceNameFree(Agent agent, AgentRepository repository)
-{
-    enforceHTTP(!repository.nameTaken(agent.name, agent.id), HTTPStatus.conflict,
-        format("An agent called “%s” already exists. Pick another name.", agent.name));
 }
 
 /**
@@ -544,18 +476,18 @@ interface DefaultApi
     Default[] listDefaults() @safe;
 }
 
-/// Serves the defaults API out of the repository.
-class DefaultService : DefaultApi
+/// Serves the defaults API out of the service.
+class DefaultController : DefaultApi
 {
-    private DefaultRepository repository;
+    private DefaultService service;
 
-    this(DefaultRepository repository)
+    this(DefaultService service)
     {
-        this.repository = repository;
+        this.service = service;
     }
 
     override Default[] listDefaults() @trusted
     {
-        return repository.all();
+        return service.getAll();
     }
 }

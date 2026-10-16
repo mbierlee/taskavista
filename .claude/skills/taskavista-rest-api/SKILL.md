@@ -1,14 +1,19 @@
 ---
 name: taskavista-rest-api
-description: Add or change CRUD REST endpoints in the Taskavista dashboard. Use when asked to expose a table over HTTP, add or alter an /api/ endpoint, build a repository or service class for a resource, wire the web UI to real server data instead of the literal in app.js, or when a new table needs a D counterpart. Covers the four-part layout across the model, repository and rest modules, the Poodinis registration, and the vibe.web.rest traps that do not announce themselves.
+description: Add or change CRUD REST endpoints in the Taskavista dashboard. Use when asked to expose a table over HTTP, add or alter an /api/ endpoint, build a repository, service or controller class for a resource, wire the web UI to real server data instead of the literal in app.js, or when a new table needs a D counterpart. Covers the layered layout across the model, repository, service and rest modules, the Poodinis registration, and the vibe.web.rest traps that do not announce themselves.
 ---
 
 # Adding CRUD REST endpoints to Taskavista
 
 The projects resource is the **canonical implementation**: `Project` in
-`dashboard/source/model.d`, `ProjectRepository` in `repository.d`, and `ProjectApi` and
-`ProjectService` in `api/rest.d`. Everything below is derived from making it work. Read it before
-writing a new one, and copy its shape rather than inventing a second style.
+`dashboard/source/model.d`, `IProjectRepository` in `repository/package.d` and
+`PostgresProjectRepository` in `repository/postgres.d`, `ProjectService` in `service.d`, and
+`ProjectApi` and `ProjectController` in `api/rest.d`. Everything below is derived from making it
+work. Read it before writing a new one, and copy its shape rather than inventing a second style.
+
+**The API modules never call a repository.** Every REST controller and `RpcController` go
+through the services, and a controller or RPC call never gains a repository call. (The agent layer,
+`TaskScheduler` and `TaskExecutor`, still uses the repositories directly; that is to be revisited.)
 
 Schema changes are a different job — see the `taskavista-database` skill. This skill assumes the
 table already exists.
@@ -17,24 +22,43 @@ table already exists.
 OpenAPI spec, is the reference for what the server exposes; the `taskavista-rest-api-docs` skill says how to update it. Do it in the same
 pass, not afterwards.
 
-## The shape: four parts, split by layer
+## The shape: parts split by layer
 
-A resource has four parts, and they are split by layer rather than by resource: every PODO is
-in `model.d`, every repository in `repository.d`, every REST interface and service in `api/rest.d`.
-Within each module, a resource's parts sit together, in the order projects, lanes, tasks.
+Why the server is layered as it is, and what belongs in each layer, is in
+`docs/server-layers.md`; this section is the where.
+
+A resource's parts are split by layer rather than by resource: every PODO is in `model.d`,
+every repository interface in `repository/package.d` and its postgres implementation in
+`repository/postgres.d`, every service in `service.d`, and every REST interface and controller
+in `api/rest.d`. Within each module, a resource's parts sit together, in the order projects,
+lanes, tasks.
 
 | Part | Role | Module | For projects |
 |---|---|---|---|
 | PODO | one row of the table, plus any enum and its converter | `model.d` | `Project`, `TaskAddRule`, `toTaskAddRule` |
-| Repository | hand-written SQL against the pool, plus the private row converter | `repository.d` | `ProjectRepository`, `toProject` |
+| Service model | several PODOs written or read together | `servicemodel.d` | `ProjectWithLanes` |
+| Repository interface | what can be read and written, documented in Ddoc; everything but `app.d` knows only this | `repository/package.d` | `IProjectRepository` |
+| Postgres repository | hand-written SQL against the pool, plus the private row converter | `repository/postgres.d` | `PostgresProjectRepository`, `toProject` |
+| Service | the rules a write must keep, such as the slug check, over the repository interfaces; reports failures as error classes, never as HTTP, and successful writes to the event stream | `service.d` | `ProjectService`, `IProjectError`, `NameTakenError` |
 | REST interface | the wire contract vibe generates routes from, plus any body type of its own | `api/rest.d` | `ProjectApi` |
-| Service | implements the interface over the repository, with the private checks only it needs | `api/rest.d` | `ProjectService`, `placeAtEndWhenUnplaced` |
-| Checks | the `enforce…` validation of a resource's fields, which the RPC calls apply too | `api/checks.d` | `enforceNamed`, `enforceSlug`, `enforceValid` |
+| Controller | implements the interface over the service, and turns its errors into HTTP ones | `api/rest.d` | `ProjectController` |
+| Error answers | the status and message for each error class, shared by the REST and RPC controllers | `api/errors.d` | `toHTTPError` |
+| Field checks | the schema's check constraints, checked before a write, each failure an error class | `service.d` | `checkName`, `checkLane`, `checkSlug` |
 
-The dependencies run one way: `api/rest.d` and `api/rpc.d` import `api/checks.d`,
-`repository.d` and `model.d`, but never each other; `api/checks.d` imports `repository.d` and
-`model.d`; `repository.d` imports `model.d`; and `model.d` imports neither. A check that both
-APIs need goes in `api/checks.d`, never in one API module for the other to import.
+Every check of what may be written lives in the service, so that each way of writing, REST, RPC
+or an agent, gets the same answer. A controller checks only what is about the request itself,
+such as a nil path id, a body of JSON null (`enforceBody`), or an RPC lane draft that carries an
+id where it must not.
+`Result` and `OperationResult`, in `result.d`, are what a service method returns.
+
+The dependencies run one way: `api/rest.d` and `api/rpc.d` import `api/errors.d`, `service.d`
+and `model.d`, never each other and never a repository; `api/errors.d` imports `service.d` and
+`model.d`; `service.d` imports the repository interfaces,
+`result.d`, `servicemodel.d`, `helpers.d` and `model.d`; `repository/postgres.d` imports the
+interfaces and `model.d`; and `model.d` imports none of them. Only `app.d` imports
+`repository.postgres`, to register each implementation under its interface. A check that both
+APIs need goes in the service, and an error answer both need in `api/errors.d`, never in one API
+module for the other to import.
 
 An operation that is not reading or writing one resource — moving a task, which renumbers its
 neighbours, is the example — is not a REST endpoint but a call in `RpcApi`, in `api/rpc.d`,
@@ -46,8 +70,9 @@ struct, so success is a 200 with a body. **Keep a call lean**: arguments are ids
 the call needs, and the result is only what the call changed that the caller cannot already know
 (`moveTask` returns the lane's task ids in their new order, not the tasks). Never take or return
 whole resources — complete resources are what the REST API is for. Before adding a field to a
-result, check that the UI actually reads it. `RpcService`
-takes the repositories it needs through its constructor, like a REST service. The reasons behind each call's shape are in `docs/rpc-api.md`, and those behind the
+result, check that the UI actually reads it. `RpcController` takes the services it needs
+through its constructor, like a REST controller, and a call that is several steps, such as
+`moveTask`, is one service method (`TaskService.move`), not steps in the call. The reasons behind each call's shape are in `docs/rpc-api.md`, and those behind the
 resources in `docs/rest-api.md`; keep them in step when an endpoint or call changes.
 
 Pure functions that do not belong to one layer — the checks that mirror the schema's check
@@ -61,23 +86,46 @@ There is **no ORM and no migration runner**. SQL is written out by hand in the r
 1. **PODO.** A `class` (not a struct — vibe needs to `new` it, and Poodinis resolves classes).
    Public fields matching the columns, camelCased. A default constructor plus convenience ones,
    all `@safe`.
-2. **Repository.** Constructor takes `PostgresClient`. One method per operation, using
-   `QueryParams` + `execParams`. Leave these `@system` — do not chase `@safe` down here.
-3. **REST interface.** `@path("/api/rest/v1")` on the interface, explicit `@method` and `@path` on every
+2. **Repository.** An interface `ILaneRepository` in `repository/package.d`, one method per
+   operation, each with its Ddoc comment there; and its implementation
+   `PostgresLaneRepository : ILaneRepository` in `repository/postgres.d`, whose methods carry no
+   doc comments of their own. The implementation's constructor takes `PostgresClient`, and its
+   methods use `QueryParams` + `execParams`. Leave these `@system` — do not chase `@safe` down
+   here. An exception a caller is meant to catch, such as `PositionConflict`, is part of the
+   interface and goes in `package.d`.
+3. **Service.** A class in `service.d` whose constructor takes the repository interfaces it
+   needs. Its methods return a `Result!(T, ILaneError)`, or an `OperationResult!ILaneError` when
+   there is no value, rather than throwing. Each kind of failure is a class implementing the
+   resource's error interface (`TaskNotFoundError : ITaskError`), with fields only for what the
+   controller cannot know itself, such as `NameTakenError.ownerName`. A kind of failure several
+   services report is one class implementing each of their interfaces
+   (`ProjectNotFoundError : IProjectError, ILaneError, ITaskError`), not a class per service. A
+   service knows nothing of HTTP, and leaves running in the background to its caller (see
+   `docs/code-style.md`): `TaskService.handToAgent` waits on the agents, and the controller is
+   what runs it in a task of its own. Document in each method's `Returns:` which error classes it can fail with.
+
+   A method that writes reports the write to the `IEventPublisher` (`dashboard/source/eventing.d`)
+   once it has succeeded, with the ids it concerns, so that an open web UI shows it whoever made
+   the write: take the stream in the constructor and call, say,
+   `events.project(Event.created, project.id)`. A failed write reports nothing. A new kind of
+   resource gets a method of its own on `IEventPublisher`, and a case in `applyChange` in `app.js`.
+   See `docs/event-stream.md`.
+4. **REST interface.** `@path("/api/rest/v1")` on the interface, explicit `@method` and `@path` on every
    method, every method `@safe`. Spelling out `@method` and `@path` keeps vibe from inferring
    them from the method name (`getProjects` → `GET projects`), so renaming a method cannot
    silently move its endpoint — and the names are free to be `listProjects`, `readProject`.
-4. **Service.** Constructor takes the repository. Every override `@trusted`. A method that
-   writes reports the write to the `ChangeFeed` (`dashboard/source/changes.d`) once it has
-   succeeded, with the ids it concerns, so that an open web UI shows it: take the feed in the
-   constructor and call, say, `changes.task(Change.created, created.id, projectId)`. A new kind
-   of resource gets a method of its own on the feed, and a case in `applyChange` in `app.js`.
-   See `docs/change-feed.md`.
-5. **Register in `dashboard/source/app.d`**, inside `DashboardContext.registerDependencies`:
+5. **Controller.** Constructor takes the service. Every override `@trusted`. A failed result
+   goes through the resource's `toHTTPError`, which picks the status and message by the error's
+   class; give every error class a branch there, as nothing checks that one is missing, and an
+   error without one comes back as a 500. The `toHTTPError` overloads are in `api/errors.d`, so
+   that the RPC answers a service's errors as REST does. A controller reports no events; the
+   service does.
+6. **Register in `dashboard/source/app.d`**, inside `DashboardContext.registerDependencies`:
 
    ```d
-   container.register!LaneRepository;
-   container.register!(LaneApi, LaneService);
+   container.register!(ILaneRepository, PostgresLaneRepository);
+   container.register!LaneService;
+   container.register!(LaneApi, LaneController);
    ```
 
    then mount it in `main`, **before** the static catch-all:
@@ -87,16 +135,18 @@ There is **no ORM and no migration runner**. SQL is written out by hand in the r
    router.get("*", serveStaticFiles("public/"));
    ```
 
-   Poodinis injects the repository into the service, and the pool into the repository, through
-   their constructors. Nothing needs `@Inject`.
+   Poodinis injects the service into the controller, the repository into the service, and the
+   pool into the repository, through their constructors. Nothing needs `@Inject`. Anything that
+   takes a repository asks for the interface; registered this way, the postgres class cannot be
+   resolved by its own name.
 
-6. **Document it in `dashboard/public/rest-openapi.yaml`** before calling the work done — a new
+7. **Document it in `dashboard/public/rest-openapi.yaml`** before calling the work done — a new
    tag, paths and schema, with real captured responses as examples. Follow the `taskavista-rest-api-docs` skill. An endpoint
    that ships undocumented is not finished.
 
 ## Method conventions
 
-Repository method names and return types, as `ProjectRepository` has them:
+Repository method names and return types, as `IProjectRepository` has them:
 
 | Operation | Signature | SQL |
 |---|---|---|
@@ -107,14 +157,29 @@ Repository method names and return types, as `ProjectRepository` has them:
 | delete | `bool remove(UUID id)` | `delete … where id = $1 returning id` |
 
 **Use `returning id` on update and delete.** It is how the repository reports whether a row
-actually matched, which is what the service turns into a 404. Do not reach for `cmdTuples`.
+actually matched, which the service turns into a not-found error and the controller into a 404.
+Do not reach for `cmdTuples`.
 
 Bind every value with `query.argsVariadic(…)`. Never interpolate into `sqlCommand`.
 
-Service methods map misses onto status codes with `enforceHTTP`:
+Service methods, as `ProjectService` has them:
+
+| Operation | Signature |
+|---|---|
+| list | `T[] getAll()` — nothing to fail, so no `Result` |
+| read | `Result!(T, IError) get(UUID id)` |
+| create or update | `Result!(T, IError) save(T item)` — creates when `item.id` is `UUID.init`, updates otherwise |
+| delete | `OperationResult!IError remove(UUID id)` |
+
+A controller turns a failed result into an HTTP error with `toHTTPError`, and answers what the
+request itself gets wrong with `enforceHTTP`:
 
 ```d
-enforceHTTP(repository.remove(_id), HTTPStatus.notFound, "No lane has that id.");
+auto created = service.save(project);
+if (created.isFailure)
+{
+    throw toHTTPError(created.error, project);
+}
 ```
 
 ## Traps
@@ -123,7 +188,7 @@ These all cost time on the projects resource. None of them produce an obvious er
 
 - **vibe requires every REST interface method to be `@safe`.** The static assert names the
   method but not the cause. dpq2's `Answer` and `execParams` are `@system`, so `@safe` cannot
-  reach the database. **Draw the boundary at the service: interface methods `@safe`, service
+  reach the database. **Draw the boundary at the controller: interface methods `@safe`, controller
   overrides `@trusted`.** `@trusted` satisfies the requirement and is covariant with the
   interface. Marking the repository `@safe` does not work — do not try.
 - **PODO constructors must be `@safe`** or deserialization fails inside `@safe` vibe code.
@@ -148,9 +213,22 @@ These all cost time on the projects resource. None of them produce an obvious er
   `enum TaskAddRule : string { firstLane = "first_lane" }`. Copy the `toTaskAddRule` loop over
   `EnumMembers`. Going the other way, `cast(string)` is enough. On the wire vibe serializes such
   an enum as its **value** (`"first_lane"`) and validates on the way in, which is what you want.
+- **`failure(new SomeError)` makes a result of the error's own class.** `failure` infers its
+  error type from the argument, so it gives a `Result!(T, ProjectNotFoundError)`, which does not
+  convert to the `Result!(T, IProjectError)` the method returns; and `failure!IProjectError(…)`
+  picks the `Result` overload rather than `OperationResult`. Give the service a pair of private
+  helpers that take the error as the interface, as `projectFailure` and `projectSuccess` do, and
+  use only those.
+- **`save` reads the nil UUID as "create".** A `PUT` to `/lanes/00000000-0000-0000-0000-000000000000`
+  would create a lane rather than miss. Reject a nil path id in the controller before calling
+  `save`, as `replaceProject` does; and on create, clear any id the body carries, or `save` would
+  update.
 - **Validate anything the schema's check constraints enforce, before the insert.** Otherwise a
-  blank name surfaces as a failed insert (500) instead of a 400. `enforceNamed` in `api/checks.d`
-  is the pattern.
+  blank name surfaces as a failed insert (500) instead of a 400. `checkName` and `checkLane` in
+  `service.d` are the pattern: a private function returning the error, or null when the field is
+  fine, called first thing in `save`. A check that applies to the rows of more than one service,
+  as a lane's do, is a template on the error interface (`checkLane!ILaneError`), and its error
+  classes implement each interface.
 
 ## Debug builds report unexpected errors as 500
 
@@ -203,8 +281,7 @@ docker exec -i taskavista-postgres psql -U taskavista -d "$(jq -r .database.name
 (`lanes` throughout this section is a stand-in for whatever resource you are adding — there is no
 lanes table yet. Substitute the real table name.)
 
-## Formatting
+## Code style
 
-D source is **tab**-indented. The editor has reformatted a D file to spaces at least once
-while it was open; if a file comes back mixed, `unexpand -t 4` it and diff with leading
-whitespace stripped to prove nothing but indentation moved.
+Formatting, braces, imports and doc comments follow `docs/code-style.md`; read it before writing
+the D side.

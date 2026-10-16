@@ -1,10 +1,10 @@
-# The change feed
+# The event stream
 
 Every write made through the API is reported to each open web UI over a WebSocket, so that a
 change made somewhere else shows without a reload. That mostly means AI agents, which work
 through the same REST and RPC calls as the UI, but it also covers a second browser tab.
 
-The server side is `ChangeFeed` in `dashboard/source/changes.d`, served at `/api/changes/v1`. The
+The server side is `EventStream` in `dashboard/source/eventing.d`, served at `/api/events/v1`. The
 UI side is the "changes made elsewhere" section of `dashboard/public/app.js`.
 
 ## A message is an event, not data
@@ -34,7 +34,7 @@ changed too". A write to a task also adds a note to it, and its own
 task event stands for that note, so `note-created` is sent only for a note added without one,
 such as the scheduler's.
 
-A service reports a write after it has succeeded, so a refused call sends nothing. Writes made
+An API call reports its write after the write has succeeded, so a refused call sends nothing. Writes made
 any other way, such as straight into the database, are not reported. The one exception is that
 the UI fetches everything again after it reconnects.
 
@@ -47,7 +47,7 @@ reads, which is how a closed socket is noticed.
 
 ## The UI
 
-The UI's own writes come back over the feed too, and the screen already shows them. So the UI
+The UI's own writes come back over the stream too, and the screen already shows them. So the UI
 compares what it fetches with what it has drawn, and it draws again only what differs: a lane
 whose cards changed, or the whole row of lanes if the lanes themselves changed. A card for a
 task that is new to the board gets the same `added` glow as a card added on the page.

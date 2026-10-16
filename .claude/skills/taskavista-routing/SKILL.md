@@ -71,7 +71,7 @@ Everything is in the "routing" section of `dashboard/public/app.js`.
    `matchRoute` falls back to it after every entry has missed, so nothing needs to go after it. A fixed path has to come before a pattern
    that would also match it: `/projects/new` goes above `/projects/:slug`, or "new" is taken as a
    project slug — and a project whose slug really is `new` becomes unreachable, so add such
-   words to `reservedSlugs` in `api/checks.d` (`new` is there already) when adding a fixed path there.
+   words to `reservedSlugs` in `service.d` (`new` is there already) when adding a fixed path there.
 
 4. **Give it a path helper** if other code will link to it, as `projectPath(id)` does, and
    `encodeURIComponent` each parameter in it.

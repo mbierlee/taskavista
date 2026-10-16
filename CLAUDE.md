@@ -3,7 +3,8 @@
 Taskavista is a task board: a project holds lanes, lanes hold task cards. It is early —
 the board screen is a working prototype and the pieces behind it are still going in.
 
-- `dashboard/` — a D / vibe.d HTTP server that serves the web UI out of `public/`. It also
+- `dashboard/` — a D / vibe.d HTTP server that serves the web UI out of `public/`, layered into
+  controllers, services and repositories (see `docs/server-layers.md`). It also
   holds `sql/init.sql`, the whole schema — `projects`, their `lanes`, the `tasks` in them, each task's `task_notes`, the fixed `runtimes` and their `models`, the fixed `effort_levels` and which of them each model takes (`model_effort_levels`), the `agents` that run on them and their `agent_labels`, and the `defaults`, a value per key — which it applies on
   start-up when the database is still completely empty.
 - `docker/` — postgres 18 and pgadmin.
@@ -30,8 +31,8 @@ which starts every interaction with an agent and gives it the API help in
 `dashboard/public/agent-help.txt` (which agents can also fetch from the server), then
 `dashboard/prompts/system/new-agent-chat.txt`, the chat's own part; the tabs last as long as the page. Every write
 through the API is reported to the open UIs over a WebSocket
-(`/api/changes/v1`), as an event and the ids it concerns, and the UI fetches what changed, so what
-an agent does shows on screen straight away (see `docs/change-feed.md`).
+(`/api/events/v1`), as an event and the ids it concerns, and the UI fetches what changed, so what
+an agent does shows on screen straight away (see `docs/event-stream.md`).
 
 ## Running it
 

@@ -7,7 +7,7 @@ import vibe.http.common : HTTPMethod, HTTPStatusException, enforceHTTP;
 import vibe.http.server : HTTPServerRequest, HTTPServerResponse;
 import vibe.http.status : HTTPStatus;
 
-import std.algorithm : canFind, filter, findSplit, map;
+import std.algorithm : filter, findSplit, map;
 import std.array : array;
 import std.range : enumerate;
 import std.string : strip;
@@ -15,10 +15,10 @@ import std.typecons : Nullable;
 import std.uuid : UUID;
 
 import agent : AgentChat, AgentDrafter;
-import changes : Change, ChangeFeed;
-import api.checks : enforceNamed, enforceSlug, enforceValid;
+import api.errors : toHTTPError;
 import model : Lane, Project, TaskAddRule;
-import repository : AgentRepository, LaneRepository, PositionConflict, ProjectRepository, TaskRepository;
+import service : AgentService, ProjectService, TaskService;
+import servicemodel : ProjectWithLanes;
 
 /**
  * The outcome of a move: the destination lane's order afterwards, which is
@@ -116,7 +116,8 @@ interface RpcApi
      */
     @method(HTTPMethod.POST) @path("sendChatMessage")
     SendChatMessageResult sendChatMessage(UUID agentId, string message,
-        Nullable!UUID projectId = Nullable!UUID.init, Nullable!string sessionId = Nullable!string.init) @safe;
+        Nullable!UUID projectId = Nullable!UUID.init, Nullable!string sessionId = Nullable!string
+            .init) @safe;
 
     /**
      * Has an agent draft a new agent from what the person wrote it should do,
@@ -127,77 +128,47 @@ interface RpcApi
     Json draftAgent(string description) @safe;
 }
 
-/// Serves the RPC calls out of the repositories.
-class RpcService : RpcApi
+/// Serves the RPC calls out of the services.
+class RpcController : RpcApi
 {
-    private ProjectRepository projects;
-    private LaneRepository lanes;
-    private TaskRepository tasks;
-    private AgentRepository agents;
+    private ProjectService projects;
+    private TaskService tasks;
+    private AgentService agents;
     private AgentChat chat;
     private AgentDrafter drafter;
-    private ChangeFeed changes;
 
-    this(ProjectRepository projects, LaneRepository lanes, TaskRepository tasks, AgentRepository agents,
-        AgentChat chat, AgentDrafter drafter, ChangeFeed changes)
+    this(ProjectService projects, TaskService tasks, AgentService agents, AgentChat chat, AgentDrafter drafter)
     {
         this.projects = projects;
-        this.lanes = lanes;
         this.tasks = tasks;
         this.agents = agents;
         this.chat = chat;
         this.drafter = drafter;
-        this.changes = changes;
     }
 
     override MoveTaskResult moveTask(UUID taskId, UUID laneId, Nullable!UUID beforeTaskId) @trusted
     {
-        auto stored = tasks.find(taskId);
-        enforceHTTP(!stored.isNull, HTTPStatus.notFound, "No task has that id.");
-
-        auto project = tasks.projectOfLane(laneId);
-        enforceHTTP(!project.isNull, HTTPStatus.notFound, "No lane has that id.");
-        enforceHTTP(project.get == tasks.projectOfLane(stored.get.laneId).get,
-            HTTPStatus.badRequest, "A task can only move to a lane of its own project.");
-
-        auto before = UUID.init;
-        if (!beforeTaskId.isNull)
+        auto moved = tasks.move(taskId, laneId, beforeTaskId);
+        if (moved.isFailure)
         {
-            before = beforeTaskId.get;
-            enforceHTTP(before != taskId, HTTPStatus.badRequest, "A task cannot move before itself.");
-
-            auto neighbour = tasks.find(before);
-            enforceHTTP(!neighbour.isNull, HTTPStatus.notFound, "No task has the beforeTaskId sent.");
-            enforceHTTP(neighbour.get.laneId == laneId, HTTPStatus.badRequest,
-                "The beforeTaskId task is not in that lane.");
+            throw toHTTPError(moved.error, null);
         }
 
-        try
-        {
-            tasks.move(taskId, laneId, before);
-        }
-        catch (PositionConflict conflict)
-        {
-            // The beforeTaskId task left the lane after the check above.
-            throw new HTTPStatusException(HTTPStatus.badRequest, conflict.msg);
-        }
-        changes.task(Change.moved, taskId, project.get, stored.get.laneId, laneId);
-
-        return MoveTaskResult(laneId, tasks.ofLane(laneId).map!(task => task.id).array);
+        return MoveTaskResult(laneId, moved.value.map!(task => task.id).array);
     }
 
     override CreateProjectResult createProject(string name, string description,
         TaskAddRule taskAddRule, bool managedByAi, LaneDraft[] lanes) @trusted
     {
-        auto project = new Project(name, null, description, taskAddRule, managedByAi);
-        project.enforceNamed();
         enforceHTTP(lanes.filter!(lane => !lane.id.isNull).empty, HTTPStatus.badRequest,
             "A new project's lanes have no ids yet.");
-        auto board = toLanes(lanes);
-        project.enforceSlug(projects);
 
-        projects.addWithLanes(project, board);
-        changes.project(Change.created, project.id);
+        auto project = new Project(name, null, description, taskAddRule, managedByAi);
+        auto created = projects.save(new ProjectWithLanes(project, toLanes(lanes)));
+        if (created.isFailure)
+        {
+            throw toHTTPError(created.error, project);
+        }
 
         return CreateProjectResult(project.slug);
     }
@@ -205,46 +176,38 @@ class RpcService : RpcApi
     override SaveProjectSettingsResult saveProjectSettings(UUID projectId, string name,
         string description, TaskAddRule taskAddRule, bool managedByAi, LaneDraft[] lanes) @trusted
     {
-        auto stored = projects.find(projectId);
-        enforceHTTP(!stored.isNull, HTTPStatus.notFound, "No project has that id.");
+        auto stored = projects.get(projectId);
+        if (stored.isFailure)
+        {
+            throw toHTTPError(stored.error, null);
+        }
+
+        // The drafts, not the lanes, say which lanes are new: a lane made from a draft without an
+        // id has the nil UUID, which the service reads as new, so a client may not send it.
+        enforceHTTP(lanes.filter!(lane => !lane.id.isNull && lane.id.get == UUID.init).empty,
+            HTTPStatus.notFound, "No lane has one of the lane ids sent.");
 
         // The slug is made again only on a rename, so a save that leaves the
         // name alone never moves the project to a new URL.
-        const renamed = name != stored.get.name;
-        auto project = new Project(projectId, name, renamed ? null : stored.get.slug, description,
+        const renamed = name != stored.value.name;
+        auto project = new Project(projectId, name, renamed ? null : stored.value.slug, description,
             taskAddRule, managedByAi);
-        project.enforceNamed();
-        project.enforceSlug(projects);
-
-        auto board = toLanes(lanes);
-        auto existing = this.lanes.ofProject(projectId).map!(lane => lane.id).array;
-        bool[UUID] kept;
-        // The drafts, not the lanes, say which lanes are new: a lane made from a
-        // draft without an id has the nil UUID, which a client may also send.
-        foreach (id; lanes.filter!(lane => !lane.id.isNull).map!(lane => lane.id.get))
+        auto saved = projects.save(new ProjectWithLanes(project, toLanes(lanes)));
+        if (saved.isFailure)
         {
-            const own = existing.canFind(id);
-            enforceHTTP(own || this.lanes.find(id).isNull, HTTPStatus.badRequest,
-                "A lane sent belongs to another project.");
-            enforceHTTP(own, HTTPStatus.notFound, "No lane has one of the lane ids sent.");
-            enforceHTTP(id !in kept, HTTPStatus.badRequest, "A lane is listed twice.");
-            kept[id] = true;
+            throw toHTTPError(saved.error, project);
         }
-
-        projects.replaceWithLanes(project, board, existing.filter!(id => id !in kept).array);
-        changes.project(Change.changed, projectId);
 
         return SaveProjectSettingsResult(project.slug);
     }
 
     override SetAiPausedResult setAiPaused(UUID projectId, bool paused) @trusted
     {
-        auto project = projects.find(projectId);
-        enforceHTTP(!project.isNull, HTTPStatus.notFound, "No project has that id.");
-        enforceHTTP(paused || project.get.managedByAi, HTTPStatus.conflict,
-            "The project is not managed by AI agents, so its agents cannot be resumed.");
-        projects.setAiPaused(projectId, paused);
-        changes.project(Change.changed, projectId);
+        auto set = projects.setAiPaused(projectId, paused);
+        if (set.isFailure)
+        {
+            throw toHTTPError(set.error, null);
+        }
 
         return SetAiPausedResult(paused);
     }
@@ -254,14 +217,22 @@ class RpcService : RpcApi
     {
         enforceHTTP(message.strip.length > 0, HTTPStatus.badRequest, "A message cannot be blank.");
 
-        auto agent = agents.find(agentId);
-        enforceHTTP(!agent.isNull, HTTPStatus.notFound, "No agent has that id.");
+        auto agent = agents.get(agentId);
+        if (agent.isFailure)
+        {
+            throw toHTTPError(agent.error, null);
+        }
 
         Nullable!Project project;
         if (sessionId.isNull && !projectId.isNull)
         {
-            project = projects.find(projectId.get);
-            enforceHTTP(!project.isNull, HTTPStatus.notFound, "No project has that id.");
+            auto found = projects.get(projectId.get);
+            if (found.isFailure)
+            {
+                throw toHTTPError(found.error, null);
+            }
+
+            project = found.value;
         }
 
         // What is left is the agent failing to answer. A session the agent does
@@ -269,7 +240,7 @@ class RpcService : RpcApi
         try
         {
             string session = sessionId.isNull ? null : sessionId.get;
-            auto reply = chat.send(agent.get, project, message, session);
+            auto reply = chat.send(agent.value, project, message, session);
 
             return SendChatMessageResult(reply, session);
         }
@@ -289,18 +260,16 @@ class RpcService : RpcApi
 }
 
 /**
- * The drafts as lanes, each at the position of its place in the list, and
- * checked as the lanes REST API checks a lane.
+ * The drafts as lanes, each at the position of its place in the list. The service checks them as
+ * it checks any lane.
  */
 private Lane[] toLanes(LaneDraft[] drafts)
 {
     Lane[] lanes;
     foreach (index, draft; drafts.enumerate)
     {
-        auto lane = new Lane(draft.id.isNull ? UUID.init : draft.id.get, UUID.init, draft.name,
+        lanes ~= new Lane(draft.id.isNull ? UUID.init : draft.id.get, UUID.init, draft.name,
             cast(int) index, draft.color, draft.marksDone);
-        lane.enforceValid();
-        lanes ~= lane;
     }
 
     return lanes;
@@ -348,7 +317,7 @@ void enforceJsonObjectBody(HTTPServerRequest request, HTTPServerResponse respons
 void answerNoSuchCall(HTTPServerRequest request, HTTPServerResponse response) @safe
 {
     const message = request.method == HTTPMethod.POST
-        ? "There is no call " ~ request.requestPath.toString.findSplit("/api/rpc/v1/")[2] ~ "."
-        : "Every call is a POST.";
+        ? "There is no call " ~ request.requestPath.toString.findSplit(
+            "/api/rpc/v1/")[2] ~ "." : "Every call is a POST.";
     response.writeJsonBody(["statusMessage": message], HTTPStatus.notFound);
 }

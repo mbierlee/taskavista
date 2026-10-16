@@ -1,4 +1,4 @@
-module changes;
+module eventing;
 
 import vibe.core.core : runTask;
 import vibe.core.log : logDiagnostic;
@@ -13,12 +13,55 @@ import std.uuid : UUID;
  * What happened to a resource. Only a task can be moved, as the moveTask
  * call does; any other write to one is a change.
  */
-enum Change : string
+enum Event : string
 {
     created = "created",
     changed = "changed",
     moved = "moved",
     deleted = "deleted",
+}
+
+/**
+ * Reports what has been written, for whoever is listening. All that code making a write needs,
+ * without knowing how the events reach anyone.
+ */
+interface IEventPublisher
+{
+    /**
+     * Reports that a task was created, changed, moved or deleted.
+     *
+     * The lanes are named so that the UI fetches exactly the ones that changed,
+     * rather than working out from what it has drawn where the task was, which
+     * is out of date while it is behind on a run of changes.
+     *
+     * Params:
+     *   event = What happened to the task.
+     *   taskId = The task.
+     *   projectId = The project it is in.
+     *   fromLaneId = The lane it was in, or `UUID.init` for one just created.
+     *   toLaneId = The lane it is in now, or `UUID.init` for one deleted. The
+     *     same lane as `fromLaneId` when it did not leave its lane.
+     */
+    void task(Event event, UUID taskId, UUID projectId, UUID fromLaneId, UUID toLaneId);
+
+    /// A lane of the project `projectId` was created, changed or deleted.
+    void lane(Event event, UUID laneId, UUID projectId);
+
+    /**
+     * A project was created, changed or deleted. A change to it may have
+     * changed its lanes as well, as the saveProjectSettings call does.
+     */
+    void project(Event event, UUID projectId);
+
+    /**
+     * A note was added to the task `taskId` of the project `projectId` by
+     * anything other than a write to the task itself, whose own event already
+     * stands for its note.
+     */
+    void note(UUID taskId, UUID projectId);
+
+    /// An AI agent was created, changed or deleted.
+    void agent(Event event, UUID agentId);
 }
 
 /**
@@ -34,26 +77,23 @@ enum Change : string
  * reconnects cost nothing more than a refetch. Every write is reported,
  * including those the UI made itself.
  */
-class ChangeFeed
+interface IEventStream : IEventPublisher
+{
+    /**
+     * Sends the changes to one web UI for as long as its socket is open.
+     *
+     * Params:
+     *   socket = The UI's socket. Anything it sends is read and ignored.
+     */
+    void serve(scope WebSocket socket);
+}
+
+/// IEventStream over a WebSocket per open web UI.
+class EventStream : IEventStream
 {
     private Subscriber[] subscribers;
 
-    /**
-     * Reports that a task was created, changed, moved or deleted.
-     *
-     * The lanes are named so that the UI fetches exactly the ones that changed,
-     * rather than working out from what it has drawn where the task was, which
-     * is out of date while it is behind on a run of changes.
-     *
-     * Params:
-     *   change = What happened to the task.
-     *   taskId = The task.
-     *   projectId = The project it is in.
-     *   fromLaneId = The lane it was in, or `UUID.init` for one just created.
-     *   toLaneId = The lane it is in now, or `UUID.init` for one deleted. The
-     *     same lane as `fromLaneId` when it did not leave its lane.
-     */
-    public void task(Change change, UUID taskId, UUID projectId, UUID fromLaneId, UUID toLaneId)
+    public void task(Event event, UUID taskId, UUID projectId, UUID fromLaneId, UUID toLaneId)
     {
         UUID[string] ids = ["taskId": taskId, "projectId": projectId];
         if (fromLaneId != UUID.init)
@@ -64,46 +104,33 @@ class ChangeFeed
         {
             ids["toLaneId"] = toLaneId;
         }
-        publish("task", change, ids);
+
+        publish("task", event, ids);
     }
 
-    /// A lane of the project `projectId` was created, changed or deleted.
-    public void lane(Change change, UUID laneId, UUID projectId)
+    public void lane(Event event, UUID laneId, UUID projectId)
     {
-        publish("lane", change, ["laneId": laneId, "projectId": projectId]);
+        publish("lane", event, ["laneId": laneId, "projectId": projectId]);
     }
 
-    /**
-     * A project was created, changed or deleted. A change to it may have
-     * changed its lanes as well, as the saveProjectSettings call does.
-     */
-    public void project(Change change, UUID projectId)
+    public void project(Event event, UUID projectId)
     {
-        publish("project", change, ["projectId": projectId]);
+        publish("project", event, ["projectId": projectId]);
     }
 
-    /**
-     * A note was added to the task `taskId` of the project `projectId` by
-     * anything other than a write to the task itself, whose own event already
-     * stands for its note.
-     */
     public void note(UUID taskId, UUID projectId)
     {
-        publish("note", Change.created, ["taskId": taskId, "projectId": projectId]);
+        publish("note", Event.created, [
+                "taskId": taskId,
+                "projectId": projectId
+            ]);
     }
 
-    /// An AI agent was created, changed or deleted.
-    public void agent(Change change, UUID agentId)
+    public void agent(Event event, UUID agentId)
     {
-        publish("agent", change, ["agentId": agentId]);
+        publish("agent", event, ["agentId": agentId]);
     }
 
-    /**
-     * Sends the changes to one web UI for as long as its socket is open.
-     *
-     * Params:
-     *   socket = The UI's socket. Anything it sends is read and ignored.
-     */
     public void serve(scope WebSocket socket)
     {
         auto subscriber = new Subscriber;
@@ -116,7 +143,7 @@ class ChangeFeed
         // Sent from a task of its own, so that a UI slow to read holds up only
         // itself, never the API call that made the change. This task reads
         // meanwhile, which is how it learns that the socket has closed.
-        auto sender = runTask(() nothrow { forward(subscriber, socket); });
+        auto sender = runTask(() nothrow{ forward(subscriber, socket); });
         scope (exit)
         {
             subscriber.closed = true;
@@ -130,9 +157,9 @@ class ChangeFeed
         }
     }
 
-    private void publish(string resource, Change change, UUID[string] ids)
+    private void publish(string resource, Event event, UUID[string] ids)
     {
-        auto message = Json(["type": Json(resource ~ "-" ~ change)]);
+        auto message = Json(["type": Json(resource ~ "-" ~ event)]);
         foreach (name, id; ids)
         {
             message[name] = id.toString;

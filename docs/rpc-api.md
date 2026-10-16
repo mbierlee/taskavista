@@ -6,7 +6,7 @@ document is for whoever builds Taskavista. It covers why the calls are shaped as
 parts of how they work that a caller cannot see. Keep both in step: a rule a caller can observe
 goes in the spec, and the reason for it goes here.
 
-The calls are `RpcApi` in `dashboard/source/api/rpc.d`, served by `RpcService` and mounted at
+The calls are `RpcApi` in `dashboard/source/api/rpc.d`, served by `RpcController` and mounted at
 `/api/rpc/v1` in `app.d`. How to add one is in the `taskavista-rest-api` skill, and how to
 document it is in `taskavista-rest-api-docs`.
 

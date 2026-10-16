@@ -107,8 +107,8 @@ fetches the agents again; a refusal is shown in the dialog. It loads the agents 
 on start-up, and again whenever the settings screen fetches them. The agent chat's events change
 the store's `chat`, and nothing else yet: the chats live only as long as the page, an agent that is
 deleted ends its chat, and a message sent is added to its chat without reaching the agent. Changes
-made elsewhere, such as by an AI agent, come in over the change feed, and it fetches and draws them
-as described in [change-feed.md](change-feed.md). It never reads state back out of the DOM.
+made elsewhere, such as by an AI agent, come in over the event stream, and it fetches and draws them
+as described in [event-stream.md](event-stream.md). It never reads state back out of the DOM.
 
 ### The store
 
