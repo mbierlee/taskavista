@@ -77,6 +77,14 @@ export class TvAppSettings extends HTMLElement {
       ),
     );
     this.#description.addEventListener("input", () => this.#updateGenerate());
+    // Enter generates, as the button would; Shift+Enter is left to add a newline.
+    this.#description.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
+        return;
+      }
+      event.preventDefault();
+      this.#generate.click();
+    });
     this.#generate.addEventListener("click", () =>
       this.dispatchEvent(
         new CustomEvent("agent-draft", {
