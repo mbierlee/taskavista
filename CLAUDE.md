@@ -42,7 +42,7 @@ an agent does shows on screen straight away (see `docs/event-stream.md`).
 
 | | |
 |---|---|
-| Dashboard | `cd dashboard && dub run` → http://localhost:8080 (port in `config.json`) |
+| Dashboard | `cd dashboard && dub run` → http://localhost:8080 (port in `config.json`, or another config file given with `dub run -- --config=config-dev.json`) |
 | Database | `docker/run.sh -d` → postgres on 5432, pgadmin on http://localhost:5050 |
 
 There are no tests. There is no frontend build step, so a UI change needs only a reload;

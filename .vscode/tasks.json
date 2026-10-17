@@ -5,7 +5,7 @@
 			"label": "dub run",
 			"type": "shell",
 			"command": "dub",
-			"args": ["run"],
+			"args": ["run", "--", "--config=config-dev.json"],
 			"options": {
 				"cwd": "${workspaceFolder}/dashboard"
 			},

@@ -1,10 +1,12 @@
 module config;
 
+import vibe.core.args : readOption;
 import vibe.core.file : existsFile, readFileUTF8;
 import vibe.core.log : logInfo;
 import vibe.data.json : deserializeJson;
 import vibe.data.serialization : optional;
 
+import std.exception : enforce;
 import std.format : format;
 
 import helpers : quoted;
@@ -41,18 +43,32 @@ struct DatabaseConfig
 enum configPath = "config.json";
 
 /**
- * Reads the config file, falling back to defaults when it is not present.
- * Fields left out of the file keep their default as well.
+ * Reads the config file given with `--config`, or else config.json, falling
+ * back to defaults when config.json is not present. Fields left out of the file
+ * keep their default as well.
+ *
+ * Throws: `Exception` when the file given with `--config` does not exist, since
+ * a server quietly started on defaults could be pointed at the wrong database.
  */
 Config loadConfig()
 {
-    if (!existsFile(configPath))
+    string path;
+    if (readOption("config", &path, "The config file to use instead of " ~ configPath ~ "."))
+    {
+        enforce(existsFile(path), format("Config file %s not found.", path));
+    }
+    else if (existsFile(configPath))
+    {
+        path = configPath;
+    }
+    else
     {
         logInfo("No %s found, using defaults.", configPath);
         return new Config;
     }
 
-    return deserializeJson!Config(readFileUTF8(configPath));
+    logInfo("Using config %s.", path);
+    return deserializeJson!Config(readFileUTF8(path));
 }
 
 /**
