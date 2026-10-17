@@ -103,9 +103,9 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Project" }
               example:
-                - { id: 9ec81254-6a98-4992-bd78-1522242c384d, name: AI test, slug: ai-test, description: "A playground for the AI agents. Keep task descriptions short, and leave tasks in \"Done\" alone.", taskAddRule: first_lane, managedByAi: true, aiPaused: false }
-                - { id: 9a368af0-3728-4873-b86c-ff0bc2fdda2c, name: Q3 finance, slug: q3-finance, description: "", taskAddRule: any_lane, managedByAi: false, aiPaused: true }
-                - { id: e646f399-2320-4e4e-bf19-03a62dd82b30, name: Локализация сайта, slug: локализация-сайта, description: Перевод сайта на русский, японский, арабский и греческий., taskAddRule: any_lane, managedByAi: false, aiPaused: true }
+                - { id: a63cf7e5-f494-4473-bea3-060505655da7, name: AI test, slug: ai-test, description: "A playground for the AI agents. Keep task descriptions short, and leave tasks in \"Done\" alone.", taskAddRule: first_lane, managedByAi: true, aiPaused: false, canBeOpened: false }
+                - { id: 382e9cfb-6543-4928-a3b9-0ef2f26b9e40, name: Q3 finance, slug: q3-finance, description: "", taskAddRule: any_lane, managedByAi: false, aiPaused: true, canBeOpened: false }
+                - { id: 6ed1b87c-bbf5-432f-b8a4-c5f72240486b, name: Локализация сайта, slug: локализация-сайта, description: Перевод сайта на русский, японский, арабский и греческий., taskAddRule: any_lane, managedByAi: false, aiPaused: true, canBeOpened: false }
         "500": { $ref: "#/components/responses/ServerError" }
     post:
       tags: [Projects]
@@ -136,7 +136,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: 6ef6ab58-fdb5-4256-8bcc-d1f8b27edb24, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., taskAddRule: first_lane, managedByAi: false, aiPaused: true }
+              example: { id: 74013685-d221-4ca7-8176-4705fcd5eb19, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., taskAddRule: first_lane, managedByAi: false, aiPaused: true, canBeOpened: false }
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
@@ -171,7 +171,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: 9a368af0-3728-4873-b86c-ff0bc2fdda2c, name: Q3 finance, slug: q3-finance, description: "", taskAddRule: any_lane, managedByAi: false, aiPaused: true }
+              example: { id: 382e9cfb-6543-4928-a3b9-0ef2f26b9e40, name: Q3 finance, slug: q3-finance, description: "", taskAddRule: any_lane, managedByAi: false, aiPaused: true, canBeOpened: false }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -202,7 +202,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: 4b534b4a-76ce-45c2-8ec4-bc6e6619d777, name: Kite launch v2, slug: kite, description: Launch the kite range in the spring catalogue., taskAddRule: first_lane, managedByAi: true, aiPaused: false }
+              example: { id: 54aab93b-6c56-4a62-8499-b841a70f0555, name: Kite launch v2, slug: kite, description: Launch the kite range in the spring catalogue., taskAddRule: first_lane, managedByAi: true, aiPaused: false, canBeOpened: false }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
@@ -798,6 +798,14 @@ components:
             new project starts running if it is managed by AI and paused otherwise, and a project
             starts running when `managedByAi` is turned on and is paused when it is turned off.
             The `setAiPaused` RPC call pauses and resumes it in between.
+        canBeOpened:
+          type: boolean
+          readOnly: true
+          description: |
+            Ignored in a `POST` or `PUT` body. Whether the project has a page to open in a
+            browser: an `index.html` at the top of the project's working directory, which the
+            server serves at `/working-dirs/{slug}/index.html`, outside this API, along with the
+            rest of the directory's files.
 
     Lane:
       type: object

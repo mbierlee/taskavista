@@ -22,7 +22,7 @@ import api.rpc : RpcApi, RpcController, answerNoSuchCall, enforceJsonObjectBody;
 import eventing : EventStream, IEventPublisher, IEventStream;
 import schema : installSchemaWhenEmpty;
 import service : AgentService, DefaultService, LaneService, ProjectService, RuntimeService, TaskService;
-import workingdir : ProjectWorkingDirs;
+import workingdir : IndexPages, ProjectWorkingDirs;
 
 /**
  * Wires the application together. Everything resolvable is registered here, so
@@ -40,6 +40,7 @@ class DashboardContext : ApplicationContext
         container.register!(IEventPublisher, EventStream).existingInstance(events);
         container.register!(IEventStream, EventStream).existingInstance(events);
         container.register!ProjectWorkingDirs;
+        container.register!IndexPages;
         container.register!(IProjectRepository, PostgresProjectRepository);
         container.register!ProjectService;
         container.register!(ProjectApi, ProjectController);
@@ -122,6 +123,12 @@ void main()
 
     auto fileSettings = new HTTPFileServerSettings;
     fileSettings.cacheControl = "no-cache";
+    // The projects' working directories, for the page an agent may have made in one, which the UI's
+    // "Open project" button opens. Before public/, so that a file there cannot take one of these paths.
+    auto workingDirSettings = new HTTPFileServerSettings("/working-dirs");
+    workingDirSettings.cacheControl = "no-cache";
+    router.get("/working-dirs/*", serveStaticFiles(container.resolve!ProjectWorkingDirs.root ~ "/",
+        workingDirSettings));
     router.get("*", serveStaticFiles("public/", fileSettings));
     // Any other path is one of the UI's screens, which are routed in the browser.
     router.get("*", serveUiRoutes("public/index.html", fileSettings));

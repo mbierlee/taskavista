@@ -64,6 +64,13 @@ class Project
      * changes it otherwise.
      */
     @optional bool aiPaused;
+    /**
+     * Whether the project has something the web UI can open, in a tab of its
+     * own: for now, an index.html in its working directory, served under
+     * /working-dirs/. Not a column but looked up on a read of the project.
+     * Read-only on the REST API, which ignores it in a body.
+     */
+    @optional bool canBeOpened;
 
     this() @safe
     {

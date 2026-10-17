@@ -15,7 +15,7 @@ import repository : IAgentRepository, IDefaultRepository, ILaneRepository, IProj
     ITaskRepository, PositionConflict;
 import result : OperationResult, Result, failure, success;
 import servicemodel : ProjectWithLanes;
-import workingdir : ProjectWorkingDirs;
+import workingdir : IndexPages, ProjectWorkingDirs;
 
 /**
  * Slugs the web UI's routes use for screens of their own under /projects/,
@@ -76,7 +76,7 @@ class ProjectService
             repository.add(project);
             workingDirs.createIfRootExists(project.slug);
             events.project(Event.created, project.id);
-            return projectSuccess(project);
+            return projectSuccess(withCanBeOpened(project));
         }
 
         auto old = repository.find(project.id);
@@ -87,7 +87,7 @@ class ProjectService
 
         workingDirs.rename(old.get.slug, project.slug);
         events.project(Event.changed, project.id);
-        return projectSuccess(project);
+        return projectSuccess(withCanBeOpened(project));
     }
 
     /**
@@ -133,6 +133,7 @@ class ProjectService
             repository.addWithLanes(project, projectWithLanes.lanes);
             workingDirs.createIfRootExists(project.slug);
             events.project(Event.created, project.id);
+            withCanBeOpened(project);
             return projectSuccess(projectWithLanes);
         }
 
@@ -186,6 +187,7 @@ class ProjectService
         // changed too", rather than one per lane.
         events.project(Event.changed, project.id);
 
+        withCanBeOpened(project);
         return projectSuccess(projectWithLanes);
     }
 
@@ -205,7 +207,7 @@ class ProjectService
             return projectFailure!Project(new ProjectNotFoundError);
         }
 
-        return projectSuccess(project.get);
+        return projectSuccess(withCanBeOpened(project.get));
     }
 
     /**
@@ -215,7 +217,7 @@ class ProjectService
      */
     Project[] getAll()
     {
-        return repository.all();
+        return repository.all().map!(project => withCanBeOpened(project)).array;
     }
 
     /**
@@ -267,6 +269,13 @@ class ProjectService
 
         events.project(Event.changed, id);
         return projectSuccess();
+    }
+
+    /// Sets whether the project can be opened, by its working directory having an index.html, and returns it.
+    private Project withCanBeOpened(Project project)
+    {
+        project.canBeOpened = workingDirs.hasIndexPage(project.slug);
+        return project;
     }
 
     /// The first error among the lanes, or null when they are all fine.
@@ -470,15 +479,17 @@ class TaskService
     private ITaskScheduler scheduler;
     private ITaskExecutor executor;
     private IEventPublisher events;
+    private IndexPages indexPages;
 
     this(ITaskRepository repository, IProjectRepository projects, ITaskScheduler scheduler, ITaskExecutor executor,
-        IEventPublisher events)
+        IEventPublisher events, IndexPages indexPages)
     {
         this.repository = repository;
         this.projects = projects;
         this.scheduler = scheduler;
         this.executor = executor;
         this.events = events;
+        this.indexPages = indexPages;
     }
 
     /**
@@ -619,8 +630,13 @@ class TaskService
             return taskFailure!Task(new TaskPositionTakenError);
         }
 
-        events.task(Event.changed, task.id, repository.projectOfLane(task.laneId).get, stored.get.laneId,
-            task.laneId);
+        auto projectId = repository.projectOfLane(task.laneId).get;
+        events.task(Event.changed, task.id, projectId, stored.get.laneId, task.laneId);
+        if (task.laneId != stored.get.laneId)
+        {
+            indexPages.check(projectId);
+        }
+
         return taskSuccess(task);
     }
 
@@ -712,6 +728,7 @@ class TaskService
         }
 
         events.task(Event.moved, id, project.get, stored.get.laneId, laneId);
+        indexPages.check(project.get);
         return taskSuccess(repository.ofLane(laneId));
     }
 
@@ -1402,6 +1419,7 @@ version (unittest)
     import std.typecons : nullable;
     import std.uuid : randomUUID;
 
+    import config : Config;
     import model : TaskAddRule;
 
     /// What an IEventPublisher was told about one resource.
@@ -1879,10 +1897,19 @@ version (unittest)
         }
     }
 
+    /// Working directories under a root that is not there, so that the tests make none.
+    private ProjectWorkingDirs noWorkingDirs()
+    {
+        auto config = new Config;
+        config.projectWorkingDirRoot = "/nonexistent/taskavista-test-projects";
+        return new ProjectWorkingDirs(config);
+    }
+
     /// A ProjectService over mock repositories that share `database`, reporting to `events`.
     private ProjectService serviceOver(MockDatabase database, MockEventPublisher events = new MockEventPublisher)
     {
-        return new ProjectService(new MockProjectRepository(database), new MockLaneRepository(database), events);
+        return new ProjectService(new MockProjectRepository(database), new MockLaneRepository(database), events,
+            noWorkingDirs());
     }
 
     /// A LaneService over a mock repository over `database`, reporting to `events`.
@@ -1920,8 +1947,9 @@ version (unittest)
     private TaskService taskServiceOver(MockDatabase database, MockEventPublisher events = new MockEventPublisher,
         MockTaskScheduler scheduler = new MockTaskScheduler, MockTaskExecutor executor = new MockTaskExecutor)
     {
-        return new TaskService(new MockTaskRepository(database), new MockProjectRepository(database), scheduler,
-            executor, events);
+        auto projects = new MockProjectRepository(database);
+        return new TaskService(new MockTaskRepository(database), projects, scheduler, executor, events,
+            new IndexPages(noWorkingDirs(), projects, events));
     }
 
     /// An AgentService over mock repositories, `database`'s agents and one runtime, reporting to `events`.

@@ -55,6 +55,10 @@
      the glyph on it. */
   --accent-tint-strong: rgba(143, 166, 255, 0.14);
   --accent-soft: #c9d4ff;
+  /* An outlined accent button, such as the topbar's "Open project", and
+     behind it while hovered. */
+  --accent-outline: rgba(143, 166, 255, 0.45);
+  --accent-tint-hover: rgba(143, 166, 255, 0.1);
   --danger-tint: rgba(224, 121, 107, 0.08);
   /* Around a borderless danger button while hovered, such as "Delete task"
      or "Delete project". */

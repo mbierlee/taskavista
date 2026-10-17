@@ -3,6 +3,8 @@
    The board's chrome: wordmark, project switcher and search. The switcher
    finds its own data in the store, so the topbar passes nothing along; the
    `no-switcher` attribute hides it, for a screen about no project, and the
+   "Open project" button with it. That button opens the current project's page
+   in a tab of its own, and shows only for a project that can be opened. The
    `settings` attribute marks the gear, which links to the Taskavista
    settings, as the screen showing. The chat button shows or hides the agent
    chat, and watches the store's `chat` to mark itself while it shows and to
@@ -25,7 +27,8 @@ export class TvTopbar extends HTMLElement {
   #gear;
   #chat;
   #badge;
-  #unwatch;
+  #open;
+  #unwatch = [];
 
   constructor() {
     super();
@@ -34,6 +37,7 @@ export class TvTopbar extends HTMLElement {
     this.#gear = root.querySelector(".gear");
     this.#chat = root.querySelector(".chat");
     this.#badge = root.querySelector(".badge");
+    this.#open = root.querySelector(".open");
 
     this.#chat.addEventListener("click", () =>
       this.dispatchEvent(
@@ -52,14 +56,36 @@ export class TvTopbar extends HTMLElement {
 
   connectedCallback() {
     this.setAttribute("role", "banner");
-    this.#unwatch = store.watch(
-      (state) => state.chat,
-      (chat) => this.#renderChat(chat),
-    );
+    this.#unwatch = [
+      store.watch(
+        (state) => state.chat,
+        (chat) => this.#renderChat(chat),
+      ),
+      store.watch(
+        (state) =>
+          state.projects.list.find(
+            (p) => p.slug === state.currentProjectSlug,
+          ) ?? null,
+        (project) => this.#renderOpen(project),
+      ),
+    ];
   }
 
   disconnectedCallback() {
-    this.#unwatch();
+    for (const unwatch of this.#unwatch) {
+      unwatch();
+    }
+  }
+
+  /* The page is served out of the working directory, which is named after
+     the slug (see app.d). */
+  #renderOpen(project) {
+    this.#open.hidden = !project?.canBeOpened;
+    if (project?.canBeOpened) {
+      this.#open.href = `/working-dirs/${encodeURIComponent(project.slug)}/index.html`;
+    } else {
+      this.#open.removeAttribute("href");
+    }
   }
 
   #renderChat({ open, sessions }) {

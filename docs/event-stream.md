@@ -18,7 +18,7 @@ Each message is a JSON object holding a `type` and the ids it concerns, and noth
 | `task-moved` | `taskId`, `projectId`, `fromLaneId`, `toLaneId` | `moveTask`, and the task scheduler when it moves a task on to the lane its agent starts it in |
 | `task-deleted` | `taskId`, `projectId`, `fromLaneId` | The tasks REST endpoints |
 | `lane-created`, `lane-changed`, `lane-deleted` | `laneId`, `projectId` | The lanes REST endpoints |
-| `project-created`, `project-changed`, `project-deleted` | `projectId` | The projects REST endpoints, `createProject`, `saveProjectSettings`, `setAiPaused` |
+| `project-created`, `project-changed`, `project-deleted` | `projectId` | The projects REST endpoints, `createProject`, `saveProjectSettings`, `setAiPaused`; `project-changed` also after a task is moved, when the project has gained or lost its page (see below) |
 | `agent-created`, `agent-changed`, `agent-deleted` | `agentId` | The agents REST endpoints |
 | `note-created` | `taskId`, `projectId` | The task scheduler, for each note it adds to a task |
 
@@ -37,6 +37,21 @@ such as the scheduler's.
 An API call reports its write after the write has succeeded, so a refused call sends nothing. Writes made
 any other way, such as straight into the database, are not reported. The one exception is that
 the UI fetches everything again after it reconnects.
+
+## A project's page
+
+A project whose working directory has an `index.html` at its top can be opened: its
+`canBeOpened` is true, and the topbar's "Open project" opens the page, which the server serves
+under `/working-dirs/<slug>/`. An agent writes that file straight into the directory, not
+through the API, so no write reports it. Nothing watches the directory either. Instead,
+`IndexPages` in `workingdir.d` looks after each move of a task, whoever made it: the
+`moveTask` call, a `PUT` that changes the task's lane, and the task scheduler and executor moving
+a task on. An agent moves its task on once it is done, so that is the moment its page appears.
+When the project has gained or lost its page since the last look, a `project-changed` is sent,
+and the UI fetches the project list, which says so. A project not looked at yet since the server
+started counts as having no page, so the first look at one that has a page reports it, though
+the UI may already know. A page made or removed without a task moving shows only once
+the project list is fetched for some other reason.
 
 ## The server
 

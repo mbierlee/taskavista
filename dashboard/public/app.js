@@ -1289,8 +1289,8 @@ async function refreshProjectList() {
 
 /* A project that has not changed keeps the object it had, since the board
    follows the selected project's identity and would otherwise load again
-   for nothing; one that only had its AI agents paused or resumed does not
-   load it again either. A board whose project was renamed goes to its new
+   for nothing; one that only had its AI agents paused or resumed, or gained
+   or lost a page to open, does not load it again either. A board whose project was renamed goes to its new
    URL, and one whose project was deleted to the root. */
 function showProjects(list) {
   const { projects, currentProjectSlug } = store.state;
@@ -1313,7 +1313,10 @@ function showProjects(list) {
     shown !== undefined &&
     now !== undefined &&
     now !== shown &&
-    sameJson({ ...shown, aiPaused: now.aiPaused }, now);
+    sameJson(
+      { ...shown, aiPaused: now.aiPaused, canBeOpened: now.canBeOpened },
+      now,
+    );
   try {
     store.update({ projects: { status: "ready", list } });
   } finally {

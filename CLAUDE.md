@@ -33,7 +33,10 @@ which starts every interaction with an agent and gives it the API help in
 A project can have a working directory for its files, named after its slug under `projectWorkingDirRoot`
 in `config.json`, when that root exists (see `workingdir.d`): task agents run in it, and a chat started in a
 project runs in its own scratch space with the working directory open to it, so it can still be resumed
-after the slug changes. With no working directory, agents work in their scratch space. Every write
+after the slug changes. With no working directory, agents work in their scratch space. A project
+whose working directory has an `index.html` has an "Open project" button in the topbar, which opens
+it in a new tab, served under `/working-dirs/<slug>/`; it appears once a task is moved after the page
+was made, such as by the agent that made it moving its task on. Every write
 through the API is reported to the open UIs over a WebSocket
 (`/api/events/v1`), as an event and the ids it concerns, and the UI fetches what changed, so what
 an agent does shows on screen straight away (see `docs/event-stream.md`).

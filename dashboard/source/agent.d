@@ -28,7 +28,7 @@ import model : Agent, AgentLogEntry, EffortLevel, Lane, Model, Project, Runtime,
 import prompt : PromptParser;
 import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
     IRuntimeRepository, ITaskRepository;
-import workingdir : ProjectWorkingDirs;
+import workingdir : IndexPages, ProjectWorkingDirs;
 
 /**
  * The permission mode Claude Code runs in. Auto, since in print mode there is
@@ -595,9 +595,11 @@ class TaskScheduler : ITaskScheduler
     private AgentPrompt agentPrompt;
     private RuntimeExecutor executor;
     private IEventPublisher events;
+    private IndexPages indexPages;
 
     this(IAgentRepository agents, ITaskRepository tasks, ILaneRepository lanes, IProjectRepository projects,
-        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events)
+        PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events,
+        IndexPages indexPages)
     {
         this.agents = agents;
         this.tasks = tasks;
@@ -607,6 +609,7 @@ class TaskScheduler : ITaskScheduler
         this.agentPrompt = agentPrompt;
         this.executor = executor;
         this.events = events;
+        this.indexPages = indexPages;
     }
 
     public bool schedule(UUID taskId)
@@ -693,7 +696,7 @@ class TaskScheduler : ITaskScheduler
         }
 
         noted(assigned, taskId, project.get.id);
-        moveOn(tasks, events, taskId, lane.get.id, schedule.get.laneId, project.get.id);
+        moveOn(tasks, events, indexPages, taskId, lane.get.id, schedule.get.laneId, project.get.id);
 
         return true;
     }
@@ -770,10 +773,11 @@ class TaskExecutor : ITaskExecutor
     private RuntimeExecutor executor;
     private IEventPublisher events;
     private ProjectWorkingDirs workingDirs;
+    private IndexPages indexPages;
 
     this(IAgentRepository agents, ITaskRepository tasks, ILaneRepository lanes, IProjectRepository projects,
         PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events,
-        ProjectWorkingDirs workingDirs)
+        ProjectWorkingDirs workingDirs, IndexPages indexPages)
     {
         this.agents = agents;
         this.tasks = tasks;
@@ -784,6 +788,7 @@ class TaskExecutor : ITaskExecutor
         this.executor = executor;
         this.events = events;
         this.workingDirs = workingDirs;
+        this.indexPages = indexPages;
     }
 
     public void execute(UUID taskId)
@@ -888,7 +893,7 @@ class TaskExecutor : ITaskExecutor
             noted(tasks.addNote(taskId, result.get.text), taskId, project.get.id);
         }
 
-        moveOn(tasks, events, taskId, lane.get.id, result.get.laneId, project.get.id);
+        moveOn(tasks, events, indexPages, taskId, lane.get.id, result.get.laneId, project.get.id);
         tasks.assignAiAgent(taskId, Nullable!UUID.init);
     }
 
@@ -907,8 +912,8 @@ class TaskExecutor : ITaskExecutor
  * its lane while the agent was at work was moved by someone else, whose move
  * is kept.
  */
-private void moveOn(ITaskRepository tasks, IEventPublisher events, UUID taskId, UUID fromLaneId, UUID toLaneId,
-    UUID projectId)
+private void moveOn(ITaskRepository tasks, IEventPublisher events, IndexPages indexPages, UUID taskId,
+    UUID fromLaneId, UUID toLaneId, UUID projectId)
 {
     auto task = tasks.find(taskId);
     if (task.isNull || task.get.laneId != fromLaneId || toLaneId == fromLaneId)
@@ -918,6 +923,7 @@ private void moveOn(ITaskRepository tasks, IEventPublisher events, UUID taskId, 
 
     tasks.move(taskId, toLaneId, UUID.init);
     events.task(Event.moved, taskId, projectId, fromLaneId, toLaneId);
+    indexPages.check(projectId);
 }
 
 /// A lane per line, with "done" after the lanes whose tasks count as done.
