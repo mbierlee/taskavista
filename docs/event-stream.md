@@ -20,7 +20,7 @@ Each message is a JSON object holding a `type` and the ids it concerns, and noth
 | `lane-created`, `lane-changed`, `lane-deleted` | `laneId`, `projectId` | The lanes REST endpoints |
 | `project-created`, `project-changed`, `project-deleted` | `projectId` | The projects REST endpoints, `createProject`, `saveProjectSettings`, `setAiPaused`; `project-changed` also after a task is moved, when the project has gained or lost its page (see below) |
 | `agent-created`, `agent-changed`, `agent-deleted` | `agentId` | The agents REST endpoints |
-| `note-created` | `taskId`, `projectId` | The task scheduler, for each note it adds to a task |
+| `note-created` | `taskId`, `projectId` | The task scheduler, for each note it adds to a task, and `rescheduleTask` |
 
 The UI fetches whatever it needs through the REST API. That keeps a single way of reading the
 data, and a message lost while the socket is down costs only a refetch. `projectId` comes with

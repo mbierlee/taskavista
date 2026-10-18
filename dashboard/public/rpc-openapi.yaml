@@ -5,7 +5,8 @@ info:
   version: v1
   summary: Operations on Taskavista's projects, lanes, tasks and agents that are not plain CRUD.
   description: |
-    Calls that do more than read or write a single resource: moving a task, creating or saving a
+    Calls that do more than read or write a single resource: moving a task, handing a task back to
+    the task scheduler, creating or saving a
     project together with its lanes, pausing a project's agents, chatting with an agent, and
     having an agent draft a new one. The resources themselves are read and written through the REST API, under `/api/rest/v1`.
 
@@ -28,7 +29,7 @@ info:
     |---|---|
     | 400 | A body that is not a JSON object, a required argument missing, an argument of the wrong type, a malformed UUID, or a value the call refuses |
     | 404 | Nothing has an id that was sent, a call that does not exist, or a method other than `POST` |
-    | 409 | The call clashes with what is stored: a project slug that is taken or reserved, or resuming the agents of a project not managed by AI |
+    | 409 | The call clashes with what is stored: a project slug that is taken or reserved, resuming the agents of a project not managed by AI, or rescheduling a task that cannot be |
     | 502 | An agent could not answer a chat message |
     | 500 | An unexpected server error |
 
@@ -38,7 +39,7 @@ servers:
 
 tags:
   - name: Tasks
-    description: Placing tasks on the board.
+    description: Placing tasks on the board, and handing them back to the task scheduler.
   - name: Projects
     description: |
       Saving a project together with its lanes, in one go, and pausing or resuming its AI agents.
@@ -63,6 +64,11 @@ paths:
         The move and the shift happen together or not at all. Positions may be left with gaps, so
         rely on the order of tasks, not on their numbers. The project's `taskAddRule` does not
         apply: it governs creating tasks, not moving them.
+
+        A task of a project managed by AI agents that no agent is at, because the task scheduler found
+        no agent for it or its agent has finished or failed, is handed back to the scheduler when
+        it moves to another lane that is not a done one, as `rescheduleTask` would; its notes then
+        say "Handed back to the task scheduler".
 
         The result is the lane's order; read the tasks themselves from the REST API.
       requestBody:
@@ -134,6 +140,75 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { statusMessage: No task has that id. }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /rescheduleTask:
+    post:
+      tags: [Tasks]
+      operationId: rescheduleTask
+      summary: Hand a task back to the task scheduler
+      description: |
+        A last resort for a task no agent is working on, such as one the task scheduler found no
+        agent for. The task is taken off the agent it is assigned to, if any, and the task
+        scheduler takes it up again as it does a new task: it chooses an agent for it and the lane
+        it moves to, which may differ from last time. That happens shortly after the call, not
+        during it; the task's notes (`GET /api/rest/v1/tasks/{id}/notes`) say what came of it.
+
+        Only a task of a project managed by AI agents can be rescheduled, and not one in a done
+        lane, nor one the scheduler is choosing an agent for or an agent is working on at that
+        moment. A task of a project
+        whose agents are paused waits until they are resumed. Rescheduling a task that is
+        already waiting for the scheduler is not an error.
+
+        The result is an empty object.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [taskId]
+              properties:
+                taskId:
+                  $ref: "#/components/schemas/Uuid"
+                  description: The task to hand back.
+            example: { taskId: edf9cef0-a88d-49af-a962-22a8efe8af8f }
+      responses:
+        "200":
+          description: The task is waiting for the task scheduler.
+          content:
+            application/json:
+              schema:
+                type: object
+              example: {}
+        "400":
+          description: "`taskId` missing or not a UUID."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: The argument taskId is missing. }
+        "404":
+          description: No task has `taskId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: No task has that id. }
+        "409":
+          description: |
+            The task's project is not managed by AI agents, the task is in a done lane, or the task
+            scheduler is choosing an agent for it or an agent is working on it now.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                notManaged:
+                  value: { statusMessage: "The task's project is not managed by AI agents, so no agent works on its tasks." }
+                done:
+                  value: { statusMessage: "The task is in a done lane, so it is done." }
+                beingScheduled:
+                  value: { statusMessage: The task scheduler is choosing an agent for the task right now. }
+                beingWorkedOn:
+                  value: { statusMessage: An agent is working on the task right now. }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /createProject:

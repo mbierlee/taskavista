@@ -6,8 +6,8 @@ import std.algorithm : startsWith;
 import std.functional : toDelegate;
 import std.path : baseName, extension;
 
-import agent : AgentChat, AgentDrafter, AgentHelp, AgentPrompt, ClaudeCodeRuntime, IRuntime, ITaskExecutor,
-    ITaskScheduler, RuntimeExecutor, TaskExecutor, TaskScheduler;
+import agent : AgentChat, AgentDrafter, AgentHelp, AgentPrompt, ClaudeCodeRuntime, IRuntime, RuntimeExecutor,
+    TaskExecutor, TaskScheduler;
 import config : Config, connectionString, loadConfig;
 import helpers : formatURL;
 import prompt : PromptParser;
@@ -63,8 +63,8 @@ class DashboardContext : ApplicationContext
         container.register!(RpcApi, RpcController);
         container.register!(IRuntime, ClaudeCodeRuntime);
         container.register!RuntimeExecutor;
-        container.register!(ITaskScheduler, TaskScheduler);
-        container.register!(ITaskExecutor, TaskExecutor);
+        container.register!TaskScheduler;
+        container.register!TaskExecutor;
         container.register!PromptParser;
         container.register!AgentHelp;
         container.register!AgentPrompt;
@@ -96,6 +96,28 @@ void main()
     // starting.
     auto runtimeExecutor = container.resolve!RuntimeExecutor;
     runTask(() nothrow{ runtimeExecutor.logAgentsWithoutRuntime(); });
+    auto scheduler = container.resolve!TaskScheduler;
+    runTask(() nothrow{
+        try
+        {
+            scheduler.run();
+        }
+        catch (Exception e)
+        {
+            logError("The task scheduler stopped: %s", e.msg);
+        }
+    });
+    auto taskExecutor = container.resolve!TaskExecutor;
+    runTask(() nothrow{
+        try
+        {
+            taskExecutor.run();
+        }
+        catch (Exception e)
+        {
+            logError("The task executor stopped: %s", e.msg);
+        }
+    });
 
     auto router = new URLRouter;
     // Before the static file catch-all, so /api/* is not served as a file.

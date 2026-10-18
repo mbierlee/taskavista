@@ -61,6 +61,11 @@ struct SetAiPausedResult
     bool aiPaused;
 }
 
+/// Nothing, since a rescheduled task has nothing new to show until the task scheduler takes it up.
+struct RescheduleTaskResult
+{
+}
+
 /// The agent's answer to a chat message, and the session the chat is in.
 struct SendChatMessageResult
 {
@@ -81,6 +86,13 @@ interface RpcApi
     @method(HTTPMethod.POST) @path("moveTask")
     MoveTaskResult moveTask(UUID taskId, UUID laneId,
         Nullable!UUID beforeTaskId = Nullable!UUID.init) @safe;
+
+    /**
+     * Hands a task back to the task scheduler, which takes it up as it does a new task. A
+     * last resort for a task no agent is working on.
+     */
+    @method(HTTPMethod.POST) @path("rescheduleTask")
+    RescheduleTaskResult rescheduleTask(UUID taskId) @safe;
 
     /**
      * Creates the project with these lanes, in this order, or nothing at all.
@@ -156,6 +168,17 @@ class RpcController : RpcApi
         }
 
         return MoveTaskResult(laneId, moved.value.map!(task => task.id).array);
+    }
+
+    override RescheduleTaskResult rescheduleTask(UUID taskId) @trusted
+    {
+        auto rescheduled = tasks.reschedule(taskId);
+        if (rescheduled.isFailure)
+        {
+            throw toHTTPError(rescheduled.error, null);
+        }
+
+        return RescheduleTaskResult();
     }
 
     override CreateProjectResult createProject(string name, string description,

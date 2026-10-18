@@ -20,8 +20,9 @@ import service : AgentModelMissingError, AgentNameMissingError, AgentNameTakenEr
     LaneNotFoundError, LaneOfOtherProjectError, LanePositionNegativeError, LanePositionTakenError,
     ModelNotOfferedError, NameReservedError, NameTakenError, ProjectNameMissingError,
     ProjectNameUnusableError, ProjectNotFoundError, ProjectNotManagedByAiError, RuntimeNotFoundError,
-    SlugInvalidError, SlugReservedError, SlugTakenError, TaskBeforeItselfError, TaskDescriptionMissingError,
-    TaskLeavesProjectError, TaskNotFoundError, TaskPositionNegativeError, TaskPositionTakenError;
+    SlugInvalidError, SlugReservedError, SlugTakenError, TaskBeforeItselfError, TaskBeingScheduledError,
+    TaskBeingWorkedOnError, TaskDescriptionMissingError, TaskDoneError, TaskLeavesProjectError, TaskNotFoundError,
+    TaskPositionNegativeError, TaskPositionTakenError;
 
 /**
  * Answers a request under `/api/rest/v1` that no endpoint took, with a 404
@@ -376,6 +377,28 @@ HTTPStatusException toHTTPError(ITaskError error, Task task)
     {
         return new HTTPStatusException(HTTPStatus.conflict,
             format("Another task of the lane is already at position %s.", task.position.get));
+    }
+
+    if (cast(ProjectNotManagedByAiError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            "The task's project is not managed by AI agents, so no agent works on its tasks.");
+    }
+
+    if (cast(TaskDoneError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict, "The task is in a done lane, so it is done.");
+    }
+
+    if (cast(TaskBeingScheduledError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            "The task scheduler is choosing an agent for the task right now.");
+    }
+
+    if (cast(TaskBeingWorkedOnError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict, "An agent is working on the task right now.");
     }
 
     return unanswered(error);

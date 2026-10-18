@@ -63,13 +63,15 @@ create table if not exists model_effort_levels (
 );
 
 create table if not exists agents (
-	id             uuid primary key default gen_random_uuid(),
-	name           text not null unique check (length(trim(name)) > 0),
-	runtime        text not null references runtimes (id),
-	model          text not null,
-	effort         text not null default 'default',
-	task_scheduler boolean not null default false,
-	instructions   text not null default '',
+	id                 uuid primary key default gen_random_uuid(),
+	name               text not null unique check (length(trim(name)) > 0),
+	runtime            text not null references runtimes (id),
+	model              text not null,
+	effort             text not null default 'default',
+	task_scheduler     boolean not null default false,
+	instructions       text not null default '',
+	-- Null for no limit.
+	max_parallel_tasks integer default 5 check (max_parallel_tasks > 0),
 	foreign key (model, runtime) references models (id, runtime),
 	foreign key (model, effort) references model_effort_levels (model, effort_level)
 );
@@ -101,6 +103,9 @@ create table if not exists tasks (
 	-- to make room for a moved one do not count as updated.
 	updated_at           timestamptz not null default now(),
 	assigned_ai_agent_id uuid references agents (id) on delete set null,
+	-- Null for a task of a project that was not managed by AI when it was added.
+	agent_status         text check (agent_status in ('to_be_scheduled', 'scheduling', 'scheduled', 'declined',
+		'executing', 'done', 'failed')),
 	-- Deferrable so tasks can swap positions inside one transaction.
 	unique (lane_id, position) deferrable initially immediate
 );

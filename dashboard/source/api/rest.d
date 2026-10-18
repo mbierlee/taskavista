@@ -1,8 +1,6 @@
 module api.rest;
 
 import vibe.web.rest;
-import vibe.core.core : runTask;
-import vibe.core.log : logError;
 import vibe.http.common : HTTPMethod, enforceHTTP;
 import vibe.http.status : HTTPStatus;
 
@@ -297,19 +295,6 @@ class TaskController : TaskApi
         {
             throw toHTTPError(created.error, task);
         }
-
-        // In the background, since the request that added the task should not wait on an agent.
-        auto taskId = created.value.id;
-        runTask(() nothrow{
-            try
-            {
-                service.handToAgent(taskId);
-            }
-            catch (Exception e)
-            {
-                logError("Handing task %s to an agent failed: %s", taskId, e.msg);
-            }
-        });
 
         return created.value;
     }

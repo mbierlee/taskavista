@@ -3,7 +3,7 @@ module repository;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
-import model : Agent, AgentLogEntry, Default, Lane, Model, Project, Runtime, Task, TaskNote;
+import model : Agent, AgentLogEntry, AgentStatus, Default, Lane, Model, Project, Runtime, Task, TaskNote;
 
 /// Reads and writes rows of the projects table.
 interface IProjectRepository
@@ -241,6 +241,49 @@ interface ITaskRepository
     Nullable!Task find(UUID id);
 
     /**
+     * Gets the tasks waiting for the task scheduler: those of the projects managed by AI that
+     * are not paused, which are to be scheduled, assigned to no agent and not in a done
+     * lane.
+     *
+     * Returns: The tasks, the oldest first.
+     */
+    Task[] awaitingScheduling();
+
+    /**
+     * Gets the tasks waiting for the agents they are assigned to: those of the projects managed
+     * by AI that are not paused, which are scheduled and not in a done lane.
+     *
+     * Returns: The tasks, the oldest first.
+     */
+    Task[] awaitingExecution();
+
+    /**
+     * Changes how far the agents got with a task, but only from the status it is expected to
+     * have, so that of two writers that both read that status, one wins and the other learns
+     * it lost.
+     *
+     * Params:
+     *   id = The task's id.
+     *   from = The status the task is expected to have.
+     *   to = The status it gets.
+     *
+     * Returns: False, with nothing changed, when no row has that id or the task's status is not
+     *   `from`.
+     */
+    bool changeAgentStatus(UUID id, AgentStatus from, AgentStatus to);
+
+    /**
+     * Changes the agent status of every task with one status to another.
+     *
+     * Params:
+     *   from = The status of the tasks to change.
+     *   to = The status they get.
+     *
+     * Returns: How many tasks were changed.
+     */
+    ulong changeAgentStatuses(AgentStatus from, AgentStatus to);
+
+    /**
      * Gets a task's notes.
      *
      * Params:
@@ -290,12 +333,13 @@ interface ITaskRepository
      *
      * Params:
      *   task = The task to insert.
+     *   agentStatus = How far the agents got with it, or null when they are not to work on it.
      *
      * Returns: The same instance, so it can be used as an expression.
      *
      * Throws: `PositionConflict` when another task of the lane is at its position.
      */
-    Task add(Task task);
+    Task add(Task task, Nullable!AgentStatus agentStatus);
 
     /**
      * Writes a task back over the row with its id, lane included.
@@ -394,6 +438,30 @@ interface ITaskRepository
      * Returns: False, with nothing added, when the task is gone.
      */
     bool addNote(UUID id, string note);
+
+    /**
+     * Finds how far the agents got with a task.
+     *
+     * Params:
+     *   id = The task's id.
+     *
+     * Returns: The task's agent status, or an empty Nullable when it has none or there is no
+     *   such task.
+     */
+    Nullable!AgentStatus agentStatus(UUID id);
+
+    /**
+     * Hands a task back to the task scheduler: takes it off its agent and marks it to be scheduled
+     * again, and adds that to its notes. A task being scheduled or worked on is left alone,
+     * since the scheduler or its agent is at it.
+     *
+     * Params:
+     *   id = The task's id.
+     *
+     * Returns: False, with nothing changed, when no row has that id or the task is being
+     *   scheduled or worked on.
+     */
+    bool reschedule(UUID id);
 
     /**
      * Adds to a task's notes that there was no task scheduler agent to assign it.
@@ -506,6 +574,16 @@ interface IAgentRepository
      * Returns: The agent with this id, or an empty Nullable when there is none.
      */
     Nullable!Agent find(UUID id);
+
+    /**
+     * Gets how many tasks an agent may work on at once.
+     *
+     * Params:
+     *   id = The agent's id.
+     *
+     * Returns: The limit, or an empty Nullable when the agent has none, or there is no such agent.
+     */
+    Nullable!int maxParallelTasks(UUID id);
 
     /**
      * Checks whether an agent already has a name.

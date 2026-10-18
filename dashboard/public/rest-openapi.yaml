@@ -458,6 +458,11 @@ paths:
         Moving a task to another lane is a `PUT` with the new `laneId` and `position` — though
         the RPC API's `moveTask` is usually the better way. The project's `taskAddRule` does not
         apply to a move.
+
+        A task of a project managed by AI agents that no agent is at, because the task scheduler found
+        no agent for it or its agent has finished or failed, is handed back to the scheduler when
+        it moves to another lane that is not a done one, as `rescheduleTask` would; its notes then
+        say "Handed back to the task scheduler".
       requestBody:
         required: true
         content:

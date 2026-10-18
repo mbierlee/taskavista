@@ -1,5 +1,6 @@
 module agent;
 
+import vibe.core.core : runTask, sleep;
 import vibe.core.file : existsFile, moveFile, writeFileUTF8;
 import vibe.core.path : NativePath;
 import vibe.core.process : ProcessConfig = Config, Redirect, collectOutput, pipeProcess;
@@ -10,6 +11,7 @@ import poodinis : Inject;
 import std.algorithm.iteration : filter, map;
 import std.algorithm.searching : canFind, find;
 import std.array : array, join;
+import std.datetime : seconds;
 import std.datetime.date : DateTime;
 import std.datetime.systime : SysTime;
 import std.digest : toHexString;
@@ -24,7 +26,8 @@ import std.uuid : UUID, randomUUID;
 
 import eventing : Event, IEventPublisher;
 import config : Config, apiUrl;
-import model : Agent, AgentLogEntry, EffortLevel, Lane, Model, Project, Runtime, TaskNote, defaultEffort;
+import model : Agent, AgentLogEntry, AgentStatus, EffortLevel, Lane, Model, Project, Runtime, Task, TaskNote,
+    defaultEffort;
 import prompt : PromptParser;
 import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
     IRuntimeRepository, ITaskRepository;
@@ -92,7 +95,8 @@ enum RunIn
  */
 string createAgentScratchSpace(UUID agentId, UUID runId)
 {
-    auto scratchSpace = buildPath(tempDir, "taskavista-tmp", format("taskavista-scratch-%s-%s", agentId, runId));
+    auto scratchSpace = buildPath(tempDir, "taskavista-tmp", format(
+            "taskavista-scratch-%s-%s", agentId, runId));
     mkdirRecurse(scratchSpace);
 
     return scratchSpace;
@@ -301,7 +305,8 @@ class ClaudeCodeRuntime : IRuntime
                 return run(agent, prompt, systemPrompt, workingDir, addDir(scratchSpace) ~ sessionArgs);
             }
 
-            auto scratch = scratchSpace is null ? createAgentScratchSpace(agent.id, runId) : scratchSpace;
+            auto scratch = scratchSpace is null ? createAgentScratchSpace(agent.id, runId)
+                : scratchSpace;
             return run(agent, prompt, systemPrompt, scratch, addDir(workingDir) ~ sessionArgs);
         }
 
@@ -559,33 +564,16 @@ class AgentChat
     }
 }
 
-/**
- * Asks an agent which agent should work on the task, given the agents there are,
- * and which lane the task moves to as that agent starts on it.
- */
-private enum schedulePrompt = import("schedule-task.txt");
+/// How long the task scheduler waits between one look at the tasks and the next.
+private enum schedulerInterval = 5.seconds;
 
 /**
- * Picks the agent that should work on a task, and moves the task on to the
- * lane that shows it is being worked on.
+ * Hands the tasks of the projects managed by AI agents to their agents, from a loop that
+ * keeps running in the background: each task to be scheduled, with no agent and outside a done
+ * lane, is moved on to the lane the task scheduler agent chooses for it and assigned the agent
+ * it chooses, or declined when there is none.
  */
-interface ITaskScheduler
-{
-    /**
-     * Has the scheduler agent choose an agent and a lane for the task, then
-     * assigns the agent and moves the task. Waits on the agent, which takes a
-     * while.
-     *
-     * Returns: Whether the task was assigned to an agent, which can then work on it.
-     *
-     * Throws: `Exception` when the database fails. A scheduler that fails or
-     *   gives an answer that cannot be used is noted on the task instead.
-     */
-    bool schedule(UUID taskId);
-}
-
-/// ITaskScheduler with the task scheduler agent on its runtime.
-class TaskScheduler : ITaskScheduler
+class TaskScheduler
 {
     private IAgentRepository agents;
     private ITaskRepository tasks;
@@ -596,6 +584,8 @@ class TaskScheduler : ITaskScheduler
     private RuntimeExecutor executor;
     private IEventPublisher events;
     private IndexPages indexPages;
+    /// How many tasks are being scheduled now. The tasks all run on one thread, so no lock is needed.
+    private int running;
 
     this(IAgentRepository agents, ITaskRepository tasks, ILaneRepository lanes, IProjectRepository projects,
         PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events,
@@ -612,18 +602,141 @@ class TaskScheduler : ITaskScheduler
         this.indexPages = indexPages;
     }
 
-    public bool schedule(UUID taskId)
+    /**
+     * Runs the loop. It never returns, so a caller should run it in a task of its own.
+     *
+     * Throws: `Exception` when the loop fails.
+     */
+    void run()
     {
-        // TODO: Deal with paused projects.
-        // The task, its lane or its project may be gone by the time it is
-        // scheduled, and then there is nothing to schedule.
-        auto task = tasks.find(taskId);
-        if (task.isNull)
+        // A task left being scheduled was being scheduled when the server last stopped, and
+        // nothing else will pick it up again.
+        try
         {
-            return false;
+            const released = tasks.changeAgentStatuses(AgentStatus.scheduling, AgentStatus
+                    .toBeScheduled);
+            if (released > 0)
+            {
+                logInfo("The task scheduler put %s tasks it was scheduling back to be scheduled.", released);
+            }
+        }
+        catch (Exception e)
+        {
+            logError("The task scheduler failed to put the tasks it was scheduling back to be scheduled: %s", e
+                    .msg);
         }
 
-        auto lane = lanes.find(task.get.laneId);
+        while (true)
+        {
+            // A database that is down fails one round, not the loop.
+            try
+            {
+                assignWaitingTasks();
+            }
+            catch (Exception e)
+            {
+                logError("The task scheduler failed to assign tasks: %s", e.msg);
+            }
+
+            // Yields to the other tasks on the event loop, which a loop that never waited would starve.
+            sleep(schedulerInterval);
+        }
+    }
+
+    /**
+     * Starts scheduling the tasks waiting for an agent, each in a task of its own, as many at
+     * once as the scheduler agent may work on. A task is claimed first, by its status, so that
+     * no other scheduler takes it up as well. What does not fit is left for a later round.
+     */
+    private void assignWaitingTasks()
+    {
+        auto waiting = tasks.awaitingScheduling();
+        if (waiting.length == 0)
+        {
+            return;
+        }
+
+        const limit = schedulingLimit();
+        foreach (task; waiting)
+        {
+            if (!limit.isNull && running >= limit.get)
+            {
+                return;
+            }
+
+            // Another scheduler claimed it since the tasks were read.
+            if (!tasks.changeAgentStatus(task.id, AgentStatus.toBeScheduled, AgentStatus.scheduling))
+            {
+                continue;
+            }
+
+            running++;
+            // Passed as an argument rather than captured, since a closure in a loop shares one
+            // variable across all its iterations.
+            runTask(&scheduleClaimed, task);
+        }
+    }
+
+    /**
+     * How many tasks may be scheduled at once: the scheduler agent's limit, or none when there
+     * is no scheduler agent, since each task is then declined straight away.
+     */
+    private Nullable!int schedulingLimit()
+    {
+        auto schedulers = agents.all().filter!(agent => agent.taskScheduler);
+        if (schedulers.empty)
+        {
+            return Nullable!int.init;
+        }
+
+        return agents.maxParallelTasks(schedulers.front.id);
+    }
+
+    /**
+     * Schedules a task claimed for scheduling, and marks it scheduled or declined. A task that
+     * gets no agent is declined, so that it is not asked about every round, which would cost
+     * an agent call and add a note each time.
+     */
+    private void scheduleClaimed(Task task) nothrow
+    {
+        scope (exit)
+        {
+            running--;
+        }
+
+        try
+        {
+            const status = assign(task) ? AgentStatus.scheduled : AgentStatus.declined;
+            tasks.changeAgentStatus(task.id, AgentStatus.scheduling, status);
+        }
+        catch (Exception e)
+        {
+            logError("Scheduling task %s failed: %s", task.id, e.msg);
+            // Left to be scheduled again, since it failed for some other reason than the agent. A
+            // database that is down fails this too, and then the next start puts it back.
+            try
+            {
+                tasks.changeAgentStatus(task.id, AgentStatus.scheduling, AgentStatus.toBeScheduled);
+            }
+            catch (Exception resetError)
+            {
+                logError("Task %s could not be put back to be scheduled: %s", task.id, resetError
+                        .msg);
+            }
+        }
+    }
+
+    /**
+     * Has the scheduler agent choose an agent for the task and the lane it moves to as that
+     * agent starts on it, then moves the task and assigns the agent. Waits on the agent, which
+     * takes a while.
+     *
+     * Returns: Whether the task was assigned to an agent.
+     */
+    private bool assign(Task task)
+    {
+        // The lane or its project may be gone since the tasks were read.
+        auto lane = lanes.find(task.laneId);
         if (lane.isNull)
         {
             return false;
@@ -639,8 +752,8 @@ class TaskScheduler : ITaskScheduler
         auto schedulers = all.filter!(agent => agent.taskScheduler);
         if (schedulers.empty)
         {
-            logInfo("Task %s is not scheduled, since there is no task scheduler agent.", taskId);
-            noted(tasks.recordNoScheduler(taskId), taskId, project.get.id);
+            logInfo("Task %s is not assigned, since there is no task scheduler agent.", task.id);
+            noted(tasks.recordNoScheduler(task.id), task.id, project.get.id);
             return false;
         }
 
@@ -650,7 +763,7 @@ class TaskScheduler : ITaskScheduler
             "<project id>": project.get.id.toString,
             "<project description>": project.get.description.strip,
             "<lane name>": lane.get.name,
-            "<task description>": task.get.description.strip,
+            "<task description>": task.description.strip,
             "<agent list>": agentList(all),
             "<lane list>": laneList(board)
         ];
@@ -658,6 +771,7 @@ class TaskScheduler : ITaskScheduler
         const conditions = [
             "project-description": project.get.description.strip.length > 0
         ];
+
         auto scheduler = schedulers.front;
         auto prompt = parser.parse(schedulePrompt, placeholders, conditions);
         auto systemPrompt = agentPrompt.systemPrompt(scheduler, "").strip;
@@ -672,8 +786,8 @@ class TaskScheduler : ITaskScheduler
         }
         catch (Exception e)
         {
-            logError("Scheduler %s failed on task %s: %s", scheduler.name, taskId, e.msg);
-            noted(tasks.recordSchedulingFailure(taskId, scheduler.id), taskId, project.get.id);
+            logError("Scheduler %s failed on task %s: %s", scheduler.name, task.id, e.msg);
+            noted(tasks.recordSchedulingFailure(task.id, scheduler.id), task.id, project.get.id);
             return false;
         }
 
@@ -681,23 +795,19 @@ class TaskScheduler : ITaskScheduler
         if (schedule.isNull)
         {
             logError("Scheduler %s answered task %s with \"%s\", which is not an agent and a lane it could choose.",
-                scheduler.name, taskId, answer);
-            noted(tasks.recordSchedulingFailure(taskId, scheduler.id), taskId, project.get.id);
+                scheduler.name, task.id, answer);
+            noted(tasks.recordSchedulingFailure(task.id, scheduler.id), task.id, project.get.id);
             return false;
         }
 
-        // An assignment is a note only when it changed the agent, which it
-        // almost always did, and a needless event costs the UI only a refetch.
-        const assigned = tasks.assignAiAgent(taskId, schedule.get.agentId);
         if (schedule.get.agentId.isNull)
         {
-            noted(tasks.recordNoAgentFound(taskId, scheduler.id), taskId, project.get.id);
+            noted(tasks.recordNoAgentFound(task.id, scheduler.id), task.id, project.get.id);
             return false;
         }
 
-        noted(assigned, taskId, project.get.id);
-        moveOn(tasks, events, indexPages, taskId, lane.get.id, schedule.get.laneId, project.get.id);
-
+        moveOn(tasks, events, indexPages, task.id, lane.get.id, schedule.get.laneId, project.get.id);
+        noted(tasks.assignAiAgent(task.id, schedule.get.agentId), task.id, project.get.id);
         return true;
     }
 
@@ -709,60 +819,18 @@ class TaskScheduler : ITaskScheduler
             events.note(taskId, projectId);
         }
     }
-
-    /**
-     * One block per agent that can be given a task, set apart by tags since an
-     * agent's instructions run over several lines. Schedulers are left out,
-     * since they hand out tasks rather than work on them.
-     */
-    private static string agentList(Agent[] all)
-    {
-        return all
-            .filter!(agent => !agent.taskScheduler)
-            .map!(agent => describe(agent))
-            .join("\n\n");
-    }
-
-    /**
-     * An agent as the scheduler sees it. Labels are always given, as "none" when
-     * there are none, while instructions are left out when there are none.
-     */
-    private static string describe(Agent agent)
-    {
-        auto labels = agent.labels.length == 0 ? "none" : agent.labels.join(", ");
-        auto instructions = agent.instructions.strip;
-
-        return format("<agent>\nID: %s\nName: %s\nLabels: %s\n%s</agent>", agent.id, agent.name, labels,
-            instructions.length == 0 ? "" : "Instructions:\n" ~ instructions ~ "\n");
-    }
 }
 
-/**
- * Asks the agent a task is assigned to to work on it, and which lane it goes
- * to next.
- */
-private enum executeTaskPrompt = import("execute-task.txt");
+/// How long the task executor waits between one look at the tasks and the next.
+private enum executorInterval = 5.seconds;
 
 /**
- * Has the agent a task is assigned to work on it, then moves the task on to
- * the lane the agent chose, adds the agent's result to its notes, and takes
- * the task off the agent.
+ * Has the agents work on the tasks assigned to them, from a loop that keeps running in the
+ * background: each scheduled task outside a done lane, of a project managed by AI, is worked on
+ * by its agent, then moved on to the lane the agent chooses, with the agent's result in its
+ * notes. A task is done when its agent has answered, and failed when it could not.
  */
-interface ITaskExecutor
-{
-    /**
-     * Has the agent the task is assigned to work on it, and waits until it is
-     * done, which can take a long while. A task assigned to no agent is left
-     * alone. An agent that fails, or answers with something that is not a
-     * result, is noted on the task, which stays assigned to it.
-     *
-     * Throws: `Exception` when the database fails.
-     */
-    void execute(UUID taskId);
-}
-
-/// ITaskExecutor with the assigned agent on its runtime.
-class TaskExecutor : ITaskExecutor
+class TaskExecutor
 {
     private IAgentRepository agents;
     private ITaskRepository tasks;
@@ -774,6 +842,11 @@ class TaskExecutor : ITaskExecutor
     private IEventPublisher events;
     private ProjectWorkingDirs workingDirs;
     private IndexPages indexPages;
+    /**
+     * How many tasks each agent is working on now, by the agent's id. The tasks all run on one
+     * thread, so no lock is needed.
+     */
+    private int[UUID] running;
 
     this(IAgentRepository agents, ITaskRepository tasks, ILaneRepository lanes, IProjectRepository projects,
         PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events,
@@ -791,42 +864,164 @@ class TaskExecutor : ITaskExecutor
         this.indexPages = indexPages;
     }
 
-    public void execute(UUID taskId)
+    /**
+     * Runs the loop. It never returns, so a caller should run it in a task of its own.
+     *
+     * Throws: `Exception` when the loop fails.
+     */
+    void run()
     {
-        // The task, its lane or its project may be gone by the time it is
-        // executed, and then there is nothing to execute.
-        auto task = tasks.find(taskId);
-        if (task.isNull)
+        // A task left being worked on was being worked on when the server last stopped, and
+        // nothing else will pick it up again. Its agent starts on it afresh, with its notes.
+        try
         {
-            return;
+            const released = tasks.changeAgentStatuses(AgentStatus.executing, AgentStatus.scheduled);
+            if (released > 0)
+            {
+                logInfo("The task executor put %s tasks its agents were working on back to scheduled.", released);
+            }
+        }
+        catch (Exception e)
+        {
+            logError("The task executor failed to put the tasks its agents were working on back to scheduled: %s",
+                e.msg);
         }
 
-        auto lane = lanes.find(task.get.laneId);
+        while (true)
+        {
+            // A database that is down fails one round, not the loop.
+            try
+            {
+                startWaitingTasks();
+            }
+            catch (Exception e)
+            {
+                logError("The task executor failed to start on tasks: %s", e.msg);
+            }
+
+            // Yields to the other tasks on the event loop, which a loop that never waited would starve.
+            sleep(executorInterval);
+        }
+    }
+
+    /**
+     * Starts the agents on the tasks waiting for them, each in a task of its own, with no agent
+     * working on more at once than it may. A task is claimed first, by its status, so that no
+     * other executor takes it up as well. What does not fit is left for a later round.
+     */
+    private void startWaitingTasks()
+    {
+        foreach (task; tasks.awaitingExecution())
+        {
+            // An agent that is deleted takes its assignments with it, and then the task needs
+            // another, which only the scheduler can give it.
+            auto agentId = tasks.assignedAiAgent(task.id);
+            if (agentId.isNull)
+            {
+                handBack(task);
+                continue;
+            }
+
+            const limit = agents.maxParallelTasks(agentId.get);
+            if (!limit.isNull && running.get(agentId.get, 0) >= limit.get)
+            {
+                continue;
+            }
+
+            // Another executor claimed it since the tasks were read.
+            if (!tasks.changeAgentStatus(task.id, AgentStatus.scheduled, AgentStatus.executing))
+            {
+                continue;
+            }
+
+            running[agentId.get] = running.get(agentId.get, 0) + 1;
+            // Passed as arguments rather than captured, since a closure in a loop shares one
+            // variable across all its iterations.
+            runTask(&executeClaimed, task, agentId.get);
+        }
+    }
+
+    /// Hands a scheduled task whose agent is gone back to the task scheduler.
+    private void handBack(Task task)
+    {
+        logInfo("Task %s is handed back to the task scheduler, since its agent is gone.", task.id);
+        auto projectId = tasks.projectOfLane(task.laneId);
+        if (tasks.reschedule(task.id) && !projectId.isNull)
+        {
+            events.note(task.id, projectId.get);
+        }
+    }
+
+    /**
+     * Has the agent work on a task claimed for it, and marks the task done or failed. A failed
+     * task is not taken up again by itself, since trying again every round would cost an agent
+     * call and add a note each time.
+     */
+    private void executeClaimed(Task task, UUID agentId) nothrow
+    {
+        scope (exit)
+        {
+            if (--running[agentId] == 0)
+            {
+                running.remove(agentId);
+            }
+        }
+
+        try
+        {
+            const status = execute(task, agentId) ? AgentStatus.done : AgentStatus.failed;
+            tasks.changeAgentStatus(task.id, AgentStatus.executing, status);
+        }
+        catch (Exception e)
+        {
+            logError("Working on task %s failed: %s", task.id, e.msg);
+            // Left scheduled to try again, since it failed for some other reason than the agent. A
+            // database that is down fails this too, and then the next start puts it back.
+            try
+            {
+                tasks.changeAgentStatus(task.id, AgentStatus.executing, AgentStatus.scheduled);
+            }
+            catch (Exception resetError)
+            {
+                logError("Task %s could not be put back to scheduled: %s", task.id, resetError.msg);
+            }
+        }
+    }
+
+    /**
+     * Has the agent work on the task with the execute prompt, then adds its result to the
+     * task's notes, moves the task on to the lane it chose, and takes the task off it. Waits
+     * on the agent, which can take a long while.
+     *
+     * Returns: Whether the agent answered with a result, rather than failing; a failure is
+     *   noted on the task.
+     */
+    private bool execute(Task task, UUID agentId)
+    {
+        // The lane or its project may be gone since the tasks were read.
+        auto lane = lanes.find(task.laneId);
         if (lane.isNull)
         {
-            return;
+            return false;
         }
 
         auto project = projects.find(lane.get.projectId);
         if (project.isNull)
         {
-            return;
+            return false;
         }
 
-        // An agent that is deleted takes its assignments with it, so a missing
-        // agent is a task assigned to none.
-        auto agentId = tasks.assignedAiAgent(taskId);
-        auto agent = agentId.isNull ? Nullable!Agent.init : agents.find(agentId.get);
+        auto agent = agents.find(agentId);
         if (agent.isNull)
         {
-            logInfo("Task %s is not executed, since it is assigned to no agent.", taskId);
-            noted(tasks.addNote(taskId, "Not worked on, since it is assigned to no agent"), taskId,
+            logInfo("Task %s is not worked on, since its agent is gone.", task.id);
+            noted(tasks.addNote(task.id, "Not worked on, since it is assigned to no agent"), task.id,
                 project.get.id);
-            return;
+            return false;
         }
 
-        // Made before the prompt, which names them. Caught here, so the task's
-        // notes say the agent could not get to work.
+        // Made before the prompt, which names them. Caught here, so the task's notes say the
+        // agent could not get to work.
         auto workingDir = workingDirs.ensure(project.get.slug);
         string scratchSpace;
         try
@@ -835,20 +1030,20 @@ class TaskExecutor : ITaskExecutor
         }
         catch (Exception e)
         {
-            logError("Agent %s could not work on task %s: %s", agent.get.name, taskId, e.msg);
-            noted(tasks.recordExecutionFailure(taskId, agent.get.id), taskId, project.get.id);
-            return;
+            logError("Agent %s could not work on task %s: %s", agent.get.name, task.id, e.msg);
+            noted(tasks.recordExecutionFailure(task.id, agent.get.id), task.id, project.get.id);
+            return false;
         }
 
         auto board = lanes.ofProject(project.get.id);
-        auto notes = tasks.notes(taskId);
+        auto notes = tasks.notes(task.id);
         string[string] placeholders = [
             "<project name>": project.get.name,
             "<project id>": project.get.id.toString,
             "<project description>": project.get.description.strip,
-            "<task id>": taskId.toString,
+            "<task id>": task.id.toString,
             "<lane name>": lane.get.name,
-            "<task description>": task.get.description.strip,
+            "<task description>": task.description.strip,
             "<note list>": noteList(notes),
             "<lane list>": laneList(board),
             "<working dir>": workingDir,
@@ -874,27 +1069,28 @@ class TaskExecutor : ITaskExecutor
         }
         catch (Exception e)
         {
-            logError("Agent %s failed on task %s: %s", agent.get.name, taskId, e.msg);
-            noted(tasks.recordExecutionFailure(taskId, agent.get.id), taskId, project.get.id);
-            return;
+            logError("Agent %s failed on task %s: %s", agent.get.name, task.id, e.msg);
+            noted(tasks.recordExecutionFailure(task.id, agent.get.id), task.id, project.get.id);
+            return false;
         }
 
         auto result = readTaskResult(answer, board);
         if (result.isNull)
         {
             logError("Agent %s answered task %s with \"%s\", which is not a lane and a result.",
-                agent.get.name, taskId, answer);
-            noted(tasks.recordExecutionFailure(taskId, agent.get.id), taskId, project.get.id);
-            return;
+                agent.get.name, task.id, answer);
+            noted(tasks.recordExecutionFailure(task.id, agent.get.id), task.id, project.get.id);
+            return false;
         }
 
         if (result.get.text.length > 0)
         {
-            noted(tasks.addNote(taskId, result.get.text), taskId, project.get.id);
+            noted(tasks.addNote(task.id, result.get.text), task.id, project.get.id);
         }
 
-        moveOn(tasks, events, indexPages, taskId, lane.get.id, result.get.laneId, project.get.id);
-        tasks.assignAiAgent(taskId, Nullable!UUID.init);
+        moveOn(tasks, events, indexPages, task.id, lane.get.id, result.get.laneId, project.get.id);
+        tasks.assignAiAgent(task.id, Nullable!UUID.init);
+        return true;
     }
 
     /// Reports a note on the task, when one was added.
@@ -906,6 +1102,18 @@ class TaskExecutor : ITaskExecutor
         }
     }
 }
+
+/**
+ * Asks an agent which agent should work on the task, given the agents there are,
+ * and which lane the task moves to as that agent starts on it.
+ */
+private enum schedulePrompt = import("schedule-task.txt");
+
+/**
+ * Asks the agent a task is assigned to to work on it, and which lane it goes
+ * to next.
+ */
+private enum executeTaskPrompt = import("execute-task.txt");
 
 /**
  * Moves the task to the bottom of the lane an agent chose. A task that left
@@ -941,8 +1149,35 @@ private string laneList(Lane[] board)
 private string noteList(TaskNote[] notes)
 {
     return notes.retro
-        .map!(note => format("- %s: %s", (cast(DateTime) note.insertedAt).toISOExtString, note.note))
+        .map!(note => format("- %s: %s", (cast(DateTime) note.insertedAt)
+                .toISOExtString, note.note))
         .join("\n");
+}
+
+/**
+ * One block per agent that can be given a task, set apart by tags since an
+ * agent's instructions run over several lines. Schedulers are left out,
+ * since they hand out tasks rather than work on them.
+ */
+private string agentList(Agent[] all)
+{
+    return all
+        .filter!(agent => !agent.taskScheduler)
+        .map!(agent => describeAssignable(agent))
+        .join("\n\n");
+}
+
+/**
+ * An agent as the scheduler sees it. Labels are always given, as "none" when
+ * there are none, while instructions are left out when there are none.
+ */
+private string describeAssignable(Agent agent)
+{
+    auto labels = agent.labels.length == 0 ? "none" : agent.labels.join(", ");
+    auto instructions = agent.instructions.strip;
+
+    return format("<agent>\nID: %s\nName: %s\nLabels: %s\n%s</agent>", agent.id, agent.name, labels,
+        instructions.length == 0 ? "" : "Instructions:\n" ~ instructions ~ "\n");
 }
 
 /**

@@ -7,8 +7,8 @@ import std.format : format;
 import std.typecons : Nullable, nullable;
 import std.uuid : UUID;
 
-import model : Agent, AgentLogEntry, Default, EffortLevel, Lane, Model, Project, Runtime, Task, TaskAddRule, TaskNote,
-    toTaskAddRule;
+import model : Agent, AgentLogEntry, AgentStatus, Default, EffortLevel, Lane, Model, Project, Runtime, Task, TaskAddRule,
+    TaskNote, toAgentStatus, toTaskAddRule;
 import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
     IRuntimeRepository, ITaskRepository, PositionConflict;
 
@@ -403,6 +403,55 @@ class PostgresTaskRepository : ITaskRepository
         });
     }
 
+    Task[] awaitingScheduling()
+    {
+        QueryParams query;
+        query.sqlCommand = "select t.id, t.lane_id, t.description, t.position from tasks t"
+            ~ " join lanes l on l.id = t.lane_id join projects p on p.id = l.project_id"
+            ~ " where t.agent_status = 'to_be_scheduled' and t.assigned_ai_agent_id is null and not l.marks_done"
+            ~ " and p.managed_by_ai and not p.ai_paused order by t.created_at";
+
+        return client.pickConnection((scope connection) {
+            return connection.execParams(query).toTasks;
+        });
+    }
+
+    Task[] awaitingExecution()
+    {
+        QueryParams query;
+        query.sqlCommand = "select t.id, t.lane_id, t.description, t.position from tasks t"
+            ~ " join lanes l on l.id = t.lane_id join projects p on p.id = l.project_id"
+            ~ " where t.agent_status = 'scheduled' and not l.marks_done and p.managed_by_ai and not p.ai_paused"
+            ~ " order by t.created_at";
+
+        return client.pickConnection((scope connection) {
+            return connection.execParams(query).toTasks;
+        });
+    }
+
+    bool changeAgentStatus(UUID id, AgentStatus from, AgentStatus to)
+    {
+        QueryParams query;
+        query.sqlCommand = "update tasks set agent_status = $3, updated_at = now()"
+            ~ " where id = $1 and agent_status = $2 returning id";
+        query.argsVariadic(id, cast(string) from, cast(string) to);
+
+        return client.pickConnection((scope connection) {
+            return connection.execParams(query).length > 0;
+        });
+    }
+
+    ulong changeAgentStatuses(AgentStatus from, AgentStatus to)
+    {
+        QueryParams query;
+        query.sqlCommand = "update tasks set agent_status = $2, updated_at = now() where agent_status = $1 returning id";
+        query.argsVariadic(cast(string) from, cast(string) to);
+
+        return client.pickConnection((scope connection) {
+            return connection.execParams(query).length;
+        });
+    }
+
     TaskNote[] notes(UUID taskId)
     {
         QueryParams query;
@@ -472,7 +521,7 @@ class PostgresTaskRepository : ITaskRepository
         });
     }
 
-    Task add(Task task)
+    Task add(Task task, Nullable!AgentStatus agentStatus)
     {
         client.pickConnection((scope connection) {
             connection.exec("begin");
@@ -484,8 +533,10 @@ class PostgresTaskRepository : ITaskRepository
             connection.placeTask(task);
 
             QueryParams insert;
-            insert.sqlCommand = "insert into tasks (lane_id, description, position) values ($1, $2, $3) returning id";
-            insert.argsVariadic(task.laneId, task.description, task.position.get);
+            insert.sqlCommand = "insert into tasks (lane_id, description, position, agent_status)"
+                ~ " values ($1, $2, $3, $4) returning id";
+            auto status = agentStatus.isNull ? Nullable!string.init : (cast(string) agentStatus.get).nullable;
+            insert.argsVariadic(task.laneId, task.description, task.position.get, status);
             task.id = connection.execParams(insert)[0]["id"].as!UUID;
 
             QueryParams created;
@@ -694,6 +745,53 @@ class PostgresTaskRepository : ITaskRepository
 
         return client.pickConnection((scope connection) {
             return connection.execParams(query).length > 0;
+        });
+    }
+
+    Nullable!AgentStatus agentStatus(UUID id)
+    {
+        QueryParams query;
+        query.sqlCommand = "select agent_status from tasks where id = $1";
+        query.argsVariadic(id);
+
+        return client.pickConnection((scope connection) {
+            auto answer = connection.execParams(query);
+            if (answer.length == 0 || answer[0]["agent_status"].isNull)
+            {
+                return Nullable!AgentStatus.init;
+            }
+
+            return answer[0]["agent_status"].as!string.toAgentStatus.nullable;
+        });
+    }
+
+    bool reschedule(UUID id)
+    {
+        return client.pickConnection((scope connection) {
+            connection.exec("begin");
+            scope (failure)
+            {
+                connection.exec("rollback");
+            }
+
+            QueryParams update;
+            update.sqlCommand = "update tasks set assigned_ai_agent_id = null, agent_status = 'to_be_scheduled', updated_at = now()"
+                ~ " where id = $1 and agent_status is distinct from 'scheduling' and agent_status is distinct from 'executing'"
+                ~ " returning id";
+            update.argsVariadic(id);
+            if (connection.execParams(update).length == 0)
+            {
+                connection.exec("rollback");
+                return false;
+            }
+
+            QueryParams note;
+            note.sqlCommand = "insert into task_notes (task_id, note) values ($1, 'Handed back to the task scheduler')";
+            note.argsVariadic(id);
+            connection.execParams(note);
+
+            connection.exec("commit");
+            return true;
         });
     }
 
@@ -989,6 +1087,23 @@ class PostgresAgentRepository : IAgentRepository
             agent.labels = connection.labelsOf(id);
 
             return agent.nullable;
+        });
+    }
+
+    Nullable!int maxParallelTasks(UUID id)
+    {
+        QueryParams query;
+        query.sqlCommand = "select max_parallel_tasks from agents where id = $1";
+        query.argsVariadic(id);
+
+        return client.pickConnection((scope connection) {
+            auto answer = connection.execParams(query);
+            if (answer.length == 0 || answer[0]["max_parallel_tasks"].isNull)
+            {
+                return Nullable!int.init;
+            }
+
+            return answer[0]["max_parallel_tasks"].as!int.nullable;
         });
     }
 

@@ -13,7 +13,7 @@ work. Read it before writing a new one, and copy its shape rather than inventing
 
 **The API modules never call a repository.** Every REST controller and `RpcController` go
 through the services, and a controller or RPC call never gains a repository call. (The agent layer,
-`TaskScheduler` and `TaskExecutor`, still uses the repositories directly; that is to be revisited.)
+`TaskScheduler` and `TaskExecutor`, still uses the repositories directly.)
 
 Schema changes are a different job — see the `taskavista-database` skill. This skill assumes the
 table already exists.
@@ -101,8 +101,7 @@ There is **no ORM and no migration runner**. SQL is written out by hand in the r
    services report is one class implementing each of their interfaces
    (`ProjectNotFoundError : IProjectError, ILaneError, ITaskError`), not a class per service. A
    service knows nothing of HTTP, and leaves running in the background to its caller (see
-   `docs/code-style.md`): `TaskService.handToAgent` waits on the agents, and the controller is
-   what runs it in a task of its own. Document in each method's `Returns:` which error classes it can fail with.
+   `docs/code-style.md`). Document in each method's `Returns:` which error classes it can fail with.
 
    A method that writes reports the write to the `IEventPublisher` (`dashboard/source/eventing.d`)
    once it has succeeded, with the ids it concerns, so that an open web UI shows it whoever made

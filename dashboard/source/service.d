@@ -3,14 +3,13 @@ module service;
 import std.algorithm : canFind, filter, map;
 import std.array : array;
 import std.string : strip;
-import std.typecons : Nullable;
+import std.typecons : Nullable, nullable;
 import std.uni : toLower;
 import std.uuid : UUID;
 
-import agent : ITaskExecutor, ITaskScheduler;
 import eventing : Event, IEventPublisher;
 import helpers : hasLetterOrDigit, isHexColor, isSlug, slugify;
-import model : Agent, Default, Lane, Model, Project, Runtime, Task, TaskNote;
+import model : Agent, AgentStatus, Default, Lane, Model, Project, Runtime, Task, TaskNote, terminalAgentStatuses;
 import repository : IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository, IRuntimeRepository,
     ITaskRepository, PositionConflict;
 import result : OperationResult, Result, failure, success;
@@ -476,18 +475,16 @@ class TaskService
 {
     private ITaskRepository repository;
     private IProjectRepository projects;
-    private ITaskScheduler scheduler;
-    private ITaskExecutor executor;
+    private ILaneRepository lanes;
     private IEventPublisher events;
     private IndexPages indexPages;
 
-    this(ITaskRepository repository, IProjectRepository projects, ITaskScheduler scheduler, ITaskExecutor executor,
-        IEventPublisher events, IndexPages indexPages)
+    this(ITaskRepository repository, IProjectRepository projects, ILaneRepository lanes, IEventPublisher events,
+        IndexPages indexPages)
     {
         this.repository = repository;
         this.projects = projects;
-        this.scheduler = scheduler;
-        this.executor = executor;
+        this.lanes = lanes;
         this.events = events;
         this.indexPages = indexPages;
     }
@@ -618,6 +615,8 @@ class TaskService
             }
         }
 
+        // Taken now, since the stored task may be the very one the update changes.
+        const fromLaneId = stored.get.laneId;
         try
         {
             if (!repository.update(task))
@@ -631,10 +630,11 @@ class TaskService
         }
 
         auto projectId = repository.projectOfLane(task.laneId).get;
-        events.task(Event.changed, task.id, projectId, stored.get.laneId, task.laneId);
-        if (task.laneId != stored.get.laneId)
+        events.task(Event.changed, task.id, projectId, fromLaneId, task.laneId);
+        if (task.laneId != fromLaneId)
         {
             indexPages.check(projectId);
+            rescheduleMoved(task.id, task.laneId, projectId);
         }
 
         return taskSuccess(task);
@@ -653,9 +653,15 @@ class TaskService
             return taskFailure!Task(new LaneClosedToNewTasksError);
         }
 
+        // Only a project managed by AI hands its tasks to the agents, and one that is not when
+        // the task is added keeps it from them, even should it be managed by AI later.
+        auto project = projects.find(projectId.get);
+        auto agentStatus = !project.isNull && project.get.managedByAi ? AgentStatus.toBeScheduled.nullable
+            : Nullable!AgentStatus.init;
+
         try
         {
-            repository.add(task);
+            repository.add(task, agentStatus);
         }
         catch (PositionConflict)
         {
@@ -717,6 +723,8 @@ class TaskService
             }
         }
 
+        // Taken now, since the stored task may be the very one the move changes.
+        const fromLaneId = stored.get.laneId;
         try
         {
             repository.move(id, laneId, before.isNull ? UUID.init : before.get);
@@ -727,44 +735,101 @@ class TaskService
             return taskFailure!(Task[])(new BeforeTaskNotInLaneError);
         }
 
-        events.task(Event.moved, id, project.get, stored.get.laneId, laneId);
+        events.task(Event.moved, id, project.get, fromLaneId, laneId);
         indexPages.check(project.get);
+        if (laneId != fromLaneId)
+        {
+            rescheduleMoved(id, laneId, project.get);
+        }
+
         return taskSuccess(repository.ofLane(laneId));
     }
 
     /**
-     * Has an AI agent work on a task just created, when its project is managed by AI: the task
-     * scheduler assigns it to an agent and moves it on, and the agent then works on it.
-     *
-     * Slow, since it waits on the agents; a caller that should not wait runs it in the
-     * background.
+     * Hands a task moved to another lane back to the task scheduler, when nothing is under way
+     * for it (its agent status is terminal) and the scheduler would take it up: its project is
+     * managed by AI and its new lane is not a done one. A move is how a person says the task is
+     * to be worked on again.
+     */
+    private void rescheduleMoved(UUID id, UUID laneId, UUID projectId)
+    {
+        auto status = repository.agentStatus(id);
+        if (status.isNull || !terminalAgentStatuses.canFind(status.get))
+        {
+            return;
+        }
+
+        auto project = projects.find(projectId);
+        auto lane = lanes.find(laneId);
+        if (project.isNull || !project.get.managedByAi || lane.isNull || lane.get.marksDone)
+        {
+            return;
+        }
+
+        if (repository.reschedule(id))
+        {
+            events.note(id, projectId);
+        }
+    }
+
+    /**
+     * Hands a task back to the task scheduler, which takes it up again as it does any task to be
+     * scheduled: it is taken off its agent, and the scheduler chooses an agent and a lane for it
+     * once more. A last resort for a task no agent is working on, such as one the scheduler
+     * declined. A task of a paused project waits until the project's agents are resumed.
      *
      * Params:
      *   id = The task's id.
      *
-     * Throws: `Exception` when the scheduler or the agent fails in a way it cannot record on
-     *   the task.
+     * Returns: Success, or a failure: `TaskNotFoundError`, `ProjectNotManagedByAiError` for a
+     *   task of a project whose tasks the agents do not work on, `TaskDoneError` for a task in a
+     *   done lane, `TaskBeingScheduledError` for one the scheduler is at now, or
+     *   `TaskBeingWorkedOnError` for one an agent is working on now.
      */
-    void handToAgent(UUID id)
+    OperationResult!ITaskError reschedule(UUID id)
     {
         auto task = repository.find(id);
         if (task.isNull)
         {
-            return;
+            return taskFailure(new TaskNotFoundError);
         }
 
-        // The task, its lane or its project may have gone in the meantime.
-        auto projectId = repository.projectOfLane(task.get.laneId);
-        auto project = projectId.isNull ? Nullable!Project.init : projects.find(projectId.get);
-        if (project.isNull || !project.get.managedByAi)
+        auto lane = lanes.find(task.get.laneId);
+        auto project = lane.isNull ? Nullable!Project.init : projects.find(lane.get.projectId);
+        if (project.isNull)
         {
-            return;
+            return taskFailure(new TaskNotFoundError);
         }
 
-        if (scheduler.schedule(id))
+        if (!project.get.managedByAi)
         {
-            executor.execute(id);
+            return taskFailure(new ProjectNotManagedByAiError);
         }
+
+        if (lane.get.marksDone)
+        {
+            return taskFailure(new TaskDoneError);
+        }
+
+        if (!repository.reschedule(id))
+        {
+            // The task may have been deleted since it was read, as well as be being scheduled.
+            if (repository.find(id).isNull)
+            {
+                return taskFailure(new TaskNotFoundError);
+            }
+
+            auto status = repository.agentStatus(id);
+            if (!status.isNull && status.get == AgentStatus.executing)
+            {
+                return taskFailure(new TaskBeingWorkedOnError);
+            }
+
+            return taskFailure(new TaskBeingScheduledError);
+        }
+
+        events.note(id, project.get.id);
+        return taskSuccess();
     }
 
     /**
@@ -988,8 +1053,8 @@ class ProjectNotFoundError : IProjectError, ILaneError, ITaskError
 {
 }
 
-/// The project is not managed by AI, so it has no agents to resume.
-class ProjectNotManagedByAiError : IProjectError
+/// The project is not managed by AI, so it has no agents to resume or to hand its tasks to.
+class ProjectNotManagedByAiError : IProjectError, ITaskError
 {
 }
 
@@ -1127,6 +1192,21 @@ class TaskLeavesProjectError : ITaskError
 
 /// Another task of the lane is already at the task's position.
 class TaskPositionTakenError : ITaskError
+{
+}
+
+/// The task is in a lane whose tasks count as done.
+class TaskDoneError : ITaskError
+{
+}
+
+/// The task scheduler is choosing an agent for the task now.
+class TaskBeingScheduledError : ITaskError
+{
+}
+
+/// The agent the task is assigned to is working on it now.
+class TaskBeingWorkedOnError : ITaskError
 {
 }
 
@@ -1437,6 +1517,8 @@ version (unittest)
         Published[] lanes;
         Published[] tasks;
         Published[] agents;
+        /// The tasks a note was reported on.
+        UUID[] notes;
 
         void task(Event event, UUID taskId, UUID projectId, UUID fromLaneId, UUID toLaneId)
         {
@@ -1455,7 +1537,7 @@ version (unittest)
 
         void note(UUID taskId, UUID projectId)
         {
-            assert(false, "Not used by the services.");
+            notes ~= taskId;
         }
 
         void agent(Event event, UUID agentId)
@@ -1470,6 +1552,8 @@ version (unittest)
         Project[] projects;
         Lane[] lanes;
         Task[] tasks;
+        /// The agent status each task was added with, which a Task does not carry.
+        Nullable!AgentStatus[UUID] agentStatuses;
         Agent[] agents;
         /// The lanes the last replaceWithLanes was told to delete.
         UUID[] removedLanes;
@@ -1667,6 +1751,26 @@ version (unittest)
             return found.empty ? Nullable!Task.init : found.front.nullable;
         }
 
+        Task[] awaitingScheduling()
+        {
+            assert(false, "Not used by TaskService.");
+        }
+
+        Task[] awaitingExecution()
+        {
+            assert(false, "Not used by TaskService.");
+        }
+
+        bool changeAgentStatus(UUID id, AgentStatus from, AgentStatus to)
+        {
+            assert(false, "Not used by TaskService.");
+        }
+
+        ulong changeAgentStatuses(AgentStatus from, AgentStatus to)
+        {
+            assert(false, "Not used by TaskService.");
+        }
+
         TaskNote[] notes(UUID taskId)
         {
             return null;
@@ -1691,11 +1795,12 @@ version (unittest)
                 other => other.projectId == lane.projectId && other.position.get < lane.position.get);
         }
 
-        Task add(Task task)
+        Task add(Task task, Nullable!AgentStatus agentStatus)
         {
             place(task);
             task.id = randomUUID;
             database.tasks ~= task;
+            database.agentStatuses[task.id] = agentStatus;
             return task;
         }
 
@@ -1800,6 +1905,25 @@ version (unittest)
             assert(false, "Not used by TaskService.");
         }
 
+        Nullable!AgentStatus agentStatus(UUID id)
+        {
+            auto status = id in database.agentStatuses;
+            return status is null ? Nullable!AgentStatus.init : *status;
+        }
+
+        bool reschedule(UUID id)
+        {
+            auto status = id in database.agentStatuses;
+            if (find(id).isNull || (status !is null && !status.isNull
+                    && [AgentStatus.scheduling, AgentStatus.executing].canFind(status.get)))
+            {
+                return false;
+            }
+
+            database.agentStatuses[id] = AgentStatus.toBeScheduled.nullable;
+            return true;
+        }
+
         bool recordNoScheduler(UUID id)
         {
             assert(false, "Not used by TaskService.");
@@ -1832,6 +1956,11 @@ version (unittest)
         {
             auto found = database.agents.filter!(agent => agent.id == id);
             return found.empty ? Nullable!Agent.init : found.front.nullable;
+        }
+
+        Nullable!int maxParallelTasks(UUID id)
+        {
+            assert(false, "Not used by AgentService.");
         }
 
         bool nameTaken(string name, UUID except)
@@ -1918,37 +2047,11 @@ version (unittest)
         return new LaneService(new MockLaneRepository(database), events);
     }
 
-    /// An ITaskScheduler that keeps the tasks it is asked to schedule, and assigns them or not.
-    private class MockTaskScheduler : ITaskScheduler
-    {
-        UUID[] scheduled;
-        /// What schedule answers: whether the task was assigned to an agent.
-        bool assigns = true;
-
-        bool schedule(UUID taskId)
-        {
-            scheduled ~= taskId;
-            return assigns;
-        }
-    }
-
-    /// An ITaskExecutor that keeps the tasks it is asked to execute.
-    private class MockTaskExecutor : ITaskExecutor
-    {
-        UUID[] executed;
-
-        void execute(UUID taskId)
-        {
-            executed ~= taskId;
-        }
-    }
-
-    /// A TaskService over mock repositories that share `database`, and over mock agents.
-    private TaskService taskServiceOver(MockDatabase database, MockEventPublisher events = new MockEventPublisher,
-        MockTaskScheduler scheduler = new MockTaskScheduler, MockTaskExecutor executor = new MockTaskExecutor)
+    /// A TaskService over mock repositories that share `database`.
+    private TaskService taskServiceOver(MockDatabase database, MockEventPublisher events = new MockEventPublisher)
     {
         auto projects = new MockProjectRepository(database);
-        return new TaskService(new MockTaskRepository(database), projects, scheduler, executor, events,
+        return new TaskService(new MockTaskRepository(database), projects, new MockLaneRepository(database), events,
             new IndexPages(noWorkingDirs(), projects, events));
     }
 
@@ -2226,40 +2329,97 @@ unittest
     assert(service.remove(check.id).isSuccessful);
     assert(cast(TaskNotFoundError) service.remove(check.id).error);
 
+    // Only a task of a project managed by AI is to be scheduled; any other gets no status.
+    assert(database.agentStatuses[check.id].isNull);
+    website.managedByAi = true;
+    auto draft = new Task(UUID.init, ideas.id, "Draft the copy", 0);
+    assert(service.save(draft).isSuccessful);
+    assert(database.agentStatuses[draft.id] == AgentStatus.toBeScheduled);
+
     assert(events.tasks == [
         Published(Event.created, check.id),
         Published(Event.changed, report.id),
         Published(Event.changed, report.id),
-        Published(Event.deleted, check.id)
+        Published(Event.deleted, check.id),
+        Published(Event.created, draft.id)
     ]);
 
 }
 
-// TaskService: handing a task to an agent.
+// TaskService: handing a task back to the task scheduler.
 unittest
 {
     auto database = new MockDatabase;
-    auto scheduler = new MockTaskScheduler;
-    auto executor = new MockTaskExecutor;
-    auto service = taskServiceOver(database, new MockEventPublisher, scheduler, executor);
-    auto managed = storedProject(database, "Q3 finance");
+    auto events = new MockEventPublisher;
+    auto service = taskServiceOver(database, events);
+    auto managed = storedProject(database, "AI test");
     managed.managedByAi = true;
-    auto unmanaged = storedProject(database, "Website");
-    auto report = storedTask(database, storedLane(database, managed.id, "To do", 0).id, "Write the report", 0);
-    auto copy = storedTask(database, storedLane(database, unmanaged.id, "Ideas", 0).id, "Write the copy", 0);
+    auto unmanaged = storedProject(database, "Q3 finance");
+    auto toDo = storedLane(database, managed.id, "To do", 0);
+    auto done = new Lane(randomUUID, managed.id, "Done", 1, "#5fd6ab", true);
+    database.lanes ~= done;
+    auto declined = storedTask(database, toDo.id, "Write the poem", 0);
+    database.agentStatuses[declined.id] = AgentStatus.declined.nullable;
 
-    service.handToAgent(report.id);
-    assert(scheduler.scheduled == [report.id] && executor.executed == [report.id]);
+    assert(service.reschedule(declined.id).isSuccessful);
+    assert(database.agentStatuses[declined.id] == AgentStatus.toBeScheduled);
+    assert(events.notes == [declined.id]);
 
-    // A task the scheduler assigns to no agent is not worked on.
-    scheduler.assigns = false;
-    service.handToAgent(report.id);
-    assert(scheduler.scheduled == [report.id, report.id] && executor.executed == [report.id]);
+    // A task the scheduler is at, a done one, and one of a project the agents do not work on stay as they are.
+    database.agentStatuses[declined.id] = AgentStatus.scheduling.nullable;
+    assert(cast(TaskBeingScheduledError) service.reschedule(declined.id).error);
+    database.agentStatuses[declined.id] = AgentStatus.executing.nullable;
+    assert(cast(TaskBeingWorkedOnError) service.reschedule(declined.id).error);
+    assert(cast(TaskDoneError) service.reschedule(storedTask(database, done.id, "Read the poem", 0).id).error);
+    auto ideas = storedLane(database, unmanaged.id, "Ideas", 0);
+    assert(cast(ProjectNotManagedByAiError) service.reschedule(storedTask(database, ideas.id, "Sum it", 0).id).error);
+    assert(cast(TaskNotFoundError) service.reschedule(randomUUID).error);
+    assert(events.notes == [declined.id]);
+}
 
-    // Nor is a task of a project not managed by AI, or one that is gone.
-    service.handToAgent(copy.id);
-    service.handToAgent(randomUUID);
-    assert(scheduler.scheduled.length == 2 && executor.executed.length == 1);
+// TaskService: moving a task the agents are done with to another lane hands it back to the task scheduler.
+unittest
+{
+    auto database = new MockDatabase;
+    auto events = new MockEventPublisher;
+    auto service = taskServiceOver(database, events);
+    auto managed = storedProject(database, "AI test");
+    managed.managedByAi = true;
+    auto toDo = storedLane(database, managed.id, "To do", 0);
+    auto doing = storedLane(database, managed.id, "Doing", 1);
+    auto done = new Lane(randomUUID, managed.id, "Done", 2, "#5fd6ab", true);
+    database.lanes ~= done;
+    auto poem = storedTask(database, toDo.id, "Write the poem", 0);
+    auto essay = storedTask(database, toDo.id, "Write the essay", 1);
+    database.agentStatuses[poem.id] = AgentStatus.declined.nullable;
+    database.agentStatuses[essay.id] = AgentStatus.scheduled.nullable;
+
+    // A move within the lane, or of a task that is not in a terminal status, changes nothing.
+    assert(service.move(poem.id, toDo.id, Nullable!UUID.init).isSuccessful);
+    assert(service.move(essay.id, doing.id, Nullable!UUID.init).isSuccessful);
+    assert(database.agentStatuses[poem.id] == AgentStatus.declined);
+    assert(database.agentStatuses[essay.id] == AgentStatus.scheduled);
+
+    // Nor does a move to a done lane.
+    assert(service.move(poem.id, done.id, Nullable!UUID.init).isSuccessful);
+    assert(database.agentStatuses[poem.id] == AgentStatus.declined);
+    assert(events.notes.length == 0);
+
+    // Moving it out again does, and so does a PUT that changes its lane.
+    assert(service.move(poem.id, doing.id, Nullable!UUID.init).isSuccessful);
+    assert(database.agentStatuses[poem.id] == AgentStatus.toBeScheduled);
+    database.agentStatuses[poem.id] = AgentStatus.declined.nullable;
+    assert(service.save(new Task(poem.id, toDo.id, "Write the poem", 5)).isSuccessful);
+    assert(database.agentStatuses[poem.id] == AgentStatus.toBeScheduled);
+    assert(events.notes == [poem.id, poem.id]);
+
+    // A task of a project not managed by AI has no status, and keeps none.
+    auto unmanaged = storedProject(database, "Q3 finance");
+    auto ideas = storedLane(database, unmanaged.id, "Ideas", 0);
+    auto later = storedLane(database, unmanaged.id, "Later", 1);
+    auto sum = storedTask(database, ideas.id, "Sum it", 0);
+    assert(service.move(sum.id, later.id, Nullable!UUID.init).isSuccessful);
+    assert(sum.id !in database.agentStatuses);
 }
 
 // AgentService: reading, and creating, updating and deleting an agent.

@@ -38,8 +38,7 @@ implements its API interface, which vibe generates the routes from, and does thr
   the status and message by the error's class. The overloads live there rather than in one API
   module, so that REST and RPC answer the same failure the same way.
 
-A controller decides what runs in the background, as the code style asks: `createTask` runs
-`TaskService.handToAgent` in a task of its own, since the request should not wait on an agent.
+A controller decides what runs in the background, as the code style asks.
 
 A controller never calls a repository, and never publishes an event.
 
@@ -111,12 +110,11 @@ reaches the sockets.
 ## Testing
 
 The services are unit-tested in `service.d` against mocks of the interfaces they take: the
-repositories, `IEventPublisher`, `ITaskScheduler` and `ITaskExecutor`. A mock repository keeps its
+repositories and `IEventPublisher`. A mock repository keeps its
 rows in a `MockDatabase` in memory, and `MockEventPublisher` keeps the events it was told about,
 so that a test can check both what was written and what was reported.
 
 ## What is not layered yet
 
-`TaskScheduler` and `TaskExecutor` in `agent.d` still read and write the repositories and publish
-events themselves, rather than going through the services. They are to be reworked with task
-scheduling.
+`TaskScheduler` and `TaskExecutor` in `agent.d` read and write the repositories and publish
+events themselves, rather than going through the services.

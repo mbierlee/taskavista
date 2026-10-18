@@ -35,6 +35,41 @@ TaskAddRule toTaskAddRule(string value) @safe
     throw new Exception(text("Not a task_add_rule the schema allows: ", value));
 }
 
+/// How far the agents got with a task: a tasks.agent_status value.
+enum AgentStatus : string
+{
+    toBeScheduled = "to_be_scheduled",
+    scheduling = "scheduling",
+    scheduled = "scheduled",
+    declined = "declined",
+    executing = "executing",
+    done = "done",
+    failed = "failed"
+}
+
+/**
+ * The agent statuses a task stays in until something hands it back to the task scheduler, such
+ * as a person moving it to another lane: nothing is under way for it, and nothing will be.
+ */
+immutable AgentStatus[] terminalAgentStatuses = [AgentStatus.declined, AgentStatus.done, AgentStatus.failed];
+
+/**
+ * Converts an agent_status column value to its enum member. Throws on anything
+ * the schema's check constraint would not have allowed in the first place.
+ */
+AgentStatus toAgentStatus(string value) @safe
+{
+    foreach (status; EnumMembers!AgentStatus)
+    {
+        if (status == value)
+        {
+            return status;
+        }
+    }
+
+    throw new Exception(text("Not an agent_status the schema allows: ", value));
+}
+
 /// A row of the projects table.
 class Project
 {

@@ -60,6 +60,32 @@ moved task's old place as a gap. Gaps are allowed throughout (see the REST spec)
 would rewrite rows without changing the order. A caller should rely on the order, never on
 consecutive positions.
 
+## Rescheduling a task
+
+`rescheduleTask` is a last resort for a task no agent is working on, meant for the agents in a
+chat: a person who finds a task stuck asks the agent to get it picked up. It sets the task's
+`agent_status` back to `to_be_scheduled` and clears its agent, and the `TaskScheduler` loop in `agent.d`
+takes it up on its next round as it does a new task. Clearing the agent is needed, as the loop
+only takes up tasks with none.
+
+It refuses what the loop would never take up, so that a 200 means the task will be scheduled: a
+task of a project not managed by AI (whose tasks have no agent status at all), and one in a done
+lane. It also refuses a task being scheduled or worked on, so that it does not undo the
+scheduler's or the agent's work as it lands; the update is conditional on the status, so this
+holds even when the two meet. A paused
+project is not refused, since resuming it is all the task then waits for.
+
+A task is also handed back without the call when it is moved to another lane, by `moveTask` or a
+`PUT`, while its agent status is terminal: one that nothing changes until something hands the task
+back: `declined` by the scheduler, and `done` or `failed` by the `TaskExecutor`. A move is how a person says a task is to be worked on
+again, and its new lane may be what makes it fit an agent. The same rules apply, except that a
+move that breaks one is not refused, it just does not reschedule. The terminal statuses are
+listed in `terminalAgentStatuses` in `model.d`, the one place to add another.
+
+The result is an empty object: what the call changed is not served by the API, and what comes of
+it shows up later, in the task's notes. The call adds a note of its own, "Handed back to the task
+scheduler", so that a person reading the notes can tell why the task was scheduled twice.
+
 ## Agent chats
 
 `sendChatMessage` starts a session on the agent's runtime (`AgentChat` in `agent.d`). Its system
