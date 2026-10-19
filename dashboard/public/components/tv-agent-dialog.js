@@ -1,7 +1,8 @@
 /* <tv-agent-dialog></tv-agent-dialog>
 
    The modal dialog an AI agent is added or edited in: its name, runtime,
-   model, effort level, instructions, labels (a tv-chip-list, suggesting the
+   model, effort level, how many tasks it works on at once (no limit, a
+   preset, or a custom number), instructions, labels (a tv-chip-list, suggesting the
    labels other agents have) and whether it is a task scheduler. It writes nothing itself: it
    reports what was asked for and stays open, so the caller closes it once
    the write has gone through, or sets `error` when it has not.
@@ -15,8 +16,10 @@
    level, or else its first.
 
    Events (bubbling and composed):
-     agent-create  detail { name, runtime, model, effort, instructions, labels, taskScheduler }
-     agent-save    detail { id, name, runtime, model, effort, instructions, labels, taskScheduler }
+     agent-create  detail { name, runtime, model, effort, maxParallelTasks, instructions, labels, taskScheduler }
+     agent-save    detail { id, name, runtime, model, effort, maxParallelTasks, instructions, labels, taskScheduler }
+
+   `maxParallelTasks` is null for no limit.
      agent-delete  detail { id } */
 
 import { attachTemplate, loadTemplate } from "./template.js";
@@ -24,6 +27,9 @@ import "./tv-chip-list.js";
 import "./tv-toggle.js";
 
 const template = await loadTemplate("tv-agent-dialog.html");
+
+/* As the agents table has it, for a new agent and a draft that names none. */
+const defaultMaxParallelTasks = 5;
 
 export class TvAgentDialog extends HTMLElement {
   #dialog;
@@ -34,6 +40,8 @@ export class TvAgentDialog extends HTMLElement {
   #runtime;
   #model;
   #effort;
+  #parallel;
+  #customCount;
   #instructions;
   #labels;
   #scheduler;
@@ -59,6 +67,8 @@ export class TvAgentDialog extends HTMLElement {
     this.#runtime = root.querySelector(".runtime");
     this.#model = root.querySelector(".model");
     this.#effort = root.querySelector(".effort");
+    this.#parallel = [...root.querySelectorAll("input[name=parallel]")];
+    this.#customCount = root.querySelector(".custom-count");
     this.#instructions = root.querySelector(".instructions");
     this.#labels = root.querySelector(".labels");
     this.#scheduler = root.querySelector(".scheduler");
@@ -77,6 +87,15 @@ export class TvAgentDialog extends HTMLElement {
     this.#model.addEventListener("change", () =>
       this.#fillEfforts(this.#effort.value),
     );
+    for (const radio of this.#parallel) {
+      radio.addEventListener("change", () => {
+        if (radio.value === "custom") {
+          this.#customCount.focus();
+        }
+        this.#updateSave();
+      });
+    }
+    this.#customCount.addEventListener("input", () => this.#updateSave());
     this.#delete.addEventListener("click", () => this.#onDelete());
     root.querySelector(".close").addEventListener("click", () => this.close());
     root.querySelector(".cancel").addEventListener("click", () => this.close());
@@ -104,6 +123,11 @@ export class TvAgentDialog extends HTMLElement {
     this.#instructions.value = draft?.instructions ?? "";
     this.#labels.values = draft?.labels ?? [];
     this.#scheduler.checked = draft?.taskScheduler ?? false;
+    this.#setParallel(
+      draft?.maxParallelTasks === undefined
+        ? defaultMaxParallelTasks
+        : draft.maxParallelTasks,
+    );
     if (!this.#pick(this.#runtime, draft?.runtime)) {
       this.#pick(this.#runtime, defaults.runtime);
     }
@@ -150,6 +174,7 @@ export class TvAgentDialog extends HTMLElement {
     this.#instructions.value = agent.instructions;
     this.#labels.values = agent.labels;
     this.#scheduler.checked = agent.taskScheduler;
+    this.#setParallel(agent.maxParallelTasks);
     this.#pick(this.#runtime, agent.runtime);
     this.#fillModels(agent.model, agent.effort);
     this.#finishOpening();
@@ -225,6 +250,31 @@ export class TvAgentDialog extends HTMLElement {
     this.#updateSave();
   }
 
+  /* Picks the segment for `count`, null for no limit, or else "Custom…"
+     with `count` typed in. */
+  #setParallel(count) {
+    const value = count === null ? "" : String(count);
+    const preset = this.#parallel.find((radio) => radio.value === value);
+    const custom = this.#parallel.find((radio) => radio.value === "custom");
+    (preset ?? custom).checked = true;
+    this.#customCount.value = preset ? "" : value;
+  }
+
+  /* The limit picked: null for none, a whole number above 0, or undefined
+     when "Custom…" is picked without one. */
+  #parallelValue() {
+    const picked = this.#parallel.find((radio) => radio.checked);
+    if (picked.value === "") {
+      return null;
+    }
+    const text =
+      picked.value === "custom" ? this.#customCount.value : picked.value;
+    const count = Number(text);
+    return text.trim() !== "" && Number.isInteger(count) && count > 0
+      ? count
+      : undefined;
+  }
+
   /* Leaves the select on its first option when `id` is not among them.
      Returns whether it was. */
   #pick(select, id) {
@@ -241,7 +291,8 @@ export class TvAgentDialog extends HTMLElement {
       saving ||
       this.#name.value.trim() === "" ||
       this.#model.value === "" ||
-      this.#effort.value === "";
+      this.#effort.value === "" ||
+      this.#parallelValue() === undefined;
     this.#save.textContent = saving ? "Saving…" : this.#save.dataset.label;
   }
 
@@ -256,6 +307,7 @@ export class TvAgentDialog extends HTMLElement {
       runtime: this.#runtime.value,
       model: this.#model.value,
       effort: this.#effort.value,
+      maxParallelTasks: this.#parallelValue(),
       instructions: this.#instructions.value.trim(),
       labels: this.#labels.values,
       taskScheduler: this.#scheduler.checked,

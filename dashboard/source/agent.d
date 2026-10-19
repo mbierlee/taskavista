@@ -689,7 +689,7 @@ class TaskScheduler
             return Nullable!int.init;
         }
 
-        return agents.maxParallelTasks(schedulers.front.id);
+        return schedulers.front.maxParallelTasks;
     }
 
     /**

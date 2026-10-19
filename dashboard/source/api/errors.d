@@ -18,7 +18,7 @@ import service : AgentModelMissingError, AgentNameMissingError, AgentNameTakenEr
     IAgentError, ILaneError, IProjectError, ITaskError, LabelBlankError, LabelRepeatedError,
     LaneClosedToNewTasksError, LaneColorInvalidError, LaneListedTwiceError, LaneNameMissingError,
     LaneNotFoundError, LaneOfOtherProjectError, LanePositionNegativeError, LanePositionTakenError,
-    ModelNotOfferedError, NameReservedError, NameTakenError, ProjectNameMissingError,
+    MaxParallelTasksInvalidError, ModelNotOfferedError, NameReservedError, NameTakenError, ProjectNameMissingError,
     ProjectNameUnusableError, ProjectNotFoundError, ProjectNotManagedByAiError, RuntimeNotFoundError,
     SlugInvalidError, SlugReservedError, SlugTakenError, TaskBeforeItselfError, TaskBeingScheduledError,
     TaskBeingWorkedOnError, TaskDescriptionMissingError, TaskDoneError, TaskLeavesProjectError, TaskNotFoundError,
@@ -427,6 +427,12 @@ HTTPStatusException toHTTPError(IAgentError error, Agent agent)
     if (cast(AgentModelMissingError) error)
     {
         return new HTTPStatusException(HTTPStatus.badRequest, "An agent needs a model.");
+    }
+
+    if (cast(MaxParallelTasksInvalidError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest,
+            "An agent's parallel tasks must be above 0, or null for no limit.");
     }
 
     if (cast(LabelBlankError) error)

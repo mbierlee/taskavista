@@ -29,6 +29,13 @@ A name must have at least one letter or digit so that a slug can always be made 
 when the request sends a slug of its own. The server never makes a slug unique by adding a
 number: a taken slug is a 409, and the person picks another name.
 
+## An agent's parallel-task limit cannot be left out
+
+`maxParallelTasks` is the one optional-looking agent field a body must carry. `null` means no
+limit, and vibe reads a `null` for an `@optional` field as if the field were left out, keeping
+the field's default. As an optional field, the limit could never be lifted. So the field is not
+optional, and a `PUT` cannot reset it to the default by accident either.
+
 ## Messages fit to show
 
 The 409s for a taken name and the 400s for an agent are worded so that a client can show them

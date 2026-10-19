@@ -946,7 +946,8 @@ class AgentService
      *   agent = The agent to create or update.
      *
      * Returns: The agent as stored, or a failure: `AgentNameMissingError`,
-     *   `AgentRuntimeMissingError`, `AgentModelMissingError`, `LabelBlankError`,
+     *   `AgentRuntimeMissingError`, `AgentModelMissingError`,
+     *   `MaxParallelTasksInvalidError`, `LabelBlankError`,
      *   `LabelRepeatedError`, `RuntimeNotFoundError`, `ModelNotOfferedError`,
      *   `EffortNotTakenError`, `AgentNameTakenError` or `AgentNotFoundError`.
      */
@@ -1257,6 +1258,11 @@ class AgentModelMissingError : IAgentError
 {
 }
 
+/// The agent's limit on parallel tasks is not above 0.
+class MaxParallelTasksInvalidError : IAgentError
+{
+}
+
 /// One of the agent's labels is blank.
 class LabelBlankError : IAgentError
 {
@@ -1371,6 +1377,11 @@ private IAgentError checkAgent(Agent agent)
     if (agent.model.strip.length == 0)
     {
         return new AgentModelMissingError;
+    }
+
+    if (!agent.maxParallelTasks.isNull && agent.maxParallelTasks.get <= 0)
+    {
+        return new MaxParallelTasksInvalidError;
     }
 
     foreach (ref label; agent.labels)
@@ -2496,6 +2507,9 @@ unittest
     assert(cast(AgentNameMissingError) agents.save(draft("", "claude-code", "sonnet")).error);
     assert(cast(AgentRuntimeMissingError) agents.save(draft("A", " ", "sonnet")).error);
     assert(cast(AgentModelMissingError) agents.save(draft("A", "claude-code", "")).error);
+    auto idle = draft("A", "claude-code", "sonnet");
+    idle.maxParallelTasks = 0;
+    assert(cast(MaxParallelTasksInvalidError) agents.save(idle).error);
     assert(cast(LabelBlankError) agents.save(draft("A", "claude-code", "sonnet", ["ops", " "])).error);
     auto repeated = cast(LabelRepeatedError) agents.save(draft("A", "claude-code", "sonnet", ["Ops", "ops"])).error;
     assert(repeated !is null && repeated.label == "ops");

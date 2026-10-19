@@ -1039,7 +1039,7 @@ class PostgresAgentRepository : IAgentRepository
     Agent[] all()
     {
         QueryParams query;
-        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, instructions from agents order by task_scheduler desc, name";
+        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, instructions, max_parallel_tasks from agents order by task_scheduler desc, name";
 
         return client.pickConnection((scope connection) {
             auto answer = connection.execParams(query);
@@ -1072,7 +1072,7 @@ class PostgresAgentRepository : IAgentRepository
     Nullable!Agent find(UUID id)
     {
         QueryParams query;
-        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, instructions from agents where id = $1";
+        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, instructions, max_parallel_tasks from agents where id = $1";
         query.argsVariadic(id);
 
         return client.pickConnection((scope connection) {
@@ -1121,8 +1121,9 @@ class PostgresAgentRepository : IAgentRepository
     Agent add(Agent agent)
     {
         QueryParams query;
-        query.sqlCommand = "insert into agents (name, runtime, model, effort, task_scheduler, instructions) values ($1, $2, $3, $4, $5, $6) returning id";
-        query.argsVariadic(agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler, agent.instructions);
+        query.sqlCommand = "insert into agents (name, runtime, model, effort, task_scheduler, instructions, max_parallel_tasks) values ($1, $2, $3, $4, $5, $6, $7) returning id";
+        query.argsVariadic(agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler, agent.instructions,
+            agent.maxParallelTasks);
 
         client.pickConnection((scope connection) {
             connection.exec("begin");
@@ -1143,8 +1144,9 @@ class PostgresAgentRepository : IAgentRepository
     bool update(Agent agent)
     {
         QueryParams query;
-        query.sqlCommand = "update agents set name = $2, runtime = $3, model = $4, effort = $5, task_scheduler = $6, instructions = $7 where id = $1 returning id";
-        query.argsVariadic(agent.id, agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler, agent.instructions);
+        query.sqlCommand = "update agents set name = $2, runtime = $3, model = $4, effort = $5, task_scheduler = $6, instructions = $7, max_parallel_tasks = $8 where id = $1 returning id";
+        query.argsVariadic(agent.id, agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler, agent.instructions,
+            agent.maxParallelTasks);
 
         return client.pickConnection((scope connection) {
             connection.exec("begin");
@@ -1221,7 +1223,9 @@ private Agent toAgent(immutable Row row)
         row["model"].as!string,
         row["effort"].as!string,
         row["task_scheduler"].as!bool,
-        row["instructions"].as!string
+        row["instructions"].as!string,
+        null,
+        row["max_parallel_tasks"].isNull ? Nullable!int.init : row["max_parallel_tasks"].as!int.nullable
     );
 }
 

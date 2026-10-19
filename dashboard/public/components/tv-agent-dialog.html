@@ -97,6 +97,87 @@
     color: var(--text-2);
   }
 
+  /* Radios, for their keyboard handling, drawn as the mockup's row of
+     segments with the one picked filled in. */
+  .segments {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: var(--r-ctl);
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .segment {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    padding: 8px 0;
+    font-size: 14px;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+  .segment + .segment {
+    border-left: 1px solid var(--border);
+  }
+  .segment:hover:not(:has(:checked)) {
+    background: var(--surface-input);
+  }
+  .segment:has(:checked) {
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 600;
+  }
+  .segment:has(input[type="radio"]:focus-visible) {
+    outline: 2px solid var(--accent-soft);
+    outline-offset: -2px;
+  }
+  .segment input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  fieldset:disabled .segment {
+    cursor: default;
+  }
+
+  .custom {
+    flex: 1.6;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  /* Picked, "Custom…" turns into the box the number is typed in. */
+  .custom-count,
+  .custom:has(:checked) .custom-text {
+    display: none;
+  }
+  .custom:has(:checked) {
+    padding: 0;
+  }
+  .custom:has(:checked) .custom-count {
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0 8px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+    outline: none;
+    appearance: textfield;
+  }
+  .custom-count::-webkit-inner-spin-button,
+  .custom-count::-webkit-outer-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+  .custom-count::placeholder {
+    color: var(--accent-ink);
+    opacity: 0.55;
+  }
+
   /* The mockup puts the switch on the right of its label. */
   tv-toggle {
     flex-direction: row-reverse;
@@ -181,6 +262,44 @@
         <span class="row-label">Effort</span>
         <span class="select"><select class="field effort"></select></span>
       </label>
+
+      <div class="row">
+        <span class="row-label" id="parallel-label">Parallel tasks</span>
+        <div
+          class="segments parallel"
+          role="radiogroup"
+          aria-labelledby="parallel-label"
+        >
+          <label class="segment" title="No limit">
+            <input type="radio" name="parallel" value="" />
+            <span aria-label="No limit">∞</span>
+          </label>
+          <label class="segment">
+            <input type="radio" name="parallel" value="1" />1
+          </label>
+          <label class="segment">
+            <input type="radio" name="parallel" value="5" />5
+          </label>
+          <label class="segment">
+            <input type="radio" name="parallel" value="10" />10
+          </label>
+          <label class="segment">
+            <input type="radio" name="parallel" value="20" />20
+          </label>
+          <label class="segment custom">
+            <input type="radio" name="parallel" value="custom" />
+            <span class="custom-text">Custom…</span>
+            <input
+              class="custom-count"
+              type="number"
+              min="1"
+              step="1"
+              inputmode="numeric"
+              aria-label="Parallel tasks"
+            />
+          </label>
+        </div>
+      </div>
 
       <label class="row">
         <span class="row-label">Instructions</span>

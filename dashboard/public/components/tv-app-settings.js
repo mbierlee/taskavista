@@ -22,8 +22,8 @@
    Events (bubbling and composed):
      agent-draft   detail { description }
    and from the dialog:
-     agent-create  detail { name, runtime, model, effort, instructions, labels, taskScheduler }
-     agent-save    detail { id, name, runtime, model, effort, instructions, labels, taskScheduler }
+     agent-create  detail { name, runtime, model, effort, maxParallelTasks, instructions, labels, taskScheduler }
+     agent-save    detail { id, name, runtime, model, effort, maxParallelTasks, instructions, labels, taskScheduler }
      agent-delete  detail { id } */
 
 import { attachTemplate, loadTemplate } from "./template.js";

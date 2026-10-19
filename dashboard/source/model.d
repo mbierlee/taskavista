@@ -265,6 +265,9 @@ class Runtime
  */
 enum defaultEffort = "default";
 
+/// How many tasks an agent works on at once when it is not told otherwise, as in the agents table.
+enum defaultMaxParallelTasks = 5;
+
 /**
  * A row of the effort_levels table: how hard a model works at a prompt.
  * Fixed data, installed with the schema.
@@ -335,6 +338,13 @@ class Agent
     @optional bool taskScheduler;
     /// The agent's own instructions, added to its system prompt. Empty for none.
     @optional string instructions;
+    /**
+     * How many tasks the agent works on at once, or, for a task scheduler, how many tasks it
+     * schedules at once. Null for no limit; above 0 otherwise. Not optional on the wire, since
+     * vibe takes a null for an optional field as left out, which would leave no way to send
+     * "no limit".
+     */
+    Nullable!int maxParallelTasks = defaultMaxParallelTasks;
     /// The agent's rows in agent_labels, lowercase, in alphabetical order when read.
     @optional string[] labels;
 
@@ -343,7 +353,8 @@ class Agent
     }
 
     this(UUID id, string name, string runtime, string model, string effort, bool taskScheduler,
-        string instructions = null, string[] labels = null) @safe
+        string instructions = null, string[] labels = null,
+        Nullable!int maxParallelTasks = defaultMaxParallelTasks) @safe
     {
         this.id = id;
         this.name = name;
@@ -353,6 +364,7 @@ class Agent
         this.taskScheduler = taskScheduler;
         this.instructions = instructions;
         this.labels = labels;
+        this.maxParallelTasks = maxParallelTasks;
     }
 }
 
