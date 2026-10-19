@@ -407,7 +407,7 @@ interface ITaskRepository
     bool recordSchedulingFailure(UUID id, UUID schedulerId);
 
     /**
-     * Adds to a task's notes that its scheduler found no agent for it.
+     * Adds to a task's notes that its scheduler found no agent for its next step.
      *
      * Params:
      *   id = The task's id.

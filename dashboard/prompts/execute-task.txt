@@ -26,7 +26,8 @@ agents working on it. Follow them while you work on this task:
 [end]
 
 These are the project's lanes, in the order they appear on the board, each with its ID and
-name. A lane marked "done" is one whose tasks count as done, which closes them.
+name. A lane marked "done" is one whose tasks count as done, which closes them. The lane the
+task is in says which step of the work is yours, for example reviewing it in "To review":
 
 <lanes>
 <lane list>
@@ -51,15 +52,12 @@ Do the work the description asks for. No one can answer questions while you work
 description leaves something open, make a reasonable choice and say in your result what you
 assumed. But do not plow ahead on a guess that may well be the wrong thing: when the
 description is too unclear to tell what the work is, or you cannot do it at all, do not do it.
-Choose the lane the task is in as its next lane, so that it stays there, and say in your
-result what is missing or what went wrong, and what you need to be able to work on it.
+Say plainly in your result that you did not do it, what is missing or what went wrong, and
+what you need to be able to work on it.
 
-When the work is finished, choose the lane the task should go to next: the one that fits what
-should happen to it now, for example "Done", or "To review" when the board has such a lane and
-the work should be checked before it counts as done. Choose it from the list above by the
-lanes' names and order, rather than by these examples, since every project names its lanes
-differently. Do not move the task yourself, at any point: give the lane in your answer, and it
-is moved for you.
+Do not move the task, at any point, nor choose where it goes: once you have answered, the task
+scheduler reads your result and decides the task's next step, such as a review by another
+agent, or closing it.
 
 When the description does not say where the work should end up, for example because it only
 asks to be given something, or does not say which files in your working directory to change,
@@ -70,28 +68,23 @@ If the task is too big to do well as one, and its work falls into parts that do 
 each other, split it up instead of doing it. Split it only into parts that can each be done as
 one. Add a task for each part, with a description that stands on its own, to the first lane
 in the list, such as "To do". The task scheduler then gives each new task to an agent and moves
-it on, to a lane such as "Doing", and they are all worked on straight away, side by side. Then
-close this task by choosing a lane marked "done" as its next lane, the one nearest the end of
-the board when there are several. If no lane is marked "done", choose the lane the task is in,
-so that it stays there. When one part needs another to be finished first, keep the task whole
-and do it yourself, in order.
+it on, to a lane such as "Doing", and they are all worked on straight away, side by side. Your
+result then says that this task was split up, which closes it. When one part needs another to
+be finished first, keep the task whole and do it yourself, in order.
 
-Your answer is read by the server, not by a person. When you are finished, answer with a
-single JSON object, and nothing else: no explanation, and no code fence or other markup
-around it. It holds:
-- next-lane-id: the ID of the lane the task should go to next, exactly as listed above.
-- result: where the work itself goes in the result, as described above, the work itself, in
-  full. Otherwise a brief summary of what you did, and anything left undone or that someone
-  should know. When you split the task, say plainly that it was split up, and into which
-  tasks. The result is added to the task's notes for you, so do not add it there yourself.
-  Write it in plain text, without Markdown or any other markup: notes show text as it is, so
-  asterisks, backticks and pound signs would appear literally. Since it is a JSON string,
-  escape quotes and line breaks in it as JSON requires, as \" and \n.
+When you are finished, answer with your result, and nothing else: no greeting, no preamble such
+as "Here is the joke", and no closing remarks. Where the work itself goes in the result, as
+described above, the result is the work itself, in full. Otherwise it is a brief summary of what
+you did, and anything left undone or that someone should know. When you split the task, say
+plainly that it was split up, and into which tasks. Your answer is added to the task's notes as
+it is, so do not add it there yourself. Write it in plain text, without Markdown or any other
+markup: notes show text as it is, so asterisks, backticks and pound signs would appear literally.
 
 For example:
 
-{"next-lane-id": "3f9c2a71-8e4b-4d0a-9b6e-1c5d7f2a8e90", "result": "Added a search field to the board's topbar that filters the cards by their description as you type. Searching across projects is not done yet, since the API has no call for it."}
+Added a search field to the board's topbar that filters the cards by their description as you type. Searching across projects is not done yet, since the API has no call for it.
 
 Or, for a task asking for a short poem:
 
-{"next-lane-id": "3f9c2a71-8e4b-4d0a-9b6e-1c5d7f2a8e90", "result": "The cards move left to right,\nfrom \"To do\" into the light."}
+The cards move left to right,
+from "To do" into the light.

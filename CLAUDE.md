@@ -36,7 +36,7 @@ project runs in its own scratch space with the working directory open to it, so 
 after the slug changes. With no working directory, agents work in their scratch space. A project
 whose working directory has an `index.html` has an "Open project" button in the topbar, which opens
 it in a new tab, served under `/working-dirs/<slug>/`; it appears once a task is moved after the page
-was made, such as by the agent that made it moving its task on. Every write
+was made, such as by the task scheduler moving on the task whose agent made it. Every write
 through the API is reported to the open UIs over a WebSocket
 (`/api/events/v1`), as an event and the ids it concerns, and the UI fetches what changed, so what
 an agent does shows on screen straight away (see `docs/event-stream.md`).

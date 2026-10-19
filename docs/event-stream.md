@@ -45,8 +45,9 @@ A project whose working directory has an `index.html` at its top can be opened: 
 under `/working-dirs/<slug>/`. An agent writes that file straight into the directory, not
 through the API, so no write reports it. Nothing watches the directory either. Instead,
 `IndexPages` in `workingdir.d` looks after each move of a task, whoever made it: the
-`moveTask` call, a `PUT` that changes the task's lane, and the task scheduler and executor moving
-a task on. An agent moves its task on once it is done, so that is the moment its page appears.
+`moveTask` call, a `PUT` that changes the task's lane, and the task scheduler moving a task on.
+Once an agent has done its work, the scheduler moves the task on to its next step, so that is the
+moment its page appears.
 When the project has gained or lost its page since the last look, a `project-changed` is sent,
 and the UI fetches the project list, which says so. A project not looked at yet since the server
 started counts as having no page, so the first look at one that has a page reports it, though

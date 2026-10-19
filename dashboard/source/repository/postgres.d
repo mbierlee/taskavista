@@ -729,7 +729,7 @@ class PostgresTaskRepository : ITaskRepository
 
     bool recordNoAgentFound(UUID id, UUID schedulerId)
     {
-        return recordAgentOutcome(id, schedulerId, `Not assigned, since "%s" found no agent for it`);
+        return recordAgentOutcome(id, schedulerId, `Left where it is, since "%s" found no agent for its next step`);
     }
 
     bool recordExecutionFailure(UUID id, UUID agentId)

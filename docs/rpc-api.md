@@ -77,7 +77,7 @@ project is not refused, since resuming it is all the task then waits for.
 
 A task is also handed back without the call when it is moved to another lane, by `moveTask` or a
 `PUT`, while its agent status is terminal: one that nothing changes until something hands the task
-back: `declined` by the scheduler, and `done` or `failed` by the `TaskExecutor`. A move is how a person says a task is to be worked on
+back: `declined` or `done` by the scheduler, and `failed` by the `TaskExecutor`. A move is how a person says a task is to be worked on
 again, and its new lane may be what makes it fit an agent. The same rules apply, except that a
 move that breaks one is not refused, it just does not reschedule. The terminal statuses are
 listed in `terminalAgentStatuses` in `model.d`, the one place to add another.

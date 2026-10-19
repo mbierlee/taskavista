@@ -8,6 +8,7 @@ import vibe.core.log : logError, logInfo;
 import vibe.data.json : Json, parseJsonString, serializeToJson;
 import poodinis : Inject;
 
+import std.algorithm.comparison : among;
 import std.algorithm.iteration : filter, map;
 import std.algorithm.searching : canFind, find;
 import std.array : array, join;
@@ -568,10 +569,11 @@ class AgentChat
 private enum schedulerInterval = 5.seconds;
 
 /**
- * Hands the tasks of the projects managed by AI agents to their agents, from a loop that
+ * Decides the next step of the tasks of the projects managed by AI agents, from a loop that
  * keeps running in the background: each task to be scheduled, with no agent and outside a done
- * lane, is moved on to the lane the task scheduler agent chooses for it and assigned the agent
- * it chooses, or declined when there is none.
+ * lane, whether new or just worked on, is moved on to the lane the task scheduler agent chooses
+ * for it and assigned the agent it chooses, closed in a done lane when the scheduler finds it
+ * finished, or declined when there is no agent for it.
  */
 class TaskScheduler
 {
@@ -693,9 +695,9 @@ class TaskScheduler
     }
 
     /**
-     * Schedules a task claimed for scheduling, and marks it scheduled or declined. A task that
-     * gets no agent is declined, so that it is not asked about every round, which would cost
-     * an agent call and add a note each time.
+     * Schedules a task claimed for scheduling, and marks it scheduled, done or declined. A task
+     * that gets no agent is declined, so that it is not asked about every round, which would
+     * cost an agent call and add a note each time.
      */
     private void scheduleClaimed(Task task) nothrow
     {
@@ -706,8 +708,7 @@ class TaskScheduler
 
         try
         {
-            const status = assign(task) ? AgentStatus.scheduled : AgentStatus.declined;
-            tasks.changeAgentStatus(task.id, AgentStatus.scheduling, status);
+            tasks.changeAgentStatus(task.id, AgentStatus.scheduling, assign(task));
         }
         catch (Exception e)
         {
@@ -727,25 +728,26 @@ class TaskScheduler
     }
 
     /**
-     * Has the scheduler agent choose an agent for the task and the lane it moves to as that
-     * agent starts on it, then moves the task and assigns the agent. Waits on the agent, which
-     * takes a while.
+     * Has the scheduler agent choose the task's next step, from its notes: an agent for it and
+     * the lane it moves to as that agent starts on it, or a done lane that closes it. Then moves
+     * the task, and assigns the agent. Waits on the agent, which takes a while.
      *
-     * Returns: Whether the task was assigned to an agent.
+     * Returns: The task's agent status from here: scheduled when it was assigned to an agent,
+     *   done when it was closed, and declined otherwise.
      */
-    private bool assign(Task task)
+    private AgentStatus assign(Task task)
     {
         // The lane or its project may be gone since the tasks were read.
         auto lane = lanes.find(task.laneId);
         if (lane.isNull)
         {
-            return false;
+            return AgentStatus.declined;
         }
 
         auto project = projects.find(lane.get.projectId);
         if (project.isNull)
         {
-            return false;
+            return AgentStatus.declined;
         }
 
         auto all = agents.all();
@@ -754,21 +756,24 @@ class TaskScheduler
         {
             logInfo("Task %s is not assigned, since there is no task scheduler agent.", task.id);
             noted(tasks.recordNoScheduler(task.id), task.id, project.get.id);
-            return false;
+            return AgentStatus.declined;
         }
 
         auto board = lanes.ofProject(project.get.id);
+        auto notes = tasks.notes(task.id);
         string[string] placeholders = [
             "<project name>": project.get.name,
             "<project id>": project.get.id.toString,
             "<project description>": project.get.description.strip,
             "<lane name>": lane.get.name,
             "<task description>": task.description.strip,
+            "<note list>": noteList(notes),
             "<agent list>": agentList(all),
             "<lane list>": laneList(board)
         ];
 
         const conditions = [
+            "notes": notes.length > 0,
             "project-description": project.get.description.strip.length > 0
         ];
 
@@ -788,27 +793,32 @@ class TaskScheduler
         {
             logError("Scheduler %s failed on task %s: %s", scheduler.name, task.id, e.msg);
             noted(tasks.recordSchedulingFailure(task.id, scheduler.id), task.id, project.get.id);
-            return false;
+            return AgentStatus.declined;
         }
 
         auto schedule = readSchedule(answer, all, board);
         if (schedule.isNull)
         {
-            logError("Scheduler %s answered task %s with \"%s\", which is not an agent and a lane it could choose.",
+            logError("Scheduler %s answered task %s with \"%s\", which is not a next step it could choose.",
                 scheduler.name, task.id, answer);
             noted(tasks.recordSchedulingFailure(task.id, scheduler.id), task.id, project.get.id);
-            return false;
+            return AgentStatus.declined;
         }
 
-        if (schedule.get.agentId.isNull)
+        if (schedule.get.laneId.isNull)
         {
             noted(tasks.recordNoAgentFound(task.id, scheduler.id), task.id, project.get.id);
-            return false;
+            return AgentStatus.declined;
         }
 
-        moveOn(tasks, events, indexPages, task.id, lane.get.id, schedule.get.laneId, project.get.id);
+        moveOn(tasks, events, indexPages, task.id, lane.get.id, schedule.get.laneId.get, project.get.id);
+        if (schedule.get.agentId.isNull)
+        {
+            return AgentStatus.done;
+        }
+
         noted(tasks.assignAiAgent(task.id, schedule.get.agentId), task.id, project.get.id);
-        return true;
+        return AgentStatus.scheduled;
     }
 
     /// Reports a note on the task, when one was added.
@@ -827,8 +837,9 @@ private enum executorInterval = 5.seconds;
 /**
  * Has the agents work on the tasks assigned to them, from a loop that keeps running in the
  * background: each scheduled task outside a done lane, of a project managed by AI, is worked on
- * by its agent, then moved on to the lane the agent chooses, with the agent's result in its
- * notes. A task is done when its agent has answered, and failed when it could not.
+ * by its agent, with the agent's result in its notes. A task its agent has answered is handed
+ * back to the task scheduler, which decides its next step from that result, and one whose agent
+ * could not answer is failed.
  */
 class TaskExecutor
 {
@@ -841,7 +852,6 @@ class TaskExecutor
     private RuntimeExecutor executor;
     private IEventPublisher events;
     private ProjectWorkingDirs workingDirs;
-    private IndexPages indexPages;
     /**
      * How many tasks each agent is working on now, by the agent's id. The tasks all run on one
      * thread, so no lock is needed.
@@ -850,7 +860,7 @@ class TaskExecutor
 
     this(IAgentRepository agents, ITaskRepository tasks, ILaneRepository lanes, IProjectRepository projects,
         PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events,
-        ProjectWorkingDirs workingDirs, IndexPages indexPages)
+        ProjectWorkingDirs workingDirs)
     {
         this.agents = agents;
         this.tasks = tasks;
@@ -861,7 +871,6 @@ class TaskExecutor
         this.executor = executor;
         this.events = events;
         this.workingDirs = workingDirs;
-        this.indexPages = indexPages;
     }
 
     /**
@@ -953,9 +962,9 @@ class TaskExecutor
     }
 
     /**
-     * Has the agent work on a task claimed for it, and marks the task done or failed. A failed
-     * task is not taken up again by itself, since trying again every round would cost an agent
-     * call and add a note each time.
+     * Has the agent work on a task claimed for it, and marks the task to be scheduled or failed.
+     * A failed task is not taken up again by itself, since trying again every round would cost
+     * an agent call and add a note each time.
      */
     private void executeClaimed(Task task, UUID agentId) nothrow
     {
@@ -969,7 +978,7 @@ class TaskExecutor
 
         try
         {
-            const status = execute(task, agentId) ? AgentStatus.done : AgentStatus.failed;
+            const status = execute(task, agentId) ? AgentStatus.toBeScheduled : AgentStatus.failed;
             tasks.changeAgentStatus(task.id, AgentStatus.executing, status);
         }
         catch (Exception e)
@@ -990,8 +999,7 @@ class TaskExecutor
 
     /**
      * Has the agent work on the task with the execute prompt, then adds its result to the
-     * task's notes, moves the task on to the lane it chose, and takes the task off it. Waits
-     * on the agent, which can take a long while.
+     * task's notes and takes the task off it. Waits on the agent, which can take a long while.
      *
      * Returns: Whether the agent answered with a result, rather than failing; a failure is
      *   noted on the task.
@@ -1074,21 +1082,17 @@ class TaskExecutor
             return false;
         }
 
-        auto result = readTaskResult(answer, board);
-        if (result.isNull)
+        // The answer is the result as it is, so an empty one is all that can be told from a failure.
+        auto result = answer.strip;
+        if (result.length == 0)
         {
-            logError("Agent %s answered task %s with \"%s\", which is not a lane and a result.",
-                agent.get.name, task.id, answer);
+            logError("Agent %s answered task %s with nothing.", agent.get.name, task.id);
             noted(tasks.recordExecutionFailure(task.id, agent.get.id), task.id, project.get.id);
             return false;
         }
 
-        if (result.get.text.length > 0)
-        {
-            noted(tasks.addNote(task.id, result.get.text), task.id, project.get.id);
-        }
+        noted(tasks.addNote(task.id, result), task.id, project.get.id);
 
-        moveOn(tasks, events, indexPages, task.id, lane.get.id, result.get.laneId, project.get.id);
         tasks.assignAiAgent(task.id, Nullable!UUID.init);
         return true;
     }
@@ -1104,19 +1108,17 @@ class TaskExecutor
 }
 
 /**
- * Asks an agent which agent should work on the task, given the agents there are,
- * and which lane the task moves to as that agent starts on it.
+ * Asks an agent for a task's next step: which agent should work on it, given the
+ * agents there are, and which lane it moves to as that agent starts on it, or
+ * the done lane that closes it.
  */
 private enum schedulePrompt = import("schedule-task.txt");
 
-/**
- * Asks the agent a task is assigned to to work on it, and which lane it goes
- * to next.
- */
+/// Asks the agent a task is assigned to to work on it, and what came of it.
 private enum executeTaskPrompt = import("execute-task.txt");
 
 /**
- * Moves the task to the bottom of the lane an agent chose. A task that left
+ * Moves the task to the bottom of the lane the scheduler chose. A task that left
  * its lane while the agent was at work was moved by someone else, whose move
  * is kept.
  */
@@ -1182,12 +1184,13 @@ private string describeAssignable(Agent agent)
 
 /**
  * What the scheduler chose for a task: an agent and the lane the task moves
- * to, or neither when no agent can do it.
+ * to, a done lane with no agent when it is closed, or neither when it is left
+ * where it is.
  */
 private struct Schedule
 {
     Nullable!UUID agentId;
-    UUID laneId;
+    Nullable!UUID laneId;
 }
 
 /**
@@ -1195,14 +1198,15 @@ private struct Schedule
  *
  * Params:
  *   answer = The scheduler's answer, a JSON object with an `agent-id` and a
- *     `next-lane-id`.
+ *     `next-lane-id`, either of which may be null.
  *   all = Every agent, of which only the ones that are not task schedulers
  *     can be chosen.
  *   board = The lanes of the task's project, the only ones it can move to.
  *
- * Returns: The schedule, with no agent when the answer gives null for one, or
- *   an empty Nullable when the answer names an agent or a lane that cannot be
- *   chosen, or is not such an object at all.
+ * Returns: The schedule, or an empty Nullable when the answer names an agent
+ *   or a lane that cannot be chosen, pairs an agent with a done lane or with no
+ *   lane, closes the task in a lane that is not done, or is not such an object
+ *   at all.
  */
 private Nullable!Schedule readSchedule(string answer, Agent[] all, Lane[] board)
 {
@@ -1213,33 +1217,47 @@ private Nullable!Schedule readSchedule(string answer, Agent[] all, Lane[] board)
     }
 
     auto agentId = "agent-id" in json.get;
-    if (agentId is null)
+    auto laneId = "next-lane-id" in json.get;
+    if (agentId is null || laneId is null || !agentId.type.among(Json.Type.string, Json.Type.null_)
+        || !laneId.type.among(Json.Type.string, Json.Type.null_))
     {
         return Nullable!Schedule.init;
     }
 
-    if (agentId.type == Json.Type.null_)
+    if (agentId.type == Json.Type.null_ && laneId.type == Json.Type.null_)
     {
         return Schedule().nullable;
     }
 
-    auto laneId = "next-lane-id" in json.get;
-    if (agentId.type != Json.Type.string || laneId is null || laneId.type != Json.Type.string)
+    if (laneId.type == Json.Type.null_)
     {
         return Nullable!Schedule.init;
     }
 
     // IDs are compared as text, since an agent may change their case.
-    auto agents = all.find!(agent => !agent.taskScheduler && agent.id.toString == agentId
-            .get!string.strip
-            .toLower);
     auto lanes = board.find!(lane => lane.id.toString == laneId.get!string.strip.toLower);
-    if (agents.length == 0 || lanes.length == 0)
+    if (lanes.length == 0)
     {
         return Nullable!Schedule.init;
     }
 
-    return Schedule(agents[0].id.nullable, lanes[0].id).nullable;
+    // An agent is only started on a task outside a done lane, so a done lane closes the task
+    // and is the only one it can be moved to without an agent.
+    if (agentId.type == Json.Type.null_)
+    {
+        return lanes[0].marksDone ? Schedule(Nullable!UUID.init, lanes[0].id.nullable).nullable
+            : Nullable!Schedule.init;
+    }
+
+    auto agents = all.find!(agent => !agent.taskScheduler && agent.id.toString == agentId
+            .get!string.strip
+            .toLower);
+    if (agents.length == 0 || lanes[0].marksDone)
+    {
+        return Nullable!Schedule.init;
+    }
+
+    return Schedule(agents[0].id.nullable, lanes[0].id.nullable).nullable;
 }
 
 unittest
@@ -1251,16 +1269,25 @@ unittest
     auto scheduler = new Agent(randomUUID, "Scheduler", "claude-code", "sonnet", "default", true, "", [
         ]);
     auto doing = new Lane(randomUUID, randomUUID, "Doing", 1, "#000000", false);
+    auto done = new Lane(randomUUID, randomUUID, "Done", 2, "#000000", true);
     auto all = [writer, scheduler];
-    auto board = [doing];
+    auto board = [doing, done];
 
     auto chosen = readSchedule(format("```json\n{\"agent-id\": \"%s\", \"next-lane-id\": \" %s \"}\n```",
             writer.id.toString.toUpper, doing.id), all, board);
     assert(!chosen.isNull);
-    assert(chosen.get.agentId.get == writer.id && chosen.get.laneId == doing.id);
+    assert(chosen.get.agentId.get == writer.id && chosen.get.laneId.get == doing.id);
 
     auto none = readSchedule(`{"agent-id": null, "next-lane-id": null}`, all, board);
-    assert(!none.isNull && none.get.agentId.isNull);
+    assert(!none.isNull && none.get.agentId.isNull && none.get.laneId.isNull);
+
+    auto closed = readSchedule(format(`{"agent-id": null, "next-lane-id": "%s"}`, done.id), all, board);
+    assert(!closed.isNull && closed.get.agentId.isNull && closed.get.laneId.get == done.id);
+
+    assert(readSchedule(format(`{"agent-id": null, "next-lane-id": "%s"}`, doing.id), all, board).isNull);
+    assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": "%s"}`, writer.id, done.id), all, board)
+            .isNull);
+    assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": null}`, writer.id), all, board).isNull);
 
     assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": "%s"}`, scheduler.id, doing.id), all, board)
             .isNull);
@@ -1268,71 +1295,6 @@ unittest
             .isNull);
     assert(readSchedule(format(`{"agent-id": "%s"}`, writer.id), all, board).isNull);
     assert(readSchedule(writer.id.toString, all, board).isNull);
-}
-
-/**
- * What an agent did with a task: the lane the task goes to next, and the
- * result that goes in its notes.
- */
-private struct TaskResult
-{
-    UUID laneId;
-    string text;
-}
-
-/**
- * Reads an agent's answer to the execute-task prompt.
- *
- * Params:
- *   answer = The agent's answer, a JSON object with a `next-lane-id` and a
- *     `result`.
- *   board = The lanes of the task's project, the only ones it can move to.
- *
- * Returns: The result, with its text stripped, or an empty Nullable when the
- *   answer names a lane that is not on the board, or is not such an object.
- */
-private Nullable!TaskResult readTaskResult(string answer, Lane[] board)
-{
-    auto json = answerObject(answer);
-    if (json.isNull)
-    {
-        return Nullable!TaskResult.init;
-    }
-
-    auto laneId = "next-lane-id" in json.get;
-    auto text = "result" in json.get;
-    if (laneId is null || laneId.type != Json.Type.string || text is null || text.type != Json
-        .Type.string)
-    {
-        return Nullable!TaskResult.init;
-    }
-
-    // Compared as text, since an agent may change the IDs' case.
-    auto lanes = board.find!(lane => lane.id.toString == laneId.get!string.strip.toLower);
-    if (lanes.length == 0)
-    {
-        return Nullable!TaskResult.init;
-    }
-
-    return TaskResult(lanes[0].id, text.get!string.strip).nullable;
-}
-
-unittest
-{
-    auto done = new Lane(randomUUID, randomUUID, "Done", 2, "#000000", true);
-    auto board = [done];
-
-    auto result = readTaskResult(format("```json\n{\"next-lane-id\": \"%s\", \"result\": \" Why did the database"
-            ~ " break up? Too many relationships. \"}\n```", done.id), board);
-    assert(!result.isNull);
-    assert(result.get.laneId == done.id);
-    assert(result.get.text == "Why did the database break up? Too many relationships.");
-
-    assert(readTaskResult(format(`{"next-lane-id": "%s", "result": "Done."}`, randomUUID), board)
-            .isNull);
-    assert(readTaskResult(format(`{"next-lane-id": "%s"}`, done.id), board).isNull);
-    assert(readTaskResult(format(`{"next-lane-id": "%s", "result": null}`, done.id), board).isNull);
-    assert(readTaskResult("Done.", board).isNull);
 }
 
 /// Asks an agent to draft a new agent from a person's description of it.
