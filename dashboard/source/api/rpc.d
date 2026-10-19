@@ -66,6 +66,11 @@ struct RescheduleTaskResult
 {
 }
 
+/// Nothing, since the caller knows the lane is now empty.
+struct ClearLaneResult
+{
+}
+
 /// The agent's answer to a chat message, and the session the chat is in.
 struct SendChatMessageResult
 {
@@ -93,6 +98,10 @@ interface RpcApi
      */
     @method(HTTPMethod.POST) @path("rescheduleTask")
     RescheduleTaskResult rescheduleTask(UUID taskId) @safe;
+
+    /// Deletes every task in the lane at once, such as the finished tasks of a done lane.
+    @method(HTTPMethod.POST) @path("clearLane")
+    ClearLaneResult clearLane(UUID laneId) @safe;
 
     /**
      * Creates the project with these lanes, in this order, or nothing at all.
@@ -179,6 +188,17 @@ class RpcController : RpcApi
         }
 
         return RescheduleTaskResult();
+    }
+
+    override ClearLaneResult clearLane(UUID laneId) @trusted
+    {
+        auto cleared = tasks.clear(laneId);
+        if (cleared.isFailure)
+        {
+            throw toHTTPError(cleared.error, null);
+        }
+
+        return ClearLaneResult();
     }
 
     override CreateProjectResult createProject(string name, string description,

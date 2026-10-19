@@ -211,6 +211,51 @@ paths:
                   value: { statusMessage: An agent is working on the task right now. }
         "500": { $ref: "#/components/responses/ServerError" }
 
+  /clearLane:
+    post:
+      tags: [Tasks]
+      operationId: clearLane
+      summary: Delete every task in a lane
+      description: |
+        Deletes all of the lane's tasks, with their notes, at once: either all of them are deleted
+        or none. The lane itself stays, as do the tasks of every other lane. Any lane can be
+        cleared, not only a done one, and clearing an empty lane is not an error.
+
+        The result is an empty object.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [laneId]
+              properties:
+                laneId:
+                  $ref: "#/components/schemas/Uuid"
+                  description: The lane to empty.
+            example: { laneId: 05bf691f-6820-4c77-8b4d-71b6690aeaad }
+      responses:
+        "200":
+          description: The lane has no tasks.
+          content:
+            application/json:
+              schema:
+                type: object
+              example: {}
+        "400":
+          description: "`laneId` missing or not a UUID."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: The argument laneId is missing. }
+        "404":
+          description: No lane has `laneId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: No lane has that id. }
+        "500": { $ref: "#/components/responses/ServerError" }
+
   /createProject:
     post:
       tags: [Projects]

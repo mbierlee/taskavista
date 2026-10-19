@@ -1,15 +1,17 @@
-/* <tv-lane lane-id="todo" name="To do" color="#8fa6ff" can-add> ...cards... </tv-lane>
+/* <tv-lane lane-id="todo" name="To do" color="#8fa6ff" can-add marks-done> ...cards... </tv-lane>
 
    A lane owns everything that is not board data: its heading, the task count,
    the drop slot and the "add a task" composer. The board only ever supplies
    <tv-card> children, says where the drop slot goes, and listens for the
    events below. `can-add` exists because a project's rule may limit new
-   tasks to its first lane.
+   tasks to its first lane. A lane whose tasks are done (`marks-done`) has a
+   "Clear" button in its heading, shown while it holds any cards.
 
    Events (all bubbling and composed):
      task-add     detail { lane, description }  a description was submitted in the composer
      lane-compose detail { lane, open }         the composer opened or closed
-     lane-change  detail { lane, count }        the cards in the lane changed */
+     lane-change  detail { lane, count }        the cards in the lane changed
+     lane-clear   detail { lane }               "Clear" was confirmed */
 
 import { attachTemplate, loadTemplate } from "./template.js";
 import "./tv-text-box.js";
@@ -22,6 +24,7 @@ export class TvLane extends HTMLElement {
   #slot;
   #name;
   #count;
+  #clear;
   #add;
   #compose;
 
@@ -40,6 +43,7 @@ export class TvLane extends HTMLElement {
     this.#slot = root.querySelector("slot");
     this.#name = root.querySelector(".name");
     this.#count = root.querySelector(".count");
+    this.#clear = root.querySelector(".clear");
     this.#add = root.querySelector(".add");
     this.#compose = root.querySelector(".compose");
 
@@ -47,6 +51,7 @@ export class TvLane extends HTMLElement {
        keep a separate tally in sync. */
     this.#slot.addEventListener("slotchange", () => this.#renderCount());
 
+    this.#clear.addEventListener("click", () => this.#onClear());
     this.#add.addEventListener("click", () => this.startComposing());
     /* The composer stays open on Enter, so several tasks can be added in a
        row. */
@@ -141,6 +146,19 @@ export class TvLane extends HTMLElement {
     if (description) this.#emit("task-add", { description });
   }
 
+  #onClear() {
+    const count = this.cards.length;
+    const name = this.getAttribute("name") ?? "";
+    if (
+      !confirm(
+        `Delete ${count === 1 ? "the 1 task" : `all ${count} tasks`} in “${name}”? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    this.#emit("lane-clear", {});
+  }
+
   #emit(type, detail) {
     this.dispatchEvent(
       new CustomEvent(type, {
@@ -163,6 +181,7 @@ export class TvLane extends HTMLElement {
      left for it to discover. */
   #renderCount() {
     const count = this.cards.length;
+    this.#clear.hidden = count === 0;
     if (this.#count.textContent === String(count)) return;
     this.#count.textContent = count;
     this.#emit("lane-change", { count });

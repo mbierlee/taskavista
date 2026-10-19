@@ -858,6 +858,27 @@ class TaskService
         events.task(Event.deleted, id, projectId.get, task.get.laneId, UUID.init);
         return taskSuccess();
     }
+
+    /**
+     * Deletes every task of a lane at once, such as the finished tasks of a done lane.
+     *
+     * Params:
+     *   laneId = The lane's id.
+     *
+     * Returns: Success, or a failure: `LaneNotFoundError`.
+     */
+    OperationResult!ITaskError clear(UUID laneId)
+    {
+        auto lane = lanes.find(laneId);
+        if (lane.isNull)
+        {
+            return taskFailure(new LaneNotFoundError);
+        }
+
+        repository.removeOfLane(laneId);
+        events.lane(Event.cleared, laneId, lane.get.projectId);
+        return taskSuccess();
+    }
 }
 
 /// Reads the runtimes and models, which are fixed data and cannot be written.
@@ -1946,6 +1967,13 @@ version (unittest)
             database.tasks = database.tasks.filter!(task => task.id != id).array;
             return database.tasks.length < before;
         }
+
+        ulong removeOfLane(UUID laneId)
+        {
+            const before = database.tasks.length;
+            database.tasks = database.tasks.filter!(task => task.laneId != laneId).array;
+            return before - database.tasks.length;
+        }
     }
 
     /// An IAgentRepository over a MockDatabase.
@@ -2386,6 +2414,28 @@ unittest
     assert(cast(ProjectNotManagedByAiError) service.reschedule(storedTask(database, ideas.id, "Sum it", 0).id).error);
     assert(cast(TaskNotFoundError) service.reschedule(randomUUID).error);
     assert(events.notes == [declined.id]);
+}
+
+// TaskService: clearing a lane deletes its tasks and no others.
+unittest
+{
+    auto database = new MockDatabase;
+    auto events = new MockEventPublisher;
+    auto service = taskServiceOver(database, events);
+    auto finance = storedProject(database, "Q3 finance");
+    auto toDo = storedLane(database, finance.id, "To do", 0);
+    auto done = storedLane(database, finance.id, "Done", 1);
+    auto report = storedTask(database, toDo.id, "Write the report", 0);
+    storedTask(database, done.id, "Send the invoice", 0);
+    storedTask(database, done.id, "Pay the rent", 1);
+
+    assert(service.clear(done.id).isSuccessful);
+    assert(database.tasks == [report]);
+    assert(service.clear(done.id).isSuccessful);
+    assert(cast(LaneNotFoundError) service.clear(randomUUID).error);
+
+    assert(events.lanes == [Published(Event.cleared, done.id), Published(Event.cleared, done.id)]);
+    assert(events.tasks.length == 0);
 }
 
 // TaskService: moving a task the agents are done with to another lane hands it back to the task scheduler.

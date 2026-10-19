@@ -29,6 +29,18 @@
     color: var(--lane-color, var(--accent));
   }
 
+  /* Sized down from the shared button to sit in the heading without
+     making it taller. */
+  .clear {
+    margin: -4px 0 -4px auto;
+    gap: 5px;
+    padding: 3px 8px;
+    font-size: 12px;
+  }
+  :host(:not([marks-done])) .clear {
+    display: none;
+  }
+
   .cards {
     display: flex;
     flex-direction: column;
@@ -58,6 +70,27 @@
   <span class="dot"></span>
   <span class="name"></span>
   <span class="count">0</span>
+  <button
+    class="btn danger-subtle clear"
+    type="button"
+    title="Delete all done tasks"
+    hidden
+  >
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"></path>
+    </svg>
+    Clear
+  </button>
 </div>
 
 <div class="cards">

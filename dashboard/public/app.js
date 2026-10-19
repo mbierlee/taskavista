@@ -157,6 +157,7 @@ function renderLane(lane, canAdd) {
   el.setAttribute("lane-id", lane.id);
   el.setAttribute("name", lane.name);
   el.setAttribute("color", lane.color);
+  el.toggleAttribute("marks-done", lane.marksDone);
   el.canAdd = canAdd;
   return el;
 }
@@ -362,6 +363,33 @@ async function deleteTask(taskId) {
   if (openTaskId === taskId) {
     detailsEl.close();
   }
+}
+
+/* On the server first, then on screen, as a single delete would be. The
+   cards are removed rather than the lane re-rendered, and fade out together. */
+async function clearLane(laneId) {
+  const shown = board;
+  try {
+    await queueWrite(() =>
+      sendJson("POST", "/api/rpc/v1/clearLane", { laneId }),
+    );
+  } catch (error) {
+    console.error(`Could not clear the lane ${laneId}:`, error);
+    return;
+  }
+
+  const entry = board === shown ? board.lanes.get(laneId) : undefined;
+  if (!entry) {
+    return;
+  }
+  const open = openTaskSnapshot();
+  entry.tasks = [];
+  boardEl.animateMoves(() => {
+    for (const card of entry.el.cards) {
+      card.remove();
+    }
+  });
+  showOpenTask(open);
 }
 
 /* In the board's copy and on the card. */
@@ -996,7 +1024,8 @@ function listenForChanges() {
 }
 
 /* A change to a project can change its lanes as well, as saving its
-   settings does. */
+   settings does. A cleared lane is one event for all of its tasks, so only
+   that lane's tasks are fetched again. */
 function applyChange(change) {
   const resource = change.type.slice(0, change.type.indexOf("-"));
   const onBoard =
@@ -1005,6 +1034,8 @@ function applyChange(change) {
     changeBoard((shown) =>
       refreshTask(shown, [change.fromLaneId, change.toLaneId]),
     );
+  } else if (change.type === "lane-cleared" && onBoard) {
+    changeBoard((shown) => refreshTask(shown, [change.laneId]));
   } else if (resource === "lane" && onBoard) {
     changeBoard(refreshLanes);
   } else if (resource === "project") {
@@ -1560,6 +1591,10 @@ boardEl.addEventListener("task-add", (event) => {
 boardEl.addEventListener("task-move", (event) => {
   const { taskId, lane, before } = event.detail;
   moveTask(taskId, lane, before);
+});
+
+boardEl.addEventListener("lane-clear", (event) => {
+  clearLane(event.detail.lane);
 });
 
 boardEl.addEventListener("task-open", (event) => {

@@ -829,6 +829,17 @@ class PostgresTaskRepository : ITaskRepository
             return connection.execParams(query).length > 0;
         });
     }
+
+    ulong removeOfLane(UUID laneId)
+    {
+        QueryParams query;
+        query.sqlCommand = "delete from tasks where lane_id = $1 returning id";
+        query.argsVariadic(laneId);
+
+        return client.pickConnection((scope connection) {
+            return cast(ulong) connection.execParams(query).length;
+        });
+    }
 }
 
 /* The task_notes rows, written in the same transaction as the change.

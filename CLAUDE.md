@@ -15,7 +15,8 @@ with operations that are not plain CRUD, such as moving a task, in the RPC API (
 why the APIs are shaped as they are, and how their errors are answered, is in `docs/rest-api.md`
 and `docs/rpc-api.md`),
 and the board shows each task as a `tv-card`. Cards can be dragged within a lane or to another
-lane, and tasks added from a lane's "+ Add a task", both saved through the API. Clicking a card
+lane, and tasks added from a lane's "+ Add a task", both saved through the API. A lane that marks
+tasks done has a "Clear" button that, once confirmed, deletes all of its tasks in one RPC call. Clicking a card
 opens the task details panel over the board, with the task's lane (which it can be moved out of),
 its description, which can be edited there, and its notes, and a button that deletes the task. A project's
 name, description, add-task rule and lanes are edited on its settings screen (`/projects/:slug/settings`),

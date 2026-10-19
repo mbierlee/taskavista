@@ -86,6 +86,14 @@ The result is an empty object: what the call changed is not served by the API, a
 it shows up later, in the task's notes. The call adds a note of its own, "Handed back to the task
 scheduler", so that a person reading the notes can tell why the task was scheduled twice.
 
+## Clearing a lane
+
+`clearLane` is the board's "Clear" on a done lane, which gets rid of the finished tasks in one
+statement rather than a `DELETE` per task. The server does not limit it to done lanes: that the
+button shows only there is the UI's choice, and a person may as well ask an agent to empty any
+lane. Its result is an empty object, since the caller knows the lane is now empty. It reports a
+single `lane-cleared` rather than an event per task (see `docs/event-stream.md`).
+
 ## Agent chats
 
 `sendChatMessage` starts a session on the agent's runtime (`AgentChat` in `agent.d`). Its system

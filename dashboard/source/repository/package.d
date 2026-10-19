@@ -482,6 +482,16 @@ interface ITaskRepository
      * Returns: False when no row had it.
      */
     bool remove(UUID id);
+
+    /**
+     * Deletes every task of a lane, in one statement.
+     *
+     * Params:
+     *   laneId = The lane's id.
+     *
+     * Returns: How many tasks were deleted.
+     */
+    ulong removeOfLane(UUID laneId);
 }
 
 /**

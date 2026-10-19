@@ -18,6 +18,7 @@ Each message is a JSON object holding a `type` and the ids it concerns, and noth
 | `task-moved` | `taskId`, `projectId`, `fromLaneId`, `toLaneId` | `moveTask`, and the task scheduler when it moves a task on to the lane its agent starts it in |
 | `task-deleted` | `taskId`, `projectId`, `fromLaneId` | The tasks REST endpoints |
 | `lane-created`, `lane-changed`, `lane-deleted` | `laneId`, `projectId` | The lanes REST endpoints |
+| `lane-cleared` | `laneId`, `projectId` | `clearLane`, once for all the tasks it deleted |
 | `project-created`, `project-changed`, `project-deleted` | `projectId` | The projects REST endpoints, `createProject`, `saveProjectSettings`, `setAiPaused`; `project-changed` also after a task is moved, when the project has gained or lost its page (see below) |
 | `agent-created`, `agent-changed`, `agent-deleted` | `agentId` | The agents REST endpoints |
 | `note-created` | `taskId`, `projectId` | The task scheduler, for each note it adds to a task, and `rescheduleTask` |
@@ -30,7 +31,9 @@ which are the lanes the UI refetches. The UI must not work these out from what i
 while events are still queued, that drawing is behind, and it is wrong about where a task
 was. `saveProjectSettings` sends a single `project-changed` rather than an event
 per lane, so the UI reads `project-changed` for the project on screen as "its lanes may have
-changed too". A write to a task also adds a note to it, and its own
+changed too". In the same way `clearLane` sends a single `lane-cleared` rather than a
+`task-deleted` per task, which would have the UI fetch the same lane once for each, and the UI
+reads it as "this lane's tasks changed". A write to a task also adds a note to it, and its own
 task event stands for that note, so `note-created` is sent only for a note added without one,
 such as the scheduler's.
 

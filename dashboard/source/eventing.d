@@ -11,7 +11,8 @@ import std.uuid : UUID;
 
 /**
  * What happened to a resource. Only a task can be moved, as the moveTask
- * call does; any other write to one is a change.
+ * call does; any other write to one is a change. Only a lane can be cleared,
+ * as the clearLane call does, which deletes its tasks in one go.
  */
 enum Event : string
 {
@@ -19,6 +20,7 @@ enum Event : string
     changed = "changed",
     moved = "moved",
     deleted = "deleted",
+    cleared = "cleared",
 }
 
 /**
@@ -44,7 +46,11 @@ interface IEventPublisher
      */
     void task(Event event, UUID taskId, UUID projectId, UUID fromLaneId, UUID toLaneId);
 
-    /// A lane of the project `projectId` was created, changed or deleted.
+    /**
+     * A lane of the project `projectId` was created, changed or deleted, or
+     * cleared: its tasks were all deleted, which is reported once for the lane
+     * rather than once for each task.
+     */
     void lane(Event event, UUID laneId, UUID projectId);
 
     /**
