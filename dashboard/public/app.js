@@ -172,6 +172,7 @@ function renderCard(task, done) {
   el.taskId = task.id;
   el.done = done;
   el.selected = task.id === openTaskId;
+  el.workingAgentId = task.workingAgentId;
   el.textContent = task.description;
   return el;
 }
@@ -1226,6 +1227,14 @@ function showTasks(tasksByLane) {
         renderCards(entry);
         for (const card of entry.el.cards) {
           card.added = !known.has(card.taskId);
+        }
+      } else {
+        /* An agent starting or stopping on a task changes only its card, which
+           keeps its focus and is not glowed again. */
+        for (const card of entry.el.cards) {
+          card.workingAgentId = tasks.find(
+            (t) => t.id === card.taskId,
+          )?.workingAgentId;
         }
       }
     }

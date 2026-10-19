@@ -196,6 +196,12 @@ class Task
      * the service puts a task that has none after the lane's last task.
      */
     @optional Nullable!int position;
+    /**
+     * The AI agent at work on the task now: its own agent while it works on it, and the task
+     * scheduler agent while it schedules it. Null when none is. Set by the server, and ignored
+     * in a body.
+     */
+    @optional Nullable!UUID workingAgentId;
 
     this() @safe
     {

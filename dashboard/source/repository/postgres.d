@@ -370,7 +370,7 @@ class PostgresTaskRepository : ITaskRepository
     Task[] ofLane(UUID laneId)
     {
         QueryParams query;
-        query.sqlCommand = "select id, lane_id, description, position from tasks where lane_id = $1 order by position";
+        query.sqlCommand = "select " ~ taskColumns ~ " from tasks t where t.lane_id = $1 order by t.position";
         query.argsVariadic(laneId);
 
         return client.pickConnection((scope connection) {
@@ -381,7 +381,7 @@ class PostgresTaskRepository : ITaskRepository
     Task[] ofProject(UUID projectId)
     {
         QueryParams query;
-        query.sqlCommand = "select t.id, t.lane_id, t.description, t.position from tasks t"
+        query.sqlCommand = "select " ~ taskColumns ~ " from tasks t"
             ~ " join lanes l on l.id = t.lane_id where l.project_id = $1 order by l.position, t.position";
         query.argsVariadic(projectId);
 
@@ -393,7 +393,7 @@ class PostgresTaskRepository : ITaskRepository
     Nullable!Task find(UUID id)
     {
         QueryParams query;
-        query.sqlCommand = "select id, lane_id, description, position from tasks where id = $1";
+        query.sqlCommand = "select " ~ taskColumns ~ " from tasks t where t.id = $1";
         query.argsVariadic(id);
 
         return client.pickConnection((scope connection) {
@@ -406,7 +406,7 @@ class PostgresTaskRepository : ITaskRepository
     Task[] awaitingScheduling()
     {
         QueryParams query;
-        query.sqlCommand = "select t.id, t.lane_id, t.description, t.position from tasks t"
+        query.sqlCommand = "select " ~ taskColumns ~ " from tasks t"
             ~ " join lanes l on l.id = t.lane_id join projects p on p.id = l.project_id"
             ~ " where t.agent_status = 'to_be_scheduled' and t.assigned_ai_agent_id is null and not l.marks_done"
             ~ " and p.managed_by_ai and not p.ai_paused order by t.created_at";
@@ -419,7 +419,7 @@ class PostgresTaskRepository : ITaskRepository
     Task[] awaitingExecution()
     {
         QueryParams query;
-        query.sqlCommand = "select t.id, t.lane_id, t.description, t.position from tasks t"
+        query.sqlCommand = "select " ~ taskColumns ~ " from tasks t"
             ~ " join lanes l on l.id = t.lane_id join projects p on p.id = l.project_id"
             ~ " where t.agent_status = 'scheduled' and not l.marks_done and p.managed_by_ai and not p.ai_paused"
             ~ " order by t.created_at";
@@ -922,14 +922,30 @@ private Task[] toTasks(Answer answer)
     return tasks;
 }
 
+/**
+ * The columns a task is read from, as `t`, with the agent at work on it: its own agent while it
+ * is executing, and while it is being scheduled the task scheduler agent, the one
+ * `IAgentRepository.all` puts first, as the scheduler uses.
+ */
+private enum taskColumns = "t.id, t.lane_id, t.description, t.position, case t.agent_status"
+    ~ " when 'executing' then t.assigned_ai_agent_id"
+    ~ " when 'scheduling' then (select a.id from agents a where a.task_scheduler order by a.name limit 1)"
+    ~ " end as working_agent_id";
+
 private Task toTask(immutable Row row)
 {
-    return new Task(
+    auto task = new Task(
         row["id"].as!UUID,
         row["lane_id"].as!UUID,
         row["description"].as!string,
         row["position"].as!int
     );
+    if (!row["working_agent_id"].isNull)
+    {
+        task.workingAgentId = row["working_agent_id"].as!UUID;
+    }
+
+    return task;
 }
 
 /// IRuntimeRepository over postgres.

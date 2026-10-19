@@ -1,7 +1,8 @@
 <style>
   :host {
+    --card-bg: var(--surface-2);
     display: block;
-    background: var(--surface-2);
+    background: var(--card-bg);
     border: 1px solid var(--border-card);
     border-radius: var(--r-card);
     padding: 14px;
@@ -22,7 +23,8 @@
   }
 
   :host([done]) {
-    background: var(--surface-1);
+    --card-bg: var(--surface-1);
+    background: var(--card-bg);
     border-color: var(--border-soft);
     color: var(--muted);
   }
@@ -30,6 +32,78 @@
   /* --lane-color is set on the card's lane, and inherits. */
   :host([selected]) {
     border-color: var(--lane-color, var(--accent));
+  }
+
+  /* A task an AI agent is at work on, the task scheduler included, has its
+     lane's colour sweeping along its border. The border is a gradient behind
+     the card's own background, showing through a transparent border; the
+     open card's is tinted with the lane's colour, with the sweep still
+     showing over it. */
+  :host([working-agent-id]) {
+    --wave-base: var(--border-card);
+    border-color: transparent;
+    background:
+      linear-gradient(var(--card-bg), var(--card-bg)) padding-box,
+      linear-gradient(
+          90deg,
+          var(--wave-base) 0%,
+          var(--wave-base) 38%,
+          var(--lane-color, var(--accent)) 50%,
+          var(--wave-base) 62%,
+          var(--wave-base) 100%
+        )
+        border-box;
+    background-size:
+      100% 100%,
+      300% 100%;
+    animation: working-wave 2.2s linear infinite;
+  }
+  :host([working-agent-id][selected]) {
+    --wave-base: color-mix(
+      in srgb,
+      var(--lane-color, var(--accent)) 40%,
+      var(--border-card)
+    );
+  }
+  @keyframes working-wave {
+    from {
+      background-position:
+        0 0,
+        100% 0;
+    }
+    to {
+      background-position:
+        0 0,
+        0 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :host([working-agent-id]) {
+      animation: none;
+      background-position:
+        0 0,
+        50% 0;
+    }
+  }
+
+  .agent {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .agent[hidden] {
+    display: none;
+  }
+  .ai {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-ink);
+    background: var(--accent);
+    border-radius: 4px;
+    padding: 1px 6px;
   }
 
   /* A task just added sweeps a glow in its lane's colour across the card,
@@ -101,3 +175,4 @@
   }
 </style>
 <div class="description"><slot></slot></div>
+<div class="agent" hidden><span class="ai">AI</span><span class="name"></span></div>

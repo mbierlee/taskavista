@@ -355,9 +355,9 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Task" }
               example:
-                - { id: 393e4c99-ca50-47a2-a72b-9d435c68a53f, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Collect Q3 invoices from the two vendors, position: 0 }
-                - { id: 59909ce8-7793-4c85-b42e-90bedf456073, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Chase the late invoice from Perrin, position: 1 }
-                - { id: 067cf57f-69f7-4b53-b998-b8187475e938, laneId: 13733f13-827d-47e1-8551-0f8d6b965542, description: Reconcile the vendor invoice log, position: 0 }
+                - { id: 393e4c99-ca50-47a2-a72b-9d435c68a53f, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Collect Q3 invoices from the two vendors, position: 0, workingAgentId: null }
+                - { id: 59909ce8-7793-4c85-b42e-90bedf456073, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Chase the late invoice from Perrin, position: 1, workingAgentId: null }
+                - { id: 067cf57f-69f7-4b53-b998-b8187475e938, laneId: 13733f13-827d-47e1-8551-0f8d6b965542, description: Reconcile the vendor invoice log, position: 0, workingAgentId: null }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -379,8 +379,8 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Task" }
               example:
-                - { id: 393e4c99-ca50-47a2-a72b-9d435c68a53f, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Collect Q3 invoices from the two vendors, position: 0 }
-                - { id: 59909ce8-7793-4c85-b42e-90bedf456073, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Chase the late invoice from Perrin, position: 1 }
+                - { id: 393e4c99-ca50-47a2-a72b-9d435c68a53f, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Collect Q3 invoices from the two vendors, position: 0, workingAgentId: null }
+                - { id: 59909ce8-7793-4c85-b42e-90bedf456073, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Chase the late invoice from Perrin, position: 1, workingAgentId: null }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -407,7 +407,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
-              example: { id: 782ff922-1b35-4e2d-be28-2b11d2f58eda, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Draft the Q3 budget summary, position: 2 }
+              example: { id: 782ff922-1b35-4e2d-be28-2b11d2f58eda, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Draft the Q3 budget summary, position: 2, workingAgentId: null }
         "400":
           description: A blank description or a negative position.
           content:
@@ -441,7 +441,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
-              example: { id: 393e4c99-ca50-47a2-a72b-9d435c68a53f, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Collect Q3 invoices from the two vendors, position: 0 }
+              example: { id: 393e4c99-ca50-47a2-a72b-9d435c68a53f, laneId: bda1077e-20ea-4e62-a50e-abc48b002aba, description: Collect Q3 invoices from the two vendors, position: 0, workingAgentId: null }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -475,7 +475,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
-              example: { id: 782ff922-1b35-4e2d-be28-2b11d2f58eda, laneId: 13733f13-827d-47e1-8551-0f8d6b965542, description: Draft the Q3 budget summary, position: 1 }
+              example: { id: 782ff922-1b35-4e2d-be28-2b11d2f58eda, laneId: 13733f13-827d-47e1-8551-0f8d6b965542, description: Draft the Q3 budget summary, position: 1, workingAgentId: null }
         "400":
           description: |
             A blank description, a negative position, or a `laneId` that belongs to another
@@ -871,6 +871,15 @@ components:
           description: |
             Where the task sits in its lane, from 0 at the top. No two tasks of a lane may share
             one. Left out or `null`, the task goes after the lane's last task.
+        workingAgentId:
+          type: [string, "null"]
+          format: uuid
+          readOnly: true
+          description: |
+            The AI agent at work on the task right now: the agent it is assigned to while that
+            agent works on it, and the task scheduler agent while it decides the task's next
+            step. `null` while no agent is at work on it. Ignored in a body.
+          examples: [66f76afd-f02f-4095-a9a1-e1a940402e93]
 
     TaskNote:
       type: object

@@ -708,7 +708,12 @@ class TaskScheduler
 
         try
         {
-            tasks.changeAgentStatus(task.id, AgentStatus.scheduling, assign(task));
+            statusChanged(tasks, events, task.id);
+            const status = assign(task);
+            if (tasks.changeAgentStatus(task.id, AgentStatus.scheduling, status))
+            {
+                statusChanged(tasks, events, task.id);
+            }
         }
         catch (Exception e)
         {
@@ -717,7 +722,10 @@ class TaskScheduler
             // database that is down fails this too, and then the next start puts it back.
             try
             {
-                tasks.changeAgentStatus(task.id, AgentStatus.scheduling, AgentStatus.toBeScheduled);
+                if (tasks.changeAgentStatus(task.id, AgentStatus.scheduling, AgentStatus.toBeScheduled))
+                {
+                    statusChanged(tasks, events, task.id);
+                }
             }
             catch (Exception resetError)
             {
@@ -978,8 +986,12 @@ class TaskExecutor
 
         try
         {
+            statusChanged(tasks, events, task.id);
             const status = execute(task, agentId) ? AgentStatus.toBeScheduled : AgentStatus.failed;
-            tasks.changeAgentStatus(task.id, AgentStatus.executing, status);
+            if (tasks.changeAgentStatus(task.id, AgentStatus.executing, status))
+            {
+                statusChanged(tasks, events, task.id);
+            }
         }
         catch (Exception e)
         {
@@ -988,7 +1000,10 @@ class TaskExecutor
             // database that is down fails this too, and then the next start puts it back.
             try
             {
-                tasks.changeAgentStatus(task.id, AgentStatus.executing, AgentStatus.scheduled);
+                if (tasks.changeAgentStatus(task.id, AgentStatus.executing, AgentStatus.scheduled))
+                {
+                    statusChanged(tasks, events, task.id);
+                }
             }
             catch (Exception resetError)
             {
@@ -1116,6 +1131,25 @@ private enum schedulePrompt = import("schedule-task.txt");
 
 /// Asks the agent a task is assigned to to work on it, and what came of it.
 private enum executeTaskPrompt = import("execute-task.txt");
+
+/**
+ * Reports a change to the task's agent status, which says on its card whether an agent is at work
+ * on it. Reported where it is now, since the scheduler may have moved it on meanwhile.
+ */
+private void statusChanged(ITaskRepository tasks, IEventPublisher events, UUID taskId)
+{
+    auto task = tasks.find(taskId);
+    if (task.isNull)
+    {
+        return;
+    }
+
+    auto projectId = tasks.projectOfLane(task.get.laneId);
+    if (!projectId.isNull)
+    {
+        events.task(Event.changed, taskId, projectId.get, task.get.laneId, task.get.laneId);
+    }
+}
 
 /**
  * Moves the task to the bottom of the lane the scheduler chose. A task that left

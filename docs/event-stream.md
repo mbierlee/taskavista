@@ -14,7 +14,7 @@ Each message is a JSON object holding a `type` and the ids it concerns, and noth
 | `type` | Ids | Sent by |
 |---|---|---|
 | `task-created` | `taskId`, `projectId`, `toLaneId` | The tasks REST endpoints |
-| `task-changed` | `taskId`, `projectId`, `fromLaneId`, `toLaneId` | The tasks REST endpoints (a `PUT` can move a task) |
+| `task-changed` | `taskId`, `projectId`, `fromLaneId`, `toLaneId` | The tasks REST endpoints (a `PUT` can move a task); the task scheduler and executor when they start or stop on a task, which changes its `workingAgentId`, with both lane ids the lane it is in |
 | `task-moved` | `taskId`, `projectId`, `fromLaneId`, `toLaneId` | `moveTask`, and the task scheduler when it moves a task on to the lane its agent starts it in |
 | `task-deleted` | `taskId`, `projectId`, `fromLaneId` | The tasks REST endpoints |
 | `lane-created`, `lane-changed`, `lane-deleted` | `laneId`, `projectId` | The lanes REST endpoints |
@@ -70,6 +70,8 @@ The UI's own writes come back over the stream too, and the screen already shows 
 compares what it fetches with what it has drawn, and it draws again only what differs: a lane
 whose cards changed, or the whole row of lanes if the lanes themselves changed. A card for a
 task that is new to the board gets the same `added` glow as a card added on the page.
+A lane whose cards are the same but for the agent at work on one of them has those cards
+updated where they are, rather than drawn again, so a card keeps its focus and does not glow.
 A card that moved, to another lane or within one, slides from where it was drawn to where it
 is now, through the board's `animateMoves`, and a card whose task was deleted fades out before
 the cards around it close the gap. The page's own moves and deletes are drawn before their events
