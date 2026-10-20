@@ -233,7 +233,9 @@ export class TvAgentChat extends HTMLElement {
   }
 
   /* Every agent is offered, in the order the settings list them, whether
-     or not it is in a chat already: picking it starts another. The one
+     or not it is in a chat already: picking it starts another. A disabled
+     agent is offered too, marked as one, since disabling only keeps it from
+     being given tasks. The one
      named "Generic" comes first, found by its name rather than its id, so
      it still does when it is deleted and added again. */
   #renderPicker() {
@@ -249,12 +251,15 @@ export class TvAgentChat extends HTMLElement {
       ...ordered.map((agent) => {
         const choice =
           this.#choiceTemplate.content.firstElementChild.cloneNode(true);
-        choice.querySelector(".choice-name").textContent = agent.name;
+        choice.classList.toggle("off", !agent.enabled);
+        choice.querySelector(".choice-label").textContent = agent.name;
+        choice.querySelector(".choice-badge").hidden = agent.enabled;
         const meta = choice.querySelector(".choice-meta");
         meta.textContent = meta.title = [
           ...this.#describe(agent),
           this.#effort(agent),
           ...(agent.taskScheduler ? ["Scheduler"] : []),
+          ...(agent.enabled ? [] : ["chat only"]),
         ].join(" · ");
         choice.querySelector(".choice-go").textContent = "→";
         choice.addEventListener("click", () => this.#onPick(agent));

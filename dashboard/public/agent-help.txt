@@ -16,7 +16,7 @@ Some calls delete more than they name. Deleting a project deletes its lanes and 
 Good to know:
 
 - A task has no status of its own: it is done when it sits in a lane with `marksDone` set.
-- A new task is assigned to an agent by the task scheduler, one of the agents, which chooses by the agents' labels and instructions. The API does not show who a task is assigned to, but the task's notes (GET /tasks/{id}/notes) say so. The scheduler takes a task up once, when it is created, and editing or moving the task later does not assign it again.
+- A new task is assigned to an agent by the task scheduler, one of the agents, which chooses by the agents' labels and instructions. The API does not show who a task is assigned to, but the task's notes (GET /tasks/{id}/notes) say so. The scheduler takes a task up once, when it is created, and editing or moving the task later does not assign it again. A disabled agent (`enabled` false) is given no tasks, and a disabled scheduler schedules none.
 - When a task is stuck, with no agent working on it, such as one the scheduler found no agent for, the RPC call rescheduleTask hands it back to the scheduler, which takes it up again as a new task. It is a last resort: read the task's notes first, and use it only when the person asks for it or nothing else gets the task picked up. Moving a task no agent is at, because the scheduler found no agent for it or its agent has finished or failed, to another lane, other than a done one, hands it back to the scheduler too.
 - Projects are looked up by id only, not by slug. To find a project's id, list them with GET /projects.
 - A failed call returns JSON like `{ "statusMessage": "No project has that id." }`. Read the message before retrying: it says what was wrong.

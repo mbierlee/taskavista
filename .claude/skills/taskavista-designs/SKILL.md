@@ -119,6 +119,11 @@ badge. Chats are answered by the agents; the mockups' "is working…" line is dr
 "*agent* is answering" with animated dots. See the component table in `docs/webcomponents.md`
 for the current elements.
 
+Each agent card's **Disable** / **Enable**, the "Disabled · n" list with its **Re-enable all**,
+and the heading's **Disable all** are built, as is the "Disabled" badge on a disabled agent in the
+agent chat's "New chat" picker, where it can still be picked. The mockups show "Disable all" only with agents to
+disable; with none enabled, it is drawn disabled, as a button with nothing to do is elsewhere.
+
 Not built: search. The search field in `tv-topbar` is rendered per the mockup but inert, with a
 `title` tooltip saying it is not built yet. **When you build it, wire it up and drop its
 tooltip.**

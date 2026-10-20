@@ -342,6 +342,12 @@ class Agent
     @optional string effort = defaultEffort;
     /// Whether the agent plans and assigns tasks to the other agents.
     @optional bool taskScheduler;
+    /**
+     * Whether the agent can be given tasks, and, for a task scheduler, whether it schedules them.
+     * Written only by `IAgentRepository.setEnabled`: an add or an update reads it back instead,
+     * so a client saving an agent cannot change it.
+     */
+    @optional bool enabled = true;
     /// The agent's own instructions, added to its system prompt. Empty for none.
     @optional string instructions;
     /**
@@ -360,7 +366,7 @@ class Agent
 
     this(UUID id, string name, string runtime, string model, string effort, bool taskScheduler,
         string instructions = null, string[] labels = null,
-        Nullable!int maxParallelTasks = defaultMaxParallelTasks) @safe
+        Nullable!int maxParallelTasks = defaultMaxParallelTasks, bool enabled = true) @safe
     {
         this.id = id;
         this.name = name;
@@ -371,6 +377,7 @@ class Agent
         this.instructions = instructions;
         this.labels = labels;
         this.maxParallelTasks = maxParallelTasks;
+        this.enabled = enabled;
     }
 }
 

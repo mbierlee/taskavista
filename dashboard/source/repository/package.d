@@ -464,7 +464,7 @@ interface ITaskRepository
     bool reschedule(UUID id);
 
     /**
-     * Adds to a task's notes that there was no task scheduler agent to assign it.
+     * Adds to a task's notes that there was no enabled task scheduler agent to assign it.
      *
      * Params:
      *   id = The task's id.
@@ -586,14 +586,25 @@ interface IAgentRepository
     Nullable!Agent find(UUID id);
 
     /**
-     * Gets how many tasks an agent may work on at once.
+     * Enables or disables an agent.
      *
      * Params:
      *   id = The agent's id.
+     *   enabled = Whether the agent is to be enabled.
      *
-     * Returns: The limit, or an empty Nullable when the agent has none, or there is no such agent.
+     * Returns: False when no row has that id, in which case nothing was written.
      */
-    Nullable!int maxParallelTasks(UUID id);
+    bool setEnabled(UUID id, bool enabled);
+
+    /**
+     * Enables or disables every agent that is not so already.
+     *
+     * Params:
+     *   enabled = Whether the agents are to be enabled.
+     *
+     * Returns: The ids of the agents it changed.
+     */
+    UUID[] setAllEnabled(bool enabled);
 
     /**
      * Checks whether an agent already has a name.
@@ -607,9 +618,9 @@ interface IAgentRepository
     bool nameTaken(string name, UUID except);
 
     /**
-     * Inserts an agent and its labels in one transaction.
+     * Inserts an agent and its labels in one transaction, enabled.
      *
-     * Fills in the id the database assigned it.
+     * Fills in the id the database assigned it, and whether it is enabled.
      *
      * Params:
      *   agent = The agent to insert.
@@ -620,7 +631,7 @@ interface IAgentRepository
 
     /**
      * Writes an agent back over the row with its id, and gives it exactly its labels, in one
-     * transaction.
+     * transaction. Whether it is enabled is left as it was, and filled in.
      *
      * Params:
      *   agent = The agent to write.

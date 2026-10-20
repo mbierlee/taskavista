@@ -61,6 +61,18 @@ struct SetAiPausedResult
     bool aiPaused;
 }
 
+/// Whether the agent is enabled now.
+struct SetAgentEnabledResult
+{
+    bool enabled;
+}
+
+/// The agents the call changed, which leaves out those that were so already.
+struct SetAllAgentsEnabledResult
+{
+    UUID[] agentIds;
+}
+
 /// Nothing, since a rescheduled task has nothing new to show until the task scheduler takes it up.
 struct RescheduleTaskResult
 {
@@ -128,6 +140,17 @@ interface RpcApi
      */
     @method(HTTPMethod.POST) @path("setAiPaused")
     SetAiPausedResult setAiPaused(UUID projectId, bool paused) @safe;
+
+    /**
+     * Enables or disables an agent, and changes nothing else about it. A disabled agent is
+     * given no tasks, and a disabled task scheduler schedules none.
+     */
+    @method(HTTPMethod.POST) @path("setAgentEnabled")
+    SetAgentEnabledResult setAgentEnabled(UUID agentId, bool enabled) @safe;
+
+    /// Enables or disables every agent that is not so already, as `setAgentEnabled` does one.
+    @method(HTTPMethod.POST) @path("setAllAgentsEnabled")
+    SetAllAgentsEnabledResult setAllAgentsEnabled(bool enabled) @safe;
 
     /**
      * Sends a chat message to an agent and answers with its reply, once the
@@ -254,6 +277,22 @@ class RpcController : RpcApi
         }
 
         return SetAiPausedResult(paused);
+    }
+
+    override SetAgentEnabledResult setAgentEnabled(UUID agentId, bool enabled) @trusted
+    {
+        auto set = agents.setEnabled(agentId, enabled);
+        if (set.isFailure)
+        {
+            throw toHTTPError(set.error, null);
+        }
+
+        return SetAgentEnabledResult(enabled);
+    }
+
+    override SetAllAgentsEnabledResult setAllAgentsEnabled(bool enabled) @trusted
+    {
+        return SetAllAgentsEnabledResult(agents.setAllEnabled(enabled));
     }
 
     override SendChatMessageResult sendChatMessage(UUID agentId, string message,

@@ -681,11 +681,11 @@ class TaskScheduler
 
     /**
      * How many tasks may be scheduled at once: the scheduler agent's limit, or none when there
-     * is no scheduler agent, since each task is then declined straight away.
+     * is no enabled scheduler agent, since each task is then declined straight away.
      */
     private Nullable!int schedulingLimit()
     {
-        auto schedulers = agents.all().filter!(agent => agent.taskScheduler);
+        auto schedulers = agents.all().filter!(agent => isActiveScheduler(agent));
         if (schedulers.empty)
         {
             return Nullable!int.init;
@@ -759,10 +759,10 @@ class TaskScheduler
         }
 
         auto all = agents.all();
-        auto schedulers = all.filter!(agent => agent.taskScheduler);
+        auto schedulers = all.filter!(agent => isActiveScheduler(agent));
         if (schedulers.empty)
         {
-            logInfo("Task %s is not assigned, since there is no task scheduler agent.", task.id);
+            logInfo("Task %s is not assigned, since there is no enabled task scheduler agent.", task.id);
             noted(tasks.recordNoScheduler(task.id), task.id, project.get.id);
             return AgentStatus.declined;
         }
@@ -930,16 +930,18 @@ class TaskExecutor
     {
         foreach (task; tasks.awaitingExecution())
         {
-            // An agent that is deleted takes its assignments with it, and then the task needs
-            // another, which only the scheduler can give it.
+            // An agent that is deleted takes its assignments with it, and one that is disabled
+            // may not start on them, and then the task needs another, which only the scheduler
+            // can give it.
             auto agentId = tasks.assignedAiAgent(task.id);
-            if (agentId.isNull)
+            auto agent = agentId.isNull ? Nullable!Agent.init : agents.find(agentId.get);
+            if (agent.isNull || !agent.get.enabled)
             {
                 handBack(task);
                 continue;
             }
 
-            const limit = agents.maxParallelTasks(agentId.get);
+            const limit = agent.get.maxParallelTasks;
             if (!limit.isNull && running.get(agentId.get, 0) >= limit.get)
             {
                 continue;
@@ -958,10 +960,10 @@ class TaskExecutor
         }
     }
 
-    /// Hands a scheduled task whose agent is gone back to the task scheduler.
+    /// Hands a scheduled task whose agent is gone or disabled back to the task scheduler.
     private void handBack(Task task)
     {
-        logInfo("Task %s is handed back to the task scheduler, since its agent is gone.", task.id);
+        logInfo("Task %s is handed back to the task scheduler, since its agent is gone or disabled.", task.id);
         auto projectId = tasks.projectOfLane(task.laneId);
         if (tasks.reschedule(task.id) && !projectId.isNull)
         {
@@ -1190,15 +1192,28 @@ private string noteList(TaskNote[] notes)
         .join("\n");
 }
 
+/// Whether the agent schedules tasks: a task scheduler that is enabled.
+private bool isActiveScheduler(Agent agent)
+{
+    return agent.taskScheduler && agent.enabled;
+}
+
+/// Whether the agent can be given a task: one that is enabled and not a task scheduler.
+private bool isAssignable(Agent agent)
+{
+    return !agent.taskScheduler && agent.enabled;
+}
+
 /**
  * One block per agent that can be given a task, set apart by tags since an
  * agent's instructions run over several lines. Schedulers are left out,
- * since they hand out tasks rather than work on them.
+ * since they hand out tasks rather than work on them, and so are disabled
+ * agents.
  */
 private string agentList(Agent[] all)
 {
     return all
-        .filter!(agent => !agent.taskScheduler)
+        .filter!(agent => isAssignable(agent))
         .map!(agent => describeAssignable(agent))
         .join("\n\n");
 }
@@ -1233,8 +1248,8 @@ private struct Schedule
  * Params:
  *   answer = The scheduler's answer, a JSON object with an `agent-id` and a
  *     `next-lane-id`, either of which may be null.
- *   all = Every agent, of which only the ones that are not task schedulers
- *     can be chosen.
+ *   all = Every agent, of which only the enabled ones that are not task
+ *     schedulers can be chosen.
  *   board = The lanes of the task's project, the only ones it can move to.
  *
  * Returns: The schedule, or an empty Nullable when the answer names an agent
@@ -1283,7 +1298,7 @@ private Nullable!Schedule readSchedule(string answer, Agent[] all, Lane[] board)
             : Nullable!Schedule.init;
     }
 
-    auto agents = all.find!(agent => !agent.taskScheduler && agent.id.toString == agentId
+    auto agents = all.find!(agent => isAssignable(agent) && agent.id.toString == agentId
             .get!string.strip
             .toLower);
     if (agents.length == 0 || lanes[0].marksDone)
@@ -1302,9 +1317,11 @@ unittest
         ]);
     auto scheduler = new Agent(randomUUID, "Scheduler", "claude-code", "sonnet", "default", true, "", [
         ]);
+    auto resting = new Agent(randomUUID, "Resting", "claude-code", "sonnet", "default", false, "", [
+        ], Nullable!int.init, false);
     auto doing = new Lane(randomUUID, randomUUID, "Doing", 1, "#000000", false);
     auto done = new Lane(randomUUID, randomUUID, "Done", 2, "#000000", true);
-    auto all = [writer, scheduler];
+    auto all = [writer, scheduler, resting];
     auto board = [doing, done];
 
     auto chosen = readSchedule(format("```json\n{\"agent-id\": \"%s\", \"next-lane-id\": \" %s \"}\n```",
@@ -1325,6 +1342,9 @@ unittest
 
     assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": "%s"}`, scheduler.id, doing.id), all, board)
             .isNull);
+    assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": "%s"}`, resting.id, doing.id), all, board)
+            .isNull);
+    assert(!agentList(all).canFind(resting.id.toString));
     assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": "%s"}`, writer.id, randomUUID), all, board)
             .isNull);
     assert(readSchedule(format(`{"agent-id": "%s"}`, writer.id), all, board).isNull);

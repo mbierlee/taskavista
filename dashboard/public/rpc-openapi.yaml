@@ -454,6 +454,104 @@ paths:
               example: { statusMessage: "The project is not managed by AI agents, so its agents cannot be resumed." }
         "500": { $ref: "#/components/responses/ServerError" }
 
+  /setAgentEnabled:
+    post:
+      tags: [Agents]
+      operationId: setAgentEnabled
+      summary: Enable or disable an AI agent
+      description: |
+        Enables or disables an AI agent, and changes nothing else about it. The REST API serves
+        the agent's `enabled` read-only; only this call changes it. A disabled agent is given no
+        tasks: the task scheduler leaves it out when it chooses one, and a task it was given but
+        has not started on goes back to the scheduler. A task it is working on is finished. A
+        disabled task scheduler schedules no tasks. A disabled agent can still be chatted with. Asking for the state the agent is already in
+        is not an error.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentId, enabled]
+              properties:
+                agentId:
+                  $ref: "#/components/schemas/Uuid"
+                  description: The agent to enable or disable.
+                enabled:
+                  type: boolean
+                  description: "`true` enables it, `false` disables it."
+            example: { agentId: 89d18be4-d79e-45a9-953c-b14b301099dd, enabled: false }
+      responses:
+        "200":
+          description: Whether the agent is enabled now.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled]
+                properties:
+                  enabled:
+                    type: boolean
+                    description: Whether the agent is enabled now.
+              example: { enabled: false }
+        "400":
+          description: "`agentId` or `enabled` missing."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: The argument enabled is missing. }
+        "404":
+          description: No agent has `agentId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: No agent has that id. }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /setAllAgentsEnabled:
+    post:
+      tags: [Agents]
+      operationId: setAllAgentsEnabled
+      summary: Enable or disable every AI agent
+      description: |
+        Enables or disables every agent at once, as `setAgentEnabled` does one, and answers with
+        the ids of the agents it changed. Agents that were so already are left out of the result,
+        so asking for the state every agent is already in is not an error and answers with an
+        empty list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+                  description: "`true` enables every agent, `false` disables every agent."
+            example: { enabled: false }
+      responses:
+        "200":
+          description: The agents the call changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agentIds]
+                properties:
+                  agentIds:
+                    type: array
+                    items: { $ref: "#/components/schemas/Uuid" }
+                    description: The ids of the agents whose state the call changed.
+              example: { agentIds: [572dfae2-69c4-4d29-a3b6-6291d3e53e46, 89d18be4-d79e-45a9-953c-b14b301099dd] }
+        "400":
+          description: "`enabled` missing."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: The argument enabled is missing. }
+        "500": { $ref: "#/components/responses/ServerError" }
+
   /sendChatMessage:
     post:
       tags: [Agents]

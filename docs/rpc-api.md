@@ -36,6 +36,11 @@ That rule decides each result:
   to the new URL.
 - **`setAiPaused`** returns `aiPaused`, the project's state after the call, and nothing else
   about the project.
+- **`setAgentEnabled`** likewise returns only `enabled`, the agent's state after the call. It is
+  a call of its own rather than a field of the agent's `PUT` so that saving the agent dialog,
+  which sends the whole agent, can never undo a disable made meanwhile.
+- **`setAllAgentsEnabled`** returns the ids of the agents it changed, leaving out those that
+  were so already, since those are the only ones whose state it changed.
 
 ## Slugs are the server's
 

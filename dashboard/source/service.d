@@ -1020,6 +1020,45 @@ class AgentService
     }
 
     /**
+     * Enables or disables an agent, and changes nothing else about it.
+     *
+     * Params:
+     *   id = The agent's id.
+     *   enabled = Whether the agent is to be enabled.
+     *
+     * Returns: Success, or a failure: `AgentNotFoundError`.
+     */
+    OperationResult!IAgentError setEnabled(UUID id, bool enabled)
+    {
+        if (!repository.setEnabled(id, enabled))
+        {
+            return agentFailure(new AgentNotFoundError);
+        }
+
+        events.agent(Event.changed, id);
+        return agentSuccess();
+    }
+
+    /**
+     * Enables or disables every agent that is not so already.
+     *
+     * Params:
+     *   enabled = Whether the agents are to be enabled.
+     *
+     * Returns: The ids of the agents it changed.
+     */
+    UUID[] setAllEnabled(bool enabled)
+    {
+        auto changed = repository.setAllEnabled(enabled);
+        foreach (id; changed)
+        {
+            events.agent(Event.changed, id);
+        }
+
+        return changed;
+    }
+
+    /**
      * Deletes an agent.
      *
      * Params:
@@ -1997,9 +2036,27 @@ version (unittest)
             return found.empty ? Nullable!Agent.init : found.front.nullable;
         }
 
-        Nullable!int maxParallelTasks(UUID id)
+        bool setEnabled(UUID id, bool enabled)
         {
-            assert(false, "Not used by AgentService.");
+            auto found = find(id);
+            if (found.isNull)
+            {
+                return false;
+            }
+
+            found.get.enabled = enabled;
+            return true;
+        }
+
+        UUID[] setAllEnabled(bool enabled)
+        {
+            auto others = database.agents.filter!(agent => agent.enabled != enabled).array;
+            foreach (agent; others)
+            {
+                agent.enabled = enabled;
+            }
+
+            return others.map!(agent => agent.id).array;
         }
 
         bool nameTaken(string name, UUID except)
@@ -2010,6 +2067,7 @@ version (unittest)
         Agent add(Agent agent)
         {
             agent.id = randomUUID;
+            agent.enabled = true;
             database.agents ~= agent;
             return agent;
         }
@@ -2020,6 +2078,7 @@ version (unittest)
             {
                 if (stored.id == agent.id)
                 {
+                    agent.enabled = stored.enabled;
                     stored = agent;
                     return true;
                 }
@@ -2483,7 +2542,7 @@ unittest
     assert(sum.id !in database.agentStatuses);
 }
 
-// AgentService: reading, and creating, updating and deleting an agent.
+// AgentService: reading, and creating, updating, enabling and deleting an agent.
 unittest
 {
     auto database = new MockDatabase;
@@ -2512,14 +2571,44 @@ unittest
     assert(cast(AgentNotFoundError) service.save(
         new Agent(randomUUID, "Gone", "claude-code", "sonnet", "default", false)).error);
 
+    assert(service.setEnabled(writer.id, false).isSuccessful && !service.get(writer.id).value.enabled);
+    // Only setEnabled enables an agent: a save keeps what it was.
+    auto saved = new Agent(writer.id, "Writer", "claude-code", "sonnet", "default", true);
+    assert(service.save(saved).isSuccessful && !saved.enabled && !service.get(writer.id).value.enabled);
+    assert(service.setEnabled(writer.id, true).isSuccessful && service.get(writer.id).value.enabled);
+    assert(cast(AgentNotFoundError) service.setEnabled(randomUUID, false).error);
+
     assert(service.remove(writer.id).isSuccessful);
     assert(cast(AgentNotFoundError) service.remove(writer.id).error);
 
     assert(events.agents == [
         Published(Event.created, writer.id),
         Published(Event.changed, writer.id),
+        Published(Event.changed, writer.id),
+        Published(Event.changed, writer.id),
+        Published(Event.changed, writer.id),
         Published(Event.deleted, writer.id)
     ]);
+}
+
+// AgentService: enabling or disabling every agent at once.
+unittest
+{
+    auto database = new MockDatabase;
+    auto events = new MockEventPublisher;
+    auto service = agentServiceOver(database, events);
+
+    auto writer = new Agent(UUID.init, "Writer", "claude-code", "sonnet", "default", false);
+    auto reviewer = new Agent(UUID.init, "Reviewer", "claude-code", "sonnet", "default", false);
+    assert(service.save(writer).isSuccessful && service.save(reviewer).isSuccessful);
+    assert(service.setEnabled(reviewer.id, false).isSuccessful);
+    events.agents = null;
+
+    // Only the agents that change are changed, and reported.
+    assert(service.setAllEnabled(false) == [writer.id] && !writer.enabled && !reviewer.enabled);
+    assert(events.agents == [Published(Event.changed, writer.id)]);
+    assert(service.setAllEnabled(false).length == 0);
+    assert(service.setAllEnabled(true) == [writer.id, reviewer.id] && writer.enabled && reviewer.enabled);
 }
 
 // The field checks every save makes before it writes.

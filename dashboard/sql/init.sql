@@ -69,6 +69,7 @@ create table if not exists agents (
 	model              text not null,
 	effort             text not null default 'default',
 	task_scheduler     boolean not null default false,
+	enabled            boolean not null default true,
 	instructions       text not null default '',
 	-- Null for no limit.
 	max_parallel_tasks integer default 5 check (max_parallel_tasks > 0),

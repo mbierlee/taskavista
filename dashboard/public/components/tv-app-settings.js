@@ -6,7 +6,15 @@
    them in one, but the models' real names are too long for that), marks each task
    scheduler, and shows its labels, if it has any, under a divider. After them
    comes "Quick-create an agent", where a person describes an agent for one
-   of the agents to draft. `show()` hands it the agents, `clear()` empties it.
+   of the agents to draft. The disabled agents follow in a list of their own,
+   under "Disabled · n", drawn as outlines. `show()` hands it the agents,
+   `clear()` empties it.
+
+   Each agent's "Disable", or "Enable" for a disabled one, raises
+   agent-enable. "Disable all" in the heading, disabled when no agent is
+   enabled, and "Re-enable all" beside "Disabled · n" raise agents-enable-all.
+   The caller writes it and calls `show()` again; the button is disabled
+   meanwhile.
 
    "+ Add agent" and each agent's "Edit" open a tv-agent-dialog, whose events
    come up through this element. The caller writes what they ask for, then
@@ -21,6 +29,8 @@
 
    Events (bubbling and composed):
      agent-draft   detail { description }
+     agent-enable  detail { id, enabled }
+     agents-enable-all  detail { enabled }
    and from the dialog:
      agent-create  detail { name, runtime, model, effort, maxParallelTasks, instructions, labels, taskScheduler }
      agent-save    detail { id, name, runtime, model, effort, maxParallelTasks, instructions, labels, taskScheduler }
@@ -33,8 +43,13 @@ const template = await loadTemplate("tv-app-settings.html");
 
 export class TvAppSettings extends HTMLElement {
   #status;
+  #disableAll;
+  #enableAll;
   #add;
   #agents;
+  #disabledHead;
+  #disabledHeading;
+  #disabledAgents;
   #agentTemplate;
   #quickCreate;
   #description;
@@ -56,8 +71,13 @@ export class TvAppSettings extends HTMLElement {
     const root = attachTemplate(this, template);
 
     this.#status = root.querySelector(".status");
+    this.#disableAll = root.querySelector(".disable-all");
+    this.#enableAll = root.querySelector(".enable-all");
     this.#add = root.querySelector(".add");
     this.#agents = root.querySelector(".agents");
+    this.#disabledHead = root.querySelector(".disabled-head");
+    this.#disabledHeading = root.querySelector(".disabled-heading");
+    this.#disabledAgents = root.querySelector(".disabled-agents");
     this.#agentTemplate = root.querySelector(".agent-template");
     this.#quickCreate = root
       .querySelector(".quick-create-template")
@@ -76,6 +96,21 @@ export class TvAppSettings extends HTMLElement {
         this.#labels,
       ),
     );
+    for (const [button, enabled] of [
+      [this.#disableAll, false],
+      [this.#enableAll, true],
+    ]) {
+      button.addEventListener("click", () => {
+        button.disabled = true;
+        this.dispatchEvent(
+          new CustomEvent("agents-enable-all", {
+            bubbles: true,
+            composed: true,
+            detail: { enabled },
+          }),
+        );
+      });
+    }
     this.#description.addEventListener("input", () => this.#updateGenerate());
     // Enter generates, as the button would; Shift+Enter is left to add a newline.
     this.#description.addEventListener("keydown", (event) => {
@@ -117,51 +152,30 @@ export class TvAppSettings extends HTMLElement {
 
     const runtimeNames = new Map(runtimes.map((r) => [r.id, r.name]));
     const modelNames = new Map(models.map((m) => [m.id, m.name]));
+    const item = (agent) => this.#agentItem(agent, runtimeNames, modelNames);
 
+    const disabled = agents.filter((agent) => !agent.enabled);
+    this.#disableAll.disabled = disabled.length === agents.length;
     this.#agents.replaceChildren(
-      ...agents.map((agent) => {
-        const item = this.#agentTemplate.content.firstElementChild.cloneNode(true);
-        item.querySelector(".agent-name").textContent = agent.name;
-        item.querySelector(".runtime").textContent =
-          runtimeNames.get(agent.runtime) ?? agent.runtime;
-        item.querySelector(".model").textContent =
-          modelNames.get(agent.model) ?? agent.model;
-        item.querySelector(".effort").textContent =
-          models
-            .find((m) => m.id === agent.model)
-            ?.effortLevels.find((e) => e.id === agent.effort)?.name ??
-          agent.effort;
-        item.querySelector(".scheduler").hidden = !agent.taskScheduler;
-        const labels = item.querySelector(".agent-labels");
-        labels.hidden = agent.labels.length === 0;
-        labels.replaceChildren(
-          ...agent.labels.map((label) => {
-            const labelEl = document.createElement("span");
-            labelEl.className = "agent-label";
-            labelEl.textContent = label;
-            return labelEl;
-          }),
-        );
-        item.querySelector(".edit").addEventListener("click", () =>
-          this.#dialog.edit(
-            agent,
-            this.#runtimes,
-            this.#models,
-            this.#defaults,
-            this.#labels,
-          ),
-        );
-        return item;
-      }),
+      ...agents.filter((agent) => agent.enabled).map(item),
       this.#quickCreate,
     );
+    this.#disabledAgents.replaceChildren(...disabled.map(item));
+    this.#disabledHeading.textContent = `Disabled · ${disabled.length}`;
+    this.#enableAll.disabled = false;
+    this.#disabledHead.hidden = disabled.length === 0;
+    this.#disabledAgents.hidden = disabled.length === 0;
     this.#setStatus(agents.length === 0 ? "There are no agents yet." : "");
   }
 
   clear(message = "") {
     this.#add.disabled = true;
+    this.#disableAll.disabled = true;
     this.#dialog.close();
     this.#agents.replaceChildren();
+    this.#disabledAgents.replaceChildren();
+    this.#disabledHead.hidden = true;
+    this.#disabledAgents.hidden = true;
     this.#setStatus(message);
   }
 
@@ -227,6 +241,54 @@ export class TvAppSettings extends HTMLElement {
       dots.innerHTML = "<span>.</span><span>.</span><span>.</span>";
       this.#generateLabel.append(dots);
     }
+  }
+
+  #agentItem(agent, runtimeNames, modelNames) {
+    const item = this.#agentTemplate.content.firstElementChild.cloneNode(true);
+    item.classList.toggle("off", !agent.enabled);
+    item.querySelector(".agent-name").textContent = agent.name;
+    item.querySelector(".runtime").textContent =
+      runtimeNames.get(agent.runtime) ?? agent.runtime;
+    item.querySelector(".model").textContent =
+      modelNames.get(agent.model) ?? agent.model;
+    item.querySelector(".effort").textContent =
+      this.#models
+        .find((m) => m.id === agent.model)
+        ?.effortLevels.find((e) => e.id === agent.effort)?.name ??
+      agent.effort;
+    item.querySelector(".scheduler").hidden = !agent.taskScheduler;
+    const labels = item.querySelector(".agent-labels");
+    labels.hidden = agent.labels.length === 0;
+    labels.replaceChildren(
+      ...agent.labels.map((label) => {
+        const labelEl = document.createElement("span");
+        labelEl.className = "agent-label";
+        labelEl.textContent = label;
+        return labelEl;
+      }),
+    );
+    const enable = item.querySelector(".enable");
+    enable.textContent = agent.enabled ? "Disable" : "Enable";
+    enable.addEventListener("click", () => {
+      enable.disabled = true;
+      this.dispatchEvent(
+        new CustomEvent("agent-enable", {
+          bubbles: true,
+          composed: true,
+          detail: { id: agent.id, enabled: !agent.enabled },
+        }),
+      );
+    });
+    item.querySelector(".edit").addEventListener("click", () =>
+      this.#dialog.edit(
+        agent,
+        this.#runtimes,
+        this.#models,
+        this.#defaults,
+        this.#labels,
+      ),
+    );
+    return item;
   }
 
   #setStatus(message) {

@@ -70,6 +70,32 @@
   .section-head h2 {
     margin: 0;
   }
+  .head-actions {
+    flex: none;
+    display: flex;
+    gap: 8px;
+  }
+  .disable-all {
+    gap: 7px;
+    padding: 7px 14px;
+    border-color: var(--border);
+    background: var(--surface-input);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .disable-all:hover:not(:disabled) {
+    border-color: var(--muted-2);
+    background: var(--surface-hover);
+  }
+  .disable-all:disabled {
+    border-color: var(--border-soft);
+    background: var(--disabled-bg);
+    color: var(--disabled-ink);
+  }
+  .disable-all .icon {
+    font-size: 9px;
+    letter-spacing: 1px;
+  }
   .add {
     padding: 7px 14px;
     font-size: 13px;
@@ -114,7 +140,14 @@
     font-size: 15px;
     font-weight: 600;
   }
-  .edit {
+  .agent-actions {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .edit,
+  .enable {
     flex: none;
     padding: 3px 10px;
     border-color: var(--border);
@@ -122,9 +155,64 @@
     background: var(--surface-input);
     font-size: 12px;
   }
-  .edit:hover {
+  .edit:hover:not(:disabled),
+  .enable:hover:not(:disabled) {
     border-color: var(--muted-2);
     background: var(--surface-hover);
+  }
+
+  /* A disabled agent is drawn as an outline, with "Enable" in the accent,
+     since bringing it back is what it is there for. */
+  .agent.off {
+    border-style: dashed;
+    border-color: var(--border-dashed);
+    background: transparent;
+  }
+  .agent.off .agent-name {
+    color: var(--muted);
+  }
+  .agent.off .enable {
+    border-color: var(--accent-outline);
+    background: transparent;
+    color: var(--accent);
+  }
+  .agent.off .enable:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--accent-tint-hover);
+  }
+  .agent.off .tag {
+    background: var(--disabled-bg);
+    color: var(--text-dim);
+  }
+  .agent.off .agent-label {
+    color: var(--text-dim);
+  }
+
+  .disabled-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-top: 6px;
+  }
+  .disabled-head h2 {
+    margin: 0;
+  }
+  .enable-all {
+    gap: 7px;
+    padding: 6px 13px;
+    border-color: var(--accent-outline);
+    background: transparent;
+    font-size: 13px;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .enable-all:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--accent-tint-hover);
+  }
+  .enable-all .icon {
+    font-size: 9px;
   }
 
   .tags {
@@ -275,12 +363,24 @@
   <section class="section" aria-labelledby="agents-heading">
     <div class="section-head">
       <h2 class="label" id="agents-heading">AI agents</h2>
-      <button class="btn primary add" type="button" disabled>
-        + Add agent
-      </button>
+      <div class="head-actions">
+        <button class="btn disable-all" type="button" disabled>
+          <span class="icon" aria-hidden="true">❚❚</span>Disable all
+        </button>
+        <button class="btn primary add" type="button" disabled>
+          + Add agent
+        </button>
+      </div>
     </div>
     <p class="status" hidden></p>
     <ul class="agents"></ul>
+    <div class="disabled-head" hidden>
+      <h2 class="label disabled-heading"></h2>
+      <button class="btn enable-all" type="button">
+        <span class="icon" aria-hidden="true">▶</span>Re-enable all
+      </button>
+    </div>
+    <ul class="agents disabled-agents" aria-label="Disabled agents" hidden></ul>
   </section>
 </div>
 
@@ -290,7 +390,10 @@
   <li class="agent">
     <div class="agent-head">
       <span class="agent-name"></span>
-      <button class="btn edit" type="button">Edit</button>
+      <div class="agent-actions">
+        <button class="btn enable" type="button"></button>
+        <button class="btn edit" type="button">Edit</button>
+      </div>
     </div>
     <div class="tags">
       <span class="tag runtime"></span>

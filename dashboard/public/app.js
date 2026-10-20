@@ -795,6 +795,45 @@ function saveAgent({ id, ...agent }) {
   );
 }
 
+/* The list is fetched again once the server has answered, whether or not it
+   took the change, so the agents show as they now are. */
+async function setAgentEnabled(agentId, enabled) {
+  try {
+    await queueWrite(() =>
+      sendJson("POST", "/api/rpc/v1/setAgentEnabled", { agentId, enabled }),
+    );
+  } catch (error) {
+    console.error(
+      `Could not ${enabled ? "enable" : "disable"} the agent ${agentId}:`,
+      error,
+    );
+  }
+  await reloadAgentList();
+}
+
+async function setAllAgentsEnabled(enabled) {
+  try {
+    await queueWrite(() =>
+      sendJson("POST", "/api/rpc/v1/setAllAgentsEnabled", { enabled }),
+    );
+  } catch (error) {
+    console.error(
+      `Could not ${enabled ? "enable" : "disable"} the AI agents:`,
+      error,
+    );
+  }
+  await reloadAgentList();
+}
+
+async function reloadAgentList() {
+  try {
+    await fetchAppSettings();
+  } catch (error) {
+    console.error("Could not reload the AI agents:", error);
+    appSettingsEl.clear("The AI agents could not be loaded.");
+  }
+}
+
 function deleteAgent(id) {
   writeAgent(
     () =>
@@ -1653,6 +1692,14 @@ appSettingsEl.addEventListener("agent-create", (event) => {
 
 appSettingsEl.addEventListener("agent-save", (event) => {
   saveAgent(event.detail);
+});
+
+appSettingsEl.addEventListener("agent-enable", (event) => {
+  setAgentEnabled(event.detail.id, event.detail.enabled);
+});
+
+appSettingsEl.addEventListener("agents-enable-all", (event) => {
+  setAllAgentsEnabled(event.detail.enabled);
 });
 
 appSettingsEl.addEventListener("agent-delete", (event) => {

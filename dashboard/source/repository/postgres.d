@@ -799,7 +799,7 @@ class PostgresTaskRepository : ITaskRepository
     {
         QueryParams query;
         query.sqlCommand = "insert into task_notes (task_id, note)"
-            ~ " select id, 'Not assigned, since there is no task scheduler agent' from tasks where id = $1 returning id";
+            ~ " select id, 'Not assigned, since there is no enabled task scheduler agent' from tasks where id = $1 returning id";
         query.argsVariadic(id);
 
         return client.pickConnection((scope connection) {
@@ -924,12 +924,12 @@ private Task[] toTasks(Answer answer)
 
 /**
  * The columns a task is read from, as `t`, with the agent at work on it: its own agent while it
- * is executing, and while it is being scheduled the task scheduler agent, the one
- * `IAgentRepository.all` puts first, as the scheduler uses.
+ * is executing, and while it is being scheduled the first enabled task scheduler agent in the
+ * order of `IAgentRepository.all`, as the scheduler uses.
  */
 private enum taskColumns = "t.id, t.lane_id, t.description, t.position, case t.agent_status"
     ~ " when 'executing' then t.assigned_ai_agent_id"
-    ~ " when 'scheduling' then (select a.id from agents a where a.task_scheduler order by a.name limit 1)"
+    ~ " when 'scheduling' then (select a.id from agents a where a.task_scheduler and a.enabled order by a.name limit 1)"
     ~ " end as working_agent_id";
 
 private Task toTask(immutable Row row)
@@ -1066,7 +1066,7 @@ class PostgresAgentRepository : IAgentRepository
     Agent[] all()
     {
         QueryParams query;
-        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, instructions, max_parallel_tasks from agents order by task_scheduler desc, name";
+        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, enabled, instructions, max_parallel_tasks from agents order by task_scheduler desc, name";
 
         return client.pickConnection((scope connection) {
             auto answer = connection.execParams(query);
@@ -1099,7 +1099,7 @@ class PostgresAgentRepository : IAgentRepository
     Nullable!Agent find(UUID id)
     {
         QueryParams query;
-        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, instructions, max_parallel_tasks from agents where id = $1";
+        query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, enabled, instructions, max_parallel_tasks from agents where id = $1";
         query.argsVariadic(id);
 
         return client.pickConnection((scope connection) {
@@ -1117,20 +1117,35 @@ class PostgresAgentRepository : IAgentRepository
         });
     }
 
-    Nullable!int maxParallelTasks(UUID id)
+    bool setEnabled(UUID id, bool enabled)
     {
         QueryParams query;
-        query.sqlCommand = "select max_parallel_tasks from agents where id = $1";
-        query.argsVariadic(id);
+        query.sqlCommand = "update agents set enabled = $2 where id = $1 returning id";
+        query.argsVariadic(id, enabled);
+
+        return client.pickConnection((scope connection) {
+            return connection.execParams(query).length > 0;
+        });
+    }
+
+    UUID[] setAllEnabled(bool enabled)
+    {
+        QueryParams query;
+        query.sqlCommand = "update agents set enabled = $1 where enabled <> $1 returning id";
+        query.argsVariadic(enabled);
 
         return client.pickConnection((scope connection) {
             auto answer = connection.execParams(query);
-            if (answer.length == 0 || answer[0]["max_parallel_tasks"].isNull)
+
+            UUID[] ids;
+            ids.reserve(answer.length);
+
+            foreach (index; 0 .. answer.length)
             {
-                return Nullable!int.init;
+                ids ~= answer[index]["id"].as!UUID;
             }
 
-            return answer[0]["max_parallel_tasks"].as!int.nullable;
+            return ids;
         });
     }
 
@@ -1148,7 +1163,7 @@ class PostgresAgentRepository : IAgentRepository
     Agent add(Agent agent)
     {
         QueryParams query;
-        query.sqlCommand = "insert into agents (name, runtime, model, effort, task_scheduler, instructions, max_parallel_tasks) values ($1, $2, $3, $4, $5, $6, $7) returning id";
+        query.sqlCommand = "insert into agents (name, runtime, model, effort, task_scheduler, instructions, max_parallel_tasks) values ($1, $2, $3, $4, $5, $6, $7) returning id, enabled";
         query.argsVariadic(agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler, agent.instructions,
             agent.maxParallelTasks);
 
@@ -1159,7 +1174,9 @@ class PostgresAgentRepository : IAgentRepository
                 connection.exec("rollback");
             }
 
-            agent.id = connection.execParams(query)[0]["id"].as!UUID;
+            auto row = connection.execParams(query)[0];
+            agent.id = row["id"].as!UUID;
+            agent.enabled = row["enabled"].as!bool;
             connection.insertLabels(agent.id, agent.labels);
 
             connection.exec("commit");
@@ -1171,7 +1188,7 @@ class PostgresAgentRepository : IAgentRepository
     bool update(Agent agent)
     {
         QueryParams query;
-        query.sqlCommand = "update agents set name = $2, runtime = $3, model = $4, effort = $5, task_scheduler = $6, instructions = $7, max_parallel_tasks = $8 where id = $1 returning id";
+        query.sqlCommand = "update agents set name = $2, runtime = $3, model = $4, effort = $5, task_scheduler = $6, instructions = $7, max_parallel_tasks = $8 where id = $1 returning enabled";
         query.argsVariadic(agent.id, agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler, agent.instructions,
             agent.maxParallelTasks);
 
@@ -1182,11 +1199,14 @@ class PostgresAgentRepository : IAgentRepository
                 connection.exec("rollback");
             }
 
-            if (connection.execParams(query).length == 0)
+            auto answer = connection.execParams(query);
+            if (answer.length == 0)
             {
                 connection.exec("rollback");
                 return false;
             }
+
+            agent.enabled = answer[0]["enabled"].as!bool;
 
             QueryParams clear;
             clear.sqlCommand = "delete from agent_labels where agent_id = $1";
@@ -1252,7 +1272,8 @@ private Agent toAgent(immutable Row row)
         row["task_scheduler"].as!bool,
         row["instructions"].as!string,
         null,
-        row["max_parallel_tasks"].isNull ? Nullable!int.init : row["max_parallel_tasks"].as!int.nullable
+        row["max_parallel_tasks"].isNull ? Nullable!int.init : row["max_parallel_tasks"].as!int.nullable,
+        row["enabled"].as!bool
     );
 }
 
