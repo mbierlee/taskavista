@@ -13,7 +13,8 @@ The project's files are in its working directory, <working dir>. Other agents ma
 in it at the same time, so read a file again just before you change it.
 [end]
 
-Your current directory is your scratch space, which is yours alone for this chat. Keep
+Your current directory is your scratch space, which is yours alone for this chat, and is
+removed once the chat ends. Keep
 anything temporary in it, such as drafts, downloads and the output of commands you only need
 for a moment.
 [if working-dir]

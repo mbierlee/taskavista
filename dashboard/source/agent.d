@@ -17,7 +17,7 @@ import std.datetime.date : DateTime;
 import std.datetime.systime : SysTime;
 import std.digest : toHexString;
 import std.digest.sha : sha256Of;
-import std.file : mkdirRecurse, tempDir;
+import std.file : SpanMode, dirEntries, exists, mkdirRecurse, rmdirRecurse, tempDir;
 import std.format : format;
 import std.path : buildPath;
 import std.range : chain, retro;
@@ -148,11 +148,83 @@ class RunStoppedException : Exception
  */
 string createAgentScratchSpace(UUID agentId, UUID runId)
 {
-    auto scratchSpace = buildPath(tempDir, "taskavista-tmp", format(
-            "taskavista-scratch-%s-%s", agentId, runId));
+    auto scratchSpace = agentScratchSpace(agentId, runId);
     mkdirRecurse(scratchSpace);
 
     return scratchSpace;
+}
+
+/**
+ * Removes the scratch space of an agent's run, or of a session, once nothing runs in it any more,
+ * along with whatever the agent left there. One that is not there is passed over. A failure is
+ * logged rather than thrown, since what the run was for is done either way.
+ */
+void removeAgentScratchSpace(UUID agentId, UUID runId) nothrow
+{
+    try
+    {
+        removeScratchSpace(agentScratchSpace(agentId, runId));
+    }
+    catch (Exception e)
+    {
+        logError("The scratch space of run %s of agent %s could not be removed: %s", runId, agentId, e.msg);
+    }
+}
+
+/// Removes every scratch space of an agent's, such as once the agent is deleted, as `removeAgentScratchSpace` does one.
+void removeAgentScratchSpaces(UUID agentId) nothrow
+{
+    try
+    {
+        auto root = scratchSpaceRoot();
+        if (!root.exists)
+        {
+            return;
+        }
+
+        // Listed before any is removed, since removing them while they are listed may skip some.
+        auto scratchSpaces = dirEntries(root, format("%s-*", scratchSpacePrefix(agentId)), SpanMode.shallow, false)
+            .map!(entry => entry.name).array;
+        foreach (scratchSpace; scratchSpaces)
+        {
+            try
+            {
+                removeScratchSpace(scratchSpace);
+            }
+            catch (Exception e)
+            {
+                logError("The scratch space %s could not be removed: %s", scratchSpace, e.msg);
+            }
+        }
+    }
+    catch (Exception e)
+    {
+        logError("The scratch spaces of agent %s could not be removed: %s", agentId, e.msg);
+    }
+}
+
+private string agentScratchSpace(UUID agentId, UUID runId)
+{
+    return buildPath(scratchSpaceRoot(), format("%s-%s", scratchSpacePrefix(agentId), runId));
+}
+
+private string scratchSpacePrefix(UUID agentId)
+{
+    return format("taskavista-scratch-%s", agentId);
+}
+
+private string scratchSpaceRoot()
+{
+    return buildPath(tempDir, "taskavista-tmp");
+}
+
+/// rmdirRecurse does not follow symbolic links, so a link an agent left there to elsewhere only loses the link.
+private void removeScratchSpace(string scratchSpace)
+{
+    if (scratchSpace.exists)
+    {
+        rmdirRecurse(scratchSpace);
+    }
 }
 
 /**
@@ -365,9 +437,21 @@ class ClaudeCodeRuntime : IRuntime
             return run(agent, prompt, systemPrompt, scratch, addDir(workingDir) ~ sessionArgs, stop);
         }
 
+        // The scratch spaces removed here are only those runAs makes: a one-off's, which nothing runs
+        // in again, and a new session's whose first run failed, since the caller never learns
+        // the session to continue it.
         if (!createSession)
         {
-            return runAs(randomUUID(), [
+            auto runId = randomUUID();
+            scope (exit)
+            {
+                if (scratchSpace is null)
+                {
+                    removeAgentScratchSpace(agent.id, runId);
+                }
+            }
+
+            return runAs(runId, [
                     "--no-session-persistence"
                 ]);
         }
@@ -375,6 +459,14 @@ class ClaudeCodeRuntime : IRuntime
         if (sessionId is null)
         {
             auto newSessionId = randomUUID();
+            scope (failure)
+            {
+                if (scratchSpace is null)
+                {
+                    removeAgentScratchSpace(agent.id, newSessionId);
+                }
+            }
+
             auto answer = runAs(newSessionId, [
                     "--session-id", newSessionId.toString
                 ]);
@@ -617,32 +709,9 @@ class AgentPrompt
     }
 }
 
-/**
- * Passes a person's chat messages on to an agent. A chat is a session on the
- * agent's runtime, started with the agent prompt and the new-chat prompt as its
- * system prompt, which tell the agent who it is and where the person is. Every
- * message goes as it is.
- *
- * A chat in a project runs in its scratch space with the project's working
- * directory open to it, rather than in the working directory, since a session
- * is continued in the directory it started in, and the working directory moves
- * when the project's slug changes.
- */
-class AgentChat
+/// A person's chats with agents.
+interface IAgentChat
 {
-    private RuntimeExecutor executor;
-    private PromptParser parser;
-    private AgentPrompt agentPrompt;
-    private ProjectWorkingDirs workingDirs;
-
-    this(RuntimeExecutor executor, PromptParser parser, AgentPrompt agentPrompt, ProjectWorkingDirs workingDirs)
-    {
-        this.executor = executor;
-        this.parser = parser;
-        this.agentPrompt = agentPrompt;
-        this.workingDirs = workingDirs;
-    }
-
     /**
      * Sends the person's message to an agent, in a chat that is going on or as
      * the start of a new one, and waits for its answer.
@@ -658,16 +727,79 @@ class AgentChat
      *
      * Returns: The agent's answer.
      *
-     * Throws: `Exception` when the agent has no session `sessionId`, its runtime
-     *   is not one this server provides, or the runtime fails.
+     * Throws: `RunStoppedException` when the chat was ended while the agent was
+     *   answering, and `Exception` when the agent has no session `sessionId`, its
+     *   runtime is not one this server provides, or the runtime fails.
      */
+    public string send(Agent agent, Nullable!Project project, string message, ref string sessionId);
+
+    /**
+     * Ends a chat, which can then no longer be continued. An answer the agent is
+     * still giving is stopped. A chat that has ended already is passed over.
+     *
+     * Params:
+     *   agentId = The agent the chat is with, which may have been deleted.
+     *   sessionId = The chat's session.
+     */
+    public void end(UUID agentId, UUID sessionId) nothrow;
+
+    /// Ends every chat with an agent, such as once it is deleted, including those no page knows of any more.
+    public void endAll(UUID agentId) nothrow;
+}
+
+/**
+ * Passes a person's chat messages on to an agent. A chat is a session on the
+ * agent's runtime, started with the agent prompt and the new-chat prompt as its
+ * system prompt, which tell the agent who it is and where the person is. Every
+ * message goes as it is.
+ *
+ * A chat in a project runs in its scratch space with the project's working
+ * directory open to it, rather than in the working directory, since a session
+ * is continued in the directory it started in, and the working directory moves
+ * when the project's slug changes. The scratch space stays until the chat is
+ * ended; one whose page was closed without ending it is left to the OS, which
+ * clears the temp directory it is in.
+ */
+class AgentChat : IAgentChat
+{
+    private RuntimeExecutor executor;
+    private PromptParser parser;
+    private AgentPrompt agentPrompt;
+    private ProjectWorkingDirs workingDirs;
+    /**
+     * The messages the agents are answering now. The requests all run on one thread, so no lock
+     * is needed.
+     */
+    private ChatRun[] runs;
+
+    this(RuntimeExecutor executor, PromptParser parser, AgentPrompt agentPrompt, ProjectWorkingDirs workingDirs)
+    {
+        this.executor = executor;
+        this.parser = parser;
+        this.agentPrompt = agentPrompt;
+        this.workingDirs = workingDirs;
+    }
+
     public string send(Agent agent, Nullable!Project project, string message, ref string sessionId)
     {
+        auto run = new ChatRun(agent.id, sessionId);
+        runs ~= run;
+        // A chat ended while its agent was answering keeps its scratch space until the agent has
+        // stopped, so that it is not removed from under the agent.
+        scope (exit)
+        {
+            runs = runs.filter!(going => going !is run).array;
+            if (run.ended)
+            {
+                removeAgentScratchSpace(agent.id, run.endedSession);
+            }
+        }
+
         auto workingDir = project.isNull ? null : workingDirs.ensure(project.get.slug);
         if (sessionId !is null)
         {
             return executor.prompt(agent.id.toString, message, true, sessionId, null, workingDir, null,
-                RunIn.scratchSpace);
+                RunIn.scratchSpace, run.stop);
         }
 
         string[string] placeholders = ["<working dir>": workingDir];
@@ -687,7 +819,58 @@ class AgentChat
         auto chatPrompt = parser.parse(newChatPrompt, placeholders, conditions);
 
         return executor.prompt(agent.id.toString, message, true, sessionId,
-            agentPrompt.systemPrompt(agent, chatPrompt), workingDir, null, RunIn.scratchSpace);
+            agentPrompt.systemPrompt(agent, chatPrompt), workingDir, null, RunIn.scratchSpace, run.stop);
+    }
+
+    public void end(UUID agentId, UUID sessionId) nothrow
+    {
+        auto session = sessionId.toString;
+        foreach (run; runs)
+        {
+            if (run.agentId == agentId && run.sessionId == session)
+            {
+                run.ended = true;
+                run.endedSession = sessionId;
+                run.stop.request();
+                return;
+            }
+        }
+
+        removeAgentScratchSpace(agentId, sessionId);
+    }
+
+    public void endAll(UUID agentId) nothrow
+    {
+        // A chat's first message has no session yet, and when it is stopped the runtime removes the
+        // scratch space it made for it.
+        foreach (run; runs)
+        {
+            if (run.agentId == agentId)
+            {
+                run.stop.request();
+            }
+        }
+
+        removeAgentScratchSpaces(agentId);
+    }
+}
+
+/// A chat message an agent is answering.
+private class ChatRun
+{
+    UUID agentId;
+    /// The chat's session, or null for the message that starts it, whose session is not known yet.
+    string sessionId;
+    RunStop stop;
+    /// Whether the chat was ended while the message was answered, and its session if it was.
+    bool ended;
+    UUID endedSession;
+
+    this(UUID agentId, string sessionId)
+    {
+        this.agentId = agentId;
+        this.sessionId = sessionId;
+        stop = new RunStop;
     }
 }
 
@@ -1390,16 +1573,21 @@ class TaskExecutor
         // agent could not get to work.
         auto workingDir = workingDirs.ensure(project.get.slug);
         run.workingDir = workingDir;
+        auto runId = randomUUID();
         string scratchSpace;
         try
         {
-            scratchSpace = createAgentScratchSpace(agent.get.id, randomUUID());
+            scratchSpace = createAgentScratchSpace(agent.get.id, runId);
         }
         catch (Exception e)
         {
             logError("Agent %s could not work on task %s: %s", agent.get.name, task.id, e.msg);
             noted(tasks.recordExecutionFailure(task.id, agent.get.id), task.id, project.get.id);
             return false;
+        }
+        scope (exit)
+        {
+            removeAgentScratchSpace(agent.get.id, runId);
         }
 
         auto board = lanes.ofProject(project.get.id);

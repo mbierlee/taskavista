@@ -1010,6 +1010,13 @@ async function sendMessage(sessionId, text) {
     reply = { from: "error", text: error.message };
   }
 
+  if (!store.state.chat.sessions.some((s) => s.id === sessionId)) {
+    if (!session.agentSessionId && agentSessionId) {
+      endAgentSession(session.agentId, agentSessionId);
+    }
+    return;
+  }
+
   const { open, current } = store.state.chat;
   const seen = open && current === sessionId;
   updateSession(sessionId, (s) => ({
@@ -1020,6 +1027,16 @@ async function sendMessage(sessionId, text) {
     projectId: agentSessionId ? projectId : null,
     unread: seen ? s.unread : s.unread + 1,
   }));
+}
+
+/* Stops the agent if it is still answering, and has the server remove what
+   the chat kept, since nothing can continue it once its tab is gone. */
+async function endAgentSession(agentId, agentSessionId) {
+  try {
+    await sendJson("POST", "/api/rpc/v1/endChat", { agentId, sessionId: agentSessionId });
+  } catch (error) {
+    console.error(`Could not end the chat ${agentSessionId}:`, error);
+  }
 }
 
 function updateSession(sessionId, change) {
@@ -1726,7 +1743,14 @@ chatEl.addEventListener("chat-select", (event) => {
   selectChat(event.detail.sessionId);
 });
 
+/* Only a tab the person closes ends its chat on the server: a deleted agent's
+   chats are ended by the server itself. One still waiting for the reply to its
+   first message has no session yet, and is ended once the reply brings it. */
 chatEl.addEventListener("chat-end", (event) => {
+  const session = store.state.chat.sessions.find((s) => s.id === event.detail.sessionId);
+  if (session?.agentSessionId) {
+    endAgentSession(session.agentId, session.agentSessionId);
+  }
   endChats([event.detail.sessionId]);
 });
 

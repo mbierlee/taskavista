@@ -5,8 +5,8 @@ import std.algorithm : startsWith;
 import std.functional : toDelegate;
 import std.path : baseName, extension;
 
-import agent : AgentChat, AgentDrafter, AgentHelp, AgentPrompt, ClaudeCodeRuntime, IRuntime, RuntimeExecutor,
-    TaskExecutor, TaskScheduler;
+import agent : AgentChat, AgentDrafter, AgentHelp, AgentPrompt, ClaudeCodeRuntime, IAgentChat, IRuntime,
+    RuntimeExecutor, TaskExecutor, TaskScheduler;
 import config : Config, connectionString, loadConfig;
 import helpers : formatURL;
 import prompt : PromptParser;
@@ -67,7 +67,7 @@ class DashboardContext : ApplicationContext
         container.register!PromptParser;
         container.register!AgentHelp;
         container.register!AgentPrompt;
-        container.register!AgentChat;
+        container.register!(IAgentChat, AgentChat);
         container.register!AgentDrafter;
     }
 

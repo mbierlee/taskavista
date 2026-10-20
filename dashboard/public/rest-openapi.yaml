@@ -693,7 +693,9 @@ paths:
       tags: [Agents]
       operationId: deleteAgent
       summary: Delete an agent
-      description: The agent's labels go with it.
+      description: |
+        The agent's labels go with it. Every chat with it ends, as `endChat` in the RPC API ends
+        one, an answer it is still giving included.
       responses:
         "200": { $ref: "#/components/responses/Deleted" }
         "400": { $ref: "#/components/responses/MalformedId" }

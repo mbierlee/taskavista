@@ -14,7 +14,7 @@ import std.string : strip;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
-import agent : AgentChat, AgentDrafter;
+import agent : AgentDrafter, IAgentChat;
 import api.errors : toHTTPError;
 import model : Lane, Project, TaskAddRule;
 import service : AgentService, ProjectService, TaskService;
@@ -88,6 +88,11 @@ struct SendChatMessageResult
 {
     string reply;
     string sessionId;
+}
+
+/// Nothing, since an ended chat has nothing left to show.
+struct EndChatResult
+{
 }
 
 /**
@@ -165,6 +170,13 @@ interface RpcApi
             .init) @safe;
 
     /**
+     * Ends a chat, stopping an answer the agent is still giving, and removes
+     * what the chat kept, so it can no longer be continued.
+     */
+    @method(HTTPMethod.POST) @path("endChat")
+    EndChatResult endChat(UUID agentId, UUID sessionId) @safe;
+
+    /**
      * Has an agent draft a new agent from what the person wrote it should do,
      * without creating it. Answers with the agent's fields, for the new agent
      * dialog to show, or with only an `error` when no agent could draft one.
@@ -179,10 +191,10 @@ class RpcController : RpcApi
     private ProjectService projects;
     private TaskService tasks;
     private AgentService agents;
-    private AgentChat chat;
+    private IAgentChat chat;
     private AgentDrafter drafter;
 
-    this(ProjectService projects, TaskService tasks, AgentService agents, AgentChat chat, AgentDrafter drafter)
+    this(ProjectService projects, TaskService tasks, AgentService agents, IAgentChat chat, AgentDrafter drafter)
     {
         this.projects = projects;
         this.tasks = tasks;
@@ -336,6 +348,13 @@ class RpcController : RpcApi
             throw new HTTPStatusException(HTTPStatus.badGateway,
                 "The agent could not answer: " ~ exception.msg);
         }
+    }
+
+    override EndChatResult endChat(UUID agentId, UUID sessionId) @trusted
+    {
+        chat.end(agentId, sessionId);
+
+        return EndChatResult();
     }
 
     override Json draftAgent(string description) @trusted

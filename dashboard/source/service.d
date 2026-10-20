@@ -7,6 +7,7 @@ import std.typecons : Nullable, nullable;
 import std.uni : toLower;
 import std.uuid : UUID;
 
+import agent : IAgentChat;
 import eventing : Event, IEventPublisher;
 import helpers : hasLetterOrDigit, isHexColor, isSlug, slugify;
 import model : Agent, AgentStatus, Default, Lane, Model, Project, Runtime, Task, TaskNote, terminalAgentStatuses;
@@ -1089,12 +1090,14 @@ class AgentService
     private IAgentRepository repository;
     private IRuntimeRepository runtimes;
     private IEventPublisher events;
+    private IAgentChat chats;
 
-    this(IAgentRepository repository, IRuntimeRepository runtimes, IEventPublisher events)
+    this(IAgentRepository repository, IRuntimeRepository runtimes, IEventPublisher events, IAgentChat chats)
     {
         this.repository = repository;
         this.runtimes = runtimes;
         this.events = events;
+        this.chats = chats;
     }
 
     /**
@@ -1240,7 +1243,8 @@ class AgentService
     }
 
     /**
-     * Deletes an agent.
+     * Deletes an agent, and ends every chat with it, since a chat with an agent that is gone
+     * cannot be continued.
      *
      * Params:
      *   id = The agent's id.
@@ -1255,6 +1259,7 @@ class AgentService
         }
 
         events.agent(Event.deleted, id);
+        chats.endAll(id);
         return agentSuccess();
     }
 }
@@ -2401,6 +2406,27 @@ version (unittest)
         }
     }
 
+    /// An IAgentChat that keeps the agents whose chats it was told to end.
+    private class MockAgentChat : IAgentChat
+    {
+        UUID[] endedAgents;
+
+        string send(Agent agent, Nullable!Project project, string message, ref string sessionId)
+        {
+            assert(false, "Not used by AgentService.");
+        }
+
+        void end(UUID agentId, UUID sessionId) nothrow
+        {
+            assert(false, "Not used by AgentService.");
+        }
+
+        void endAll(UUID agentId) nothrow
+        {
+            endedAgents ~= agentId;
+        }
+    }
+
     /// Working directories under a root that is not there, so that the tests make none.
     private ProjectWorkingDirs noWorkingDirs()
     {
@@ -2431,10 +2457,14 @@ version (unittest)
             new IndexPages(noWorkingDirs(), projects, events), new MockTransactional);
     }
 
-    /// An AgentService over mock repositories, `database`'s agents and one runtime, reporting to `events`.
-    private AgentService agentServiceOver(MockDatabase database, MockEventPublisher events = new MockEventPublisher)
+    /**
+     * An AgentService over mock repositories, `database`'s agents and one runtime, reporting to `events` and
+     * ending chats in `chats`.
+     */
+    private AgentService agentServiceOver(MockDatabase database, MockEventPublisher events = new MockEventPublisher,
+        MockAgentChat chats = new MockAgentChat)
     {
-        return new AgentService(new MockAgentRepository(database), new MockRuntimeRepository, events);
+        return new AgentService(new MockAgentRepository(database), new MockRuntimeRepository, events, chats);
     }
 
     /// A task already in `database`, in the lane with id `laneId`.
@@ -2825,7 +2855,8 @@ unittest
 {
     auto database = new MockDatabase;
     auto events = new MockEventPublisher;
-    auto service = agentServiceOver(database, events);
+    auto chats = new MockAgentChat;
+    auto service = agentServiceOver(database, events, chats);
 
     auto writer = new Agent(UUID.init, "Writer", "claude-code", "sonnet", "default", false);
     auto created = service.save(writer);
@@ -2858,6 +2889,7 @@ unittest
 
     assert(service.remove(writer.id).isSuccessful);
     assert(cast(AgentNotFoundError) service.remove(writer.id).error);
+    assert(chats.endedAgents == [writer.id]);
 
     assert(events.agents == [
         Published(Event.created, writer.id),
@@ -3043,7 +3075,7 @@ unittest
             throw new UniqueViolation(constraint, "Taken.");
         }
     };
-    auto service = new AgentService(agents, new MockRuntimeRepository, events);
+    auto service = new AgentService(agents, new MockRuntimeRepository, events, new MockAgentChat);
     auto writer = new Agent(UUID.init, "Writer", "claude-code", "sonnet", "default", false);
     assert(cast(AgentNameTakenError) service.save(writer).error);
     constraint = "some_other_key";

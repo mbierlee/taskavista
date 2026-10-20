@@ -42,10 +42,11 @@ read earlier, so that you do not undo their changes.
 Keep anything temporary, such as notes to yourself, drafts, downloads and the output of commands
 you only need for a moment, in your scratch space, <scratch space>, rather than in the working
 directory, which is only for what the task should leave behind. The scratch space is yours alone,
-for this task.
+for this task, and is removed once you are done with it.
 [else]
 The project has no working directory, so there are no project files to work on. You work in
-your scratch space, <scratch space>, which is yours alone, for this task.
+your scratch space, <scratch space>, which is yours alone, for this task. It is removed once you
+are done with it, so anything the task should leave behind goes in your answer.
 [end]
 
 Do the work the description asks for. No one can answer questions while you work: where the

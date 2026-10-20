@@ -110,6 +110,13 @@ project the person is in, with its description when it has one, and how to write
 there, including an unknown runtime or a `sessionId` the runtime does not have, is a 502: only
 the runtime knows which sessions exist, so the server cannot check one beforehand.
 
+A chat runs in a scratch space of its own, named after its session, since Claude Code resumes a
+session only from the directory it ran in, so it is kept for as long as the chat can be continued.
+`endChat`, which the UI calls when a chat's tab is closed, stops an answer still being given and
+removes that scratch space; deleting an agent does the same for all its chats. The scratch space of
+a chat whose page was closed without ending it is left in the temp directory for the OS to clear,
+and Claude Code's own record of the session for Claude Code to prune.
+
 ## Drafting an agent
 
 `draftAgent` is the settings screen's "Quick-create an agent". It runs

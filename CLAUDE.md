@@ -36,7 +36,8 @@ which starts every interaction with an agent and gives it the API help in
 A project can have a working directory for its files, named after its slug under `projectWorkingDirRoot`
 in `config.json`, when that root exists (see `workingdir.d`): task agents run in it, and a chat started in a
 project runs in its own scratch space with the working directory open to it, so it can still be resumed
-after the slug changes. With no working directory, agents work in their scratch space. A project
+after the slug changes. Closing a chat's tab ends the chat on the server, which removes its scratch space, and
+a run's scratch space goes when the run ends. With no working directory, agents work in their scratch space. A project
 whose working directory has an `index.html` has an "Open project" button in the topbar, which opens
 it in a new tab, served under `/working-dirs/<slug>/`; it appears once a task is moved after the page
 was made, such as by the task scheduler moving on the task whose agent made it. Every write

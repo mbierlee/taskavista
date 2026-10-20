@@ -670,6 +670,53 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "500": { $ref: "#/components/responses/ServerError" }
 
+  /endChat:
+    post:
+      tags: [Agents]
+      operationId: endChat
+      summary: End a chat with an AI agent
+      description: |
+        Ends a chat started with `sendChatMessage`, which can then no longer be continued. When
+        the agent is still answering a message in it, the agent is stopped, and that
+        `sendChatMessage` call answers with a 502. What the chat kept on the server, such as the
+        directory the agent ran in, is removed.
+
+        Ending a chat that has ended already, or that the server does not know, is not an error,
+        and neither is one with an agent that has since been deleted, since deleting an agent ends
+        its chats. A chat whose first message failed has no session to end.
+
+        The result is an empty object.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentId, sessionId]
+              properties:
+                agentId:
+                  $ref: "#/components/schemas/Uuid"
+                  description: The agent the chat is with.
+                sessionId:
+                  $ref: "#/components/schemas/Uuid"
+                  description: The chat's session, as `sendChatMessage` returned it.
+            example: { agentId: 00539d3f-0291-4589-89a6-472afa0166cb, sessionId: 0b6f2c3e-5d1a-4f7e-9a8b-3c2d1e0f9a7b }
+      responses:
+        "200":
+          description: The chat has ended.
+          content:
+            application/json:
+              schema:
+                type: object
+              example: {}
+        "400":
+          description: "`agentId` or `sessionId` missing or not a UUID."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: The argument sessionId is missing. }
+        "500": { $ref: "#/components/responses/ServerError" }
+
   /draftAgent:
     post:
       tags: [Agents]
