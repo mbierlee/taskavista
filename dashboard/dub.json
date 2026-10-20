@@ -4,6 +4,7 @@
   "license": "MIT",
   "authors": ["Mike Bierlee"],
   "copyright": "Copyright © 2026, Mike Bierlee",
+  "targetPath": "bin",
   "stringImportPaths": ["prompts", "public"],
   "dependencies": {
     "vibe-d": "~>0.10.1",

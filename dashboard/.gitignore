@@ -2,6 +2,7 @@
 docs.json
 __dummy.html
 docs/
+/bin/
 /taskavista-dashboard
 taskavista-dashboard.so
 taskavista-dashboard.dylib
