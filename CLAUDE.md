@@ -23,10 +23,11 @@ its description, which can be edited there, and its notes, and a button that del
 name, description, add-task rule and lanes are edited on its settings screen (`/projects/:slug/settings`),
 and a project is created on the same screen in its new-project mode (`/projects/new`).
 The Taskavista settings screen (`/settings`, the topbar's ⚙) lists the AI agents, and adds,
-edits and deletes them in a dialog, along with their labels; a new agent starts on the runtime, model and effort level in `defaults`, and each agent is run at its effort level. An agent can be disabled there, which keeps the task scheduler from giving it tasks (a disabled task scheduler schedules none); it can still be chatted with. Its "Quick-create an agent" has an agent (Generic, or else a task scheduler) draft one from a description, with `dashboard/prompts/quick-create-agent.txt`, and opens the draft in that dialog to be reviewed before it is added.
+edits and deletes them in a dialog, along with their labels; a new agent starts on the runtime, model and effort level in `defaults`, and each agent is run at its effort level. An agent can be disabled there, which keeps the task scheduler from giving it tasks (a disabled task scheduler schedules none) and stops what it is working on, handing those tasks back to the scheduler; it can still be chatted with. Its "Quick-create an agent" has an agent (Generic, or else a task scheduler) draft one from a description, with `dashboard/prompts/quick-create-agent.txt`, and opens the draft in that dialog to be reviewed before it is added.
 A project managed by AI agents shows a strip over its board saying whether the agents are at
-work, with a button that pauses or resumes them; the pause is only recorded in the database
-for now, since no agents exist yet. The topbar's chat button opens the agent chat, a panel beside
+work, with a button that pauses or resumes them. Pausing stops the agents' runs on its tasks
+within a round of the task scheduler's and executor's loops, as deleting a task does its run; a
+stopped task waits to be taken up again on resume. The topbar's chat button opens the agent chat, a panel beside
 every screen with a tab per chat with an agent. A chat is a session on the agent's runtime, started
 with a system prompt of two parts, each filled in by `PromptParser`: `dashboard/prompts/system/agent.txt`,
 which starts every interaction with an agent and gives it the API help in

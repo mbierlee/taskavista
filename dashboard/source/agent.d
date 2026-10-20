@@ -3,7 +3,7 @@ module agent;
 import vibe.core.core : runTask, sleep;
 import vibe.core.file : existsFile, moveFile, writeFileUTF8;
 import vibe.core.path : NativePath;
-import vibe.core.process : ProcessConfig = Config, Redirect, collectOutput, pipeProcess;
+import vibe.core.process : ProcessConfig = Config, Process, Redirect, collectOutput, pipeProcess;
 import vibe.core.log : logError, logInfo;
 import vibe.data.json : Json, parseJsonString, serializeToJson;
 import poodinis : Inject;
@@ -12,7 +12,7 @@ import std.algorithm.comparison : among;
 import std.algorithm.iteration : filter, map;
 import std.algorithm.searching : canFind, find;
 import std.array : array, join;
-import std.datetime : seconds;
+import std.datetime : Duration, seconds;
 import std.datetime.date : DateTime;
 import std.datetime.systime : SysTime;
 import std.digest : toHexString;
@@ -40,6 +40,9 @@ import workingdir : IndexPages, ProjectWorkingDirs;
  */
 private enum claudeCodePermissionMode = "auto";
 
+/// How long Claude Code is given to end once it is asked to, before it is killed.
+private enum Duration claudeCodeStopGrace = 5.seconds;
+
 interface IRuntime
 {
     /**
@@ -62,15 +65,18 @@ interface IRuntime
      *     null for one the runtime makes, of the run or of the session.
      *   runIn = Which of the two the agent runs in; the other is open to it
      *     too. A session is continued in the directory it started in.
+     *   stop = What the run can be stopped with while it is going, or null for
+     *     a run that is never stopped.
      *
      * Returns: The agent's answer, with leading and trailing whitespace stripped.
      *
-     * Throws: `Exception` when the agent has no session `sessionId`, or the
-     *   runtime fails.
+     * Throws: `RunStoppedException` when the run was stopped through `stop`, and
+     *   `Exception` when the agent has no session `sessionId`, or the runtime
+     *   fails.
      */
     public string prompt(Agent agent, string prompt, bool createSession, ref string sessionId,
         string systemPrompt = null, string workingDir = null, string scratchSpace = null,
-        RunIn runIn = RunIn.workingDir);
+        RunIn runIn = RunIn.workingDir, RunStop stop = null);
 
     public string runTimeType();
 }
@@ -84,6 +90,52 @@ enum RunIn
 {
     workingDir,
     scratchSpace
+}
+
+/**
+ * Lets whoever starts a run stop it while it is going, such as a task's run once the task is no
+ * longer wanted. The runtime the run is on says what stopping it takes, for as long as it runs.
+ */
+class RunStop
+{
+    private bool requested;
+    private void delegate() nothrow stopRun;
+
+    /// Stops the run, or keeps it from starting when it has not yet.
+    public void request() nothrow
+    {
+        if (requested)
+        {
+            return;
+        }
+
+        requested = true;
+        if (stopRun !is null)
+        {
+            stopRun();
+        }
+    }
+
+    /// Whether the run has been asked to stop.
+    public bool isRequested() const nothrow
+    {
+        return requested;
+    }
+
+    /// For a runtime: sets what stopping the run takes while it is going, or null once it is not.
+    public void whileRunning(void delegate() nothrow stopRun) nothrow
+    {
+        this.stopRun = stopRun;
+    }
+}
+
+/// Thrown by a run that was stopped through its `RunStop`, so that it is told apart from a failure.
+class RunStoppedException : Exception
+{
+    this(string message, string file = __FILE__, size_t line = __LINE__)
+    {
+        super(message, file, line);
+    }
 }
 
 /**
@@ -167,15 +219,17 @@ class RuntimeExecutor
      *   scratchSpace = The directory for what is temporary, or null for one
      *     the runtime makes.
      *   runIn = Which of the two the agent runs in.
+     *   stop = What the run can be stopped with, or null for none.
      *
      * Returns: The agent's answer.
      *
-     * Throws: `Exception` when the agent does not exist, no runtime runs it, the
-     *   agent has no session `sessionId`, or the runtime throws.
+     * Throws: `RunStoppedException` when the run was stopped, and `Exception`
+     *   when the agent does not exist, no runtime runs it, the agent has no
+     *   session `sessionId`, or the runtime throws.
      */
     public string prompt(string agentId, string prompt, bool createSession, ref string sessionId,
         string systemPrompt = null, string workingDir = null, string scratchSpace = null,
-        RunIn runIn = RunIn.workingDir)
+        RunIn runIn = RunIn.workingDir, RunStop stop = null)
     {
         auto agent = agents.find(UUID(agentId));
         if (agent.isNull)
@@ -186,12 +240,12 @@ class RuntimeExecutor
         auto runtime = runtimeOf(agent.get);
 
         // Logged before the run, so a prompt still in progress, or one that
-        // failed, shows up with no result.
+        // failed or was stopped, shows up with no result.
         auto entry = log.add(new AgentLogEntry(UUID.init, agent.get.id, SysTime.init, prompt,
                 Nullable!string.init));
 
         auto result = runtime.prompt(agent.get, prompt, createSession, sessionId, systemPrompt, workingDir,
-            scratchSpace, runIn);
+            scratchSpace, runIn, stop);
         log.setResult(entry.id, result);
 
         return result;
@@ -290,7 +344,7 @@ class ClaudeCodeRuntime : IRuntime
      */
     public string prompt(Agent agent, string prompt, bool createSession, ref string sessionId,
         string systemPrompt = null, string workingDir = null, string scratchSpace = null,
-        RunIn runIn = RunIn.workingDir)
+        RunIn runIn = RunIn.workingDir, RunStop stop = null)
     {
         // Claude Code lets an agent write only in the directory it runs in and
         // the ones added to it.
@@ -303,12 +357,12 @@ class ClaudeCodeRuntime : IRuntime
         {
             if (runIn == RunIn.workingDir && workingDir !is null)
             {
-                return run(agent, prompt, systemPrompt, workingDir, addDir(scratchSpace) ~ sessionArgs);
+                return run(agent, prompt, systemPrompt, workingDir, addDir(scratchSpace) ~ sessionArgs, stop);
             }
 
             auto scratch = scratchSpace is null ? createAgentScratchSpace(agent.id, runId)
                 : scratchSpace;
-            return run(agent, prompt, systemPrompt, scratch, addDir(workingDir) ~ sessionArgs);
+            return run(agent, prompt, systemPrompt, scratch, addDir(workingDir) ~ sessionArgs, stop);
         }
 
         if (!createSession)
@@ -352,9 +406,18 @@ class ClaudeCodeRuntime : IRuntime
         return id;
     }
 
-    /// Returns Claude Code's answer. Throws when Claude Code exits with an error.
-    private string run(Agent agent, string prompt, string systemPrompt, string dir, string[] runArgs)
+    /**
+     * Returns Claude Code's answer. Throws `RunStoppedException` when it was stopped through `stop`,
+     * and `Exception` when it exits with an error.
+     */
+    private string run(Agent agent, string prompt, string systemPrompt, string dir, string[] runArgs,
+        RunStop stop)
     {
+        if (stop !is null && stop.isRequested)
+        {
+            throw new RunStoppedException("Claude Code was stopped before it started.");
+        }
+
         // Appended to Claude Code's own system prompt, since replacing that
         // would take away its instructions for using its tools. Claude Code
         // records the one a session starts with and reuses it on resume. Given
@@ -390,17 +453,80 @@ class ClaudeCodeRuntime : IRuntime
         ] ~ effortArgs(agent) ~ runArgs ~ systemPromptArgs,
         Redirect.stdin | Redirect.stdout, null, ProcessConfig.none, NativePath(dir));
 
-        claude.stdin.write(prompt);
-        claude.stdin.close();
+        // On the heap, since a closure cannot hold a struct with a destructor, as Process has.
+        auto process = new Process;
+        *process = claude.process;
+        if (stop !is null)
+        {
+            stop.whileRunning(() nothrow { stopProcess(process); });
+        }
+        scope (exit)
+        {
+            if (stop !is null)
+            {
+                stop.whileRunning(null);
+            }
+        }
 
-        auto answer = claude.stdout.collectOutput();
-        auto status = claude.process.wait();
+        string answer;
+        int status;
+        try
+        {
+            claude.stdin.write(prompt);
+            claude.stdin.close();
+
+            answer = claude.stdout.collectOutput();
+            status = process.wait();
+        }
+        catch (Exception e)
+        {
+            // A process stopped while its prompt is written breaks the pipe.
+            if (stop is null || !stop.isRequested)
+            {
+                throw e;
+            }
+        }
+
+        if (stop !is null && stop.isRequested)
+        {
+            throw new RunStoppedException("Claude Code was stopped.");
+        }
+
         if (status != 0)
         {
             throw new Exception(format("Claude Code exited with status %s: %s", status, answer));
         }
 
         return answer.strip;
+    }
+
+    /**
+     * Asks Claude Code to end, with SIGTERM, so that it can stop the processes it started and
+     * leave its own files whole, and kills it if it has not ended after `claudeCodeStopGrace`.
+     */
+    private static void stopProcess(Process* process) nothrow
+    {
+        try
+        {
+            process.kill();
+            runTask((Process* process) nothrow {
+                try
+                {
+                    if (process.wait(claudeCodeStopGrace).isNull)
+                    {
+                        process.forceKill();
+                    }
+                }
+                catch (Exception e)
+                {
+                    logError("Claude Code could not be killed: %s", e.msg);
+                }
+            }, process);
+        }
+        catch (Exception e)
+        {
+            logError("Claude Code could not be stopped: %s", e.msg);
+        }
     }
 
     /**
@@ -565,6 +691,135 @@ class AgentChat
     }
 }
 
+/// Why a task's run was stopped.
+private enum StopReason
+{
+    taskDeleted,
+    agentsPaused,
+    agentDisabled,
+    agentDeleted
+}
+
+/**
+ * A run of the task scheduler or an agent on a task, while it is going, with what the loop that
+ * started it checks it against each round.
+ */
+private class TaskRun
+{
+    RunStop stop;
+    /// The agent at work on the task, or for the task scheduler, the scheduler, once it is chosen.
+    Nullable!UUID agentId;
+    /// Kept for the note, since an agent that was deleted can no longer be looked up.
+    string agentName;
+    /// The working directory the agent works on, or null for none.
+    string workingDir;
+    /// Why the run was stopped, once it was.
+    Nullable!StopReason reason;
+
+    this()
+    {
+        stop = new RunStop;
+    }
+
+    this(UUID agentId, string agentName)
+    {
+        this();
+        this.agentId = agentId;
+        this.agentName = agentName;
+    }
+}
+
+/**
+ * Stops the runs that are no longer wanted: those whose task is gone, whose project's agents are
+ * paused, or whose agent is disabled or gone. Each one's reason is kept on it, for whoever handles
+ * its end.
+ */
+private void stopUnwantedRuns(TaskRun[UUID] runs, ITaskRepository tasks, IAgentRepository agents)
+{
+    auto going = runs.byKeyValue.filter!(entry => entry.value.reason.isNull).map!(entry => entry.key).array;
+    if (going.length == 0)
+    {
+        return;
+    }
+
+    auto atWork = tasks.agentsAtWork(going);
+    Agent[UUID] byId;
+    foreach (agent; agents.all())
+    {
+        byId[agent.id] = agent;
+    }
+
+    foreach (taskId; going)
+    {
+        auto run = runs[taskId];
+        auto reason = stopReason(taskId in atWork, run.agentId, byId);
+        if (reason.isNull)
+        {
+            continue;
+        }
+
+        run.reason = reason;
+        logInfo("The run on task %s is stopped, since %s.", taskId, stopCause(run));
+        run.stop.request();
+    }
+}
+
+/**
+ * Why a run is no longer wanted, or an empty Nullable when it still is. `atWork` is whether its
+ * task's project's agents are at work, or null when the task is gone.
+ */
+private Nullable!StopReason stopReason(const bool* atWork, Nullable!UUID agentId, Agent[UUID] agents)
+{
+    if (atWork is null)
+    {
+        return StopReason.taskDeleted.nullable;
+    }
+
+    if (!*atWork)
+    {
+        return StopReason.agentsPaused.nullable;
+    }
+
+    if (agentId.isNull)
+    {
+        return Nullable!StopReason.init;
+    }
+
+    auto agent = agentId.get in agents;
+    if (agent is null)
+    {
+        return StopReason.agentDeleted.nullable;
+    }
+
+    return agent.enabled ? Nullable!StopReason.init : StopReason.agentDisabled.nullable;
+}
+
+/// Why a run was stopped, to follow "since".
+private string stopCause(TaskRun run)
+{
+    final switch (run.reason.get)
+    {
+    case StopReason.taskDeleted:
+        return "the task was deleted";
+    case StopReason.agentsPaused:
+        return "the project's agents were paused";
+    case StopReason.agentDisabled:
+        return format(`"%s" was disabled`, run.agentName);
+    case StopReason.agentDeleted:
+        return format(`"%s" was deleted`, run.agentName);
+    }
+}
+
+/**
+ * Why a run was stopped, as its task's notes say it. An agent's run may have changed files
+ * halfway, which the next agent on the task is told, since nothing is undone.
+ */
+private string stopNote(TaskRun run)
+{
+    auto note = "Stopped, since " ~ stopCause(run);
+    return run.workingDir is null ? note : note ~ "; it may have left changes in the working directory";
+}
+
 /// How long the task scheduler waits between one look at the tasks and the next.
 private enum schedulerInterval = 5.seconds;
 
@@ -589,6 +844,8 @@ class TaskScheduler
     private ITransactional transactions;
     /// How many tasks are being scheduled now. The tasks all run on one thread, so no lock is needed.
     private int running;
+    /// The runs scheduling a task, by the task's id.
+    private TaskRun[UUID] runs;
 
     this(IAgentRepository agents, ITaskRepository tasks, ILaneRepository lanes, IProjectRepository projects,
         PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events,
@@ -635,6 +892,15 @@ class TaskScheduler
             // A database that is down fails one round, not the loop.
             try
             {
+                stopUnwantedRuns(runs, tasks, agents);
+            }
+            catch (Exception e)
+            {
+                logError("The task scheduler failed to check the tasks it is scheduling: %s", e.msg);
+            }
+
+            try
+            {
                 assignWaitingTasks();
             }
             catch (Exception e)
@@ -675,6 +941,7 @@ class TaskScheduler
             }
 
             running++;
+            runs[task.id] = new TaskRun;
             // Passed as an argument rather than captured, since a closure in a loop shares one
             // variable across all its iterations.
             runTask(&scheduleClaimed, task);
@@ -703,19 +970,27 @@ class TaskScheduler
      */
     private void scheduleClaimed(Task task) nothrow
     {
+        auto run = runs[task.id];
         scope (exit)
         {
             running--;
+            runs.remove(task.id);
         }
 
         try
         {
             statusChanged(tasks, events, task.id);
-            const status = assign(task);
+            const status = assign(task, run);
             if (tasks.changeAgentStatus(task.id, AgentStatus.scheduling, status))
             {
                 statusChanged(tasks, events, task.id);
             }
+        }
+        catch (RunStoppedException e)
+        {
+            // Whatever it was stopped for, the task is to be scheduled again once that has passed.
+            endStoppedRun(tasks, events, task.id, run, AgentStatus.scheduling, AgentStatus.toBeScheduled,
+                false);
         }
         catch (Exception e)
         {
@@ -744,8 +1019,10 @@ class TaskScheduler
      *
      * Returns: The task's agent status from here: scheduled when it was assigned to an agent,
      *   done when it was closed, and declined otherwise.
+     *
+     * Throws: `RunStoppedException` when the run was stopped while the scheduler was at it.
      */
-    private AgentStatus assign(Task task)
+    private AgentStatus assign(Task task, TaskRun run)
     {
         // The lane or its project may be gone since the tasks were read.
         auto lane = lanes.find(task.laneId);
@@ -788,6 +1065,8 @@ class TaskScheduler
         ];
 
         auto scheduler = schedulers.front;
+        run.agentId = scheduler.id;
+        run.agentName = scheduler.name;
         auto prompt = parser.parse(schedulePrompt, placeholders, conditions);
         auto systemPrompt = agentPrompt.systemPrompt(scheduler, "").strip;
 
@@ -796,8 +1075,12 @@ class TaskScheduler
         try
         {
             string noSession;
-            answer = executor.prompt(scheduler.id.toString, prompt, false, noSession, systemPrompt)
-                .strip;
+            answer = executor.prompt(scheduler.id.toString, prompt, false, noSession, systemPrompt, null, null,
+                RunIn.workingDir, run.stop).strip;
+        }
+        catch (RunStoppedException e)
+        {
+            throw e;
         }
         catch (Exception e)
         {
@@ -893,6 +1176,8 @@ class TaskExecutor
      * thread, so no lock is needed.
      */
     private int[UUID] running;
+    /// The runs working on a task, by the task's id.
+    private TaskRun[UUID] runs;
 
     this(IAgentRepository agents, ITaskRepository tasks, ILaneRepository lanes, IProjectRepository projects,
         PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events,
@@ -935,6 +1220,15 @@ class TaskExecutor
         while (true)
         {
             // A database that is down fails one round, not the loop.
+            try
+            {
+                stopUnwantedRuns(runs, tasks, agents);
+            }
+            catch (Exception e)
+            {
+                logError("The task executor failed to check the tasks its agents are working on: %s", e.msg);
+            }
+
             try
             {
                 startWaitingTasks();
@@ -982,6 +1276,7 @@ class TaskExecutor
             }
 
             running[agentId.get] = running.get(agentId.get, 0) + 1;
+            runs[task.id] = new TaskRun(agentId.get, agent.get.name);
             // Passed as arguments rather than captured, since a closure in a loop shares one
             // variable across all its iterations.
             runTask(&executeClaimed, task, agentId.get);
@@ -1006,21 +1301,37 @@ class TaskExecutor
      */
     private void executeClaimed(Task task, UUID agentId) nothrow
     {
+        auto run = runs[task.id];
         scope (exit)
         {
             if (--running[agentId] == 0)
             {
                 running.remove(agentId);
             }
+            runs.remove(task.id);
         }
 
         try
         {
             statusChanged(tasks, events, task.id);
-            const status = execute(task, agentId) ? AgentStatus.toBeScheduled : AgentStatus.failed;
+            const status = execute(task, agentId, run) ? AgentStatus.toBeScheduled : AgentStatus.failed;
             if (tasks.changeAgentStatus(task.id, AgentStatus.executing, status))
             {
                 statusChanged(tasks, events, task.id);
+            }
+        }
+        catch (RunStoppedException e)
+        {
+            // A paused project's task waits for its agent, while one whose agent is disabled or gone
+            // needs another, which only the scheduler can give it.
+            if (run.reason.get == StopReason.agentsPaused)
+            {
+                endStoppedRun(tasks, events, task.id, run, AgentStatus.executing, AgentStatus.scheduled, false);
+            }
+            else
+            {
+                endStoppedRun(tasks, events, task.id, run, AgentStatus.executing, AgentStatus.toBeScheduled,
+                    true);
             }
         }
         catch (Exception e)
@@ -1048,8 +1359,10 @@ class TaskExecutor
      *
      * Returns: Whether the agent answered with a result, rather than failing; a failure is
      *   noted on the task.
+     *
+     * Throws: `RunStoppedException` when the run was stopped while the agent was at it.
      */
-    private bool execute(Task task, UUID agentId)
+    private bool execute(Task task, UUID agentId, TaskRun run)
     {
         // The lane or its project may be gone since the tasks were read.
         auto lane = lanes.find(task.laneId);
@@ -1076,6 +1389,7 @@ class TaskExecutor
         // Made before the prompt, which names them. Caught here, so the task's notes say the
         // agent could not get to work.
         auto workingDir = workingDirs.ensure(project.get.slug);
+        run.workingDir = workingDir;
         string scratchSpace;
         try
         {
@@ -1118,7 +1432,11 @@ class TaskExecutor
         {
             string noSession;
             answer = executor.prompt(agent.get.id.toString, prompt, false, noSession, systemPrompt, workingDir,
-                scratchSpace);
+                scratchSpace, RunIn.workingDir, run.stop);
+        }
+        catch (RunStoppedException e)
+        {
+            throw e;
         }
         catch (Exception e)
         {
@@ -1178,6 +1496,39 @@ private void statusChanged(ITaskRepository tasks, IEventPublisher events, UUID t
     if (!projectId.isNull)
     {
         events.task(Event.changed, taskId, projectId.get, task.get.laneId, task.get.laneId);
+    }
+}
+
+/**
+ * Ends a run that was stopped, by putting its task where its reason says, with a note why. A
+ * deleted task gets nothing, and a task changed meanwhile by something else is left as it is.
+ */
+private void endStoppedRun(ITaskRepository tasks, IEventPublisher events, UUID taskId, TaskRun run,
+    AgentStatus from, AgentStatus to, bool unassign) nothrow
+{
+    if (run.reason.get == StopReason.taskDeleted)
+    {
+        return;
+    }
+
+    try
+    {
+        if (!tasks.endStoppedRun(taskId, from, to, unassign, stopNote(run)))
+        {
+            return;
+        }
+
+        statusChanged(tasks, events, taskId);
+        auto task = tasks.find(taskId);
+        auto projectId = task.isNull ? Nullable!UUID.init : tasks.projectOfLane(task.get.laneId);
+        if (!projectId.isNull)
+        {
+            events.note(taskId, projectId.get);
+        }
+    }
+    catch (Exception e)
+    {
+        logError("The stopped run on task %s could not be ended: %s", taskId, e.msg);
     }
 }
 

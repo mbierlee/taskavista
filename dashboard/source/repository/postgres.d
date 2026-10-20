@@ -3,6 +3,8 @@ module repository.postgres;
 import vibe.core.task : TaskLocal, VibeTask = Task;
 import vibe.db.postgresql;
 
+import std.algorithm.iteration : map;
+import std.array : join;
 import std.datetime.systime : SysTime;
 import std.format : format;
 import std.typecons : Nullable, nullable;
@@ -966,6 +968,54 @@ class PostgresTaskRepository : ITaskRepository
             note.sqlCommand = "insert into task_notes (task_id, note) values ($1, 'Handed back to the task scheduler')";
             note.argsVariadic(id);
             connection.execParams(note);
+
+            return true;
+        });
+    }
+
+    bool[UUID] agentsAtWork(UUID[] ids)
+    {
+        bool[UUID] atWork;
+        if (ids.length == 0)
+        {
+            return atWork;
+        }
+
+        // Given as one text, since the ids go in no other array parameter.
+        QueryParams query;
+        query.sqlCommand = "select t.id, p.managed_by_ai and not p.ai_paused as at_work from tasks t"
+            ~ " join lanes l on l.id = t.lane_id join projects p on p.id = l.project_id"
+            ~ " where t.id = any(string_to_array($1, ',')::uuid[])";
+        query.argsVariadic(ids.map!(id => id.toString).join(","));
+
+        return connections.use((scope connection) {
+            auto answer = connection.execParams(query);
+            foreach (index; 0 .. answer.length)
+            {
+                atWork[answer[index]["id"].as!UUID] = answer[index]["at_work"].as!bool;
+            }
+
+            return atWork;
+        });
+    }
+
+    bool endStoppedRun(UUID id, AgentStatus from, AgentStatus to, bool unassign, string note)
+    {
+        return connections.transaction((scope connection) {
+            QueryParams update;
+            update.sqlCommand = "update tasks set agent_status = $3,"
+                ~ " assigned_ai_agent_id = case when $4 then null else assigned_ai_agent_id end, updated_at = now()"
+                ~ " where id = $1 and agent_status = $2 returning id";
+            update.argsVariadic(id, cast(string) from, cast(string) to, unassign);
+            if (connection.execParams(update).length == 0)
+            {
+                return false;
+            }
+
+            QueryParams insert;
+            insert.sqlCommand = "insert into task_notes (task_id, note) values ($1, $2)";
+            insert.argsVariadic(id, note);
+            connection.execParams(insert);
 
             return true;
         });

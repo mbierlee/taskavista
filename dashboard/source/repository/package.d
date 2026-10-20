@@ -532,6 +532,34 @@ interface ITaskRepository
     bool reschedule(UUID id);
 
     /**
+     * Finds which of the tasks are still there, and of each whether its project's agents are at
+     * work: whether the project is managed by AI and not paused.
+     *
+     * Params:
+     *   ids = The tasks' ids.
+     *
+     * Returns: Whether the agents are at work, by the id of each task that is still there.
+     */
+    bool[UUID] agentsAtWork(UUID[] ids);
+
+    /**
+     * Ends a run of the task scheduler or an agent on a task that was stopped: changes the task's
+     * agent status, but only from the status it is expected to have, takes it off its agent when
+     * asked to, and adds a note saying why, all at once.
+     *
+     * Params:
+     *   id = The task's id.
+     *   from = The status the task is expected to have.
+     *   to = The status it gets.
+     *   unassign = Whether to take it off its agent.
+     *   note = Why the run was stopped.
+     *
+     * Returns: False, with nothing changed, when no row has that id or the task's status is not
+     *   `from`.
+     */
+    bool endStoppedRun(UUID id, AgentStatus from, AgentStatus to, bool unassign, string note);
+
+    /**
      * Adds to a task's notes that there was no enabled task scheduler agent to assign it.
      *
      * Params:

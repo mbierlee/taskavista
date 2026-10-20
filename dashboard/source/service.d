@@ -2249,6 +2249,16 @@ version (unittest)
             return status is null ? Nullable!AgentStatus.init : *status;
         }
 
+        bool[UUID] agentsAtWork(UUID[] ids)
+        {
+            assert(false, "Not used by TaskService.");
+        }
+
+        bool endStoppedRun(UUID id, AgentStatus from, AgentStatus to, bool unassign, string note)
+        {
+            assert(false, "Not used by TaskService.");
+        }
+
         bool reschedule(UUID id)
         {
             auto status = id in database.agentStatuses;
