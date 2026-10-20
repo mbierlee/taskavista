@@ -31,7 +31,7 @@ import model : Agent, AgentLogEntry, AgentStatus, EffortLevel, Lane, Model, Proj
     defaultEffort;
 import prompt : PromptParser;
 import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
-    IRuntimeRepository, ITaskRepository;
+    IRuntimeRepository, ITaskRepository, ITransactional;
 import workingdir : IndexPages, ProjectWorkingDirs;
 
 /**
@@ -586,12 +586,13 @@ class TaskScheduler
     private RuntimeExecutor executor;
     private IEventPublisher events;
     private IndexPages indexPages;
+    private ITransactional transactions;
     /// How many tasks are being scheduled now. The tasks all run on one thread, so no lock is needed.
     private int running;
 
     this(IAgentRepository agents, ITaskRepository tasks, ILaneRepository lanes, IProjectRepository projects,
         PromptParser parser, AgentPrompt agentPrompt, RuntimeExecutor executor, IEventPublisher events,
-        IndexPages indexPages)
+        IndexPages indexPages, ITransactional transactions)
     {
         this.agents = agents;
         this.tasks = tasks;
@@ -602,6 +603,7 @@ class TaskScheduler
         this.executor = executor;
         this.events = events;
         this.indexPages = indexPages;
+        this.transactions = transactions;
     }
 
     /**
@@ -819,7 +821,7 @@ class TaskScheduler
             return AgentStatus.declined;
         }
 
-        moveOn(tasks, events, indexPages, task.id, lane.get.id, schedule.get.laneId.get, project.get.id);
+        moveOn(task.id, lane.get.id, schedule.get.laneId.get, project.get.id);
         if (schedule.get.agentId.isNull)
         {
             return AgentStatus.done;
@@ -827,6 +829,32 @@ class TaskScheduler
 
         noted(tasks.assignAiAgent(task.id, schedule.get.agentId), task.id, project.get.id);
         return AgentStatus.scheduled;
+    }
+
+    /**
+     * Moves the task to the bottom of the lane the scheduler chose. A task that left its lane
+     * while the agent was at work was moved by someone else, whose move is kept. The lane it goes
+     * to and the task are locked, in that order, as a move locks them, so that no move comes
+     * between the look at its lane and this move.
+     */
+    private void moveOn(UUID taskId, UUID fromLaneId, UUID toLaneId, UUID projectId)
+    {
+        if (toLaneId == fromLaneId)
+        {
+            return;
+        }
+
+        transactions.run({
+            if (!lanes.lock(toLaneId) || !tasks.lock(taskId) || tasks.find(taskId).get.laneId != fromLaneId)
+            {
+                return false;
+            }
+
+            tasks.move(taskId, toLaneId, UUID.init);
+            events.task(Event.moved, taskId, projectId, fromLaneId, toLaneId);
+            transactions.afterCommit(() => indexPages.check(projectId));
+            return true;
+        });
     }
 
     /// Reports a note on the task, when one was added.
@@ -1151,25 +1179,6 @@ private void statusChanged(ITaskRepository tasks, IEventPublisher events, UUID t
     {
         events.task(Event.changed, taskId, projectId.get, task.get.laneId, task.get.laneId);
     }
-}
-
-/**
- * Moves the task to the bottom of the lane the scheduler chose. A task that left
- * its lane while the agent was at work was moved by someone else, whose move
- * is kept.
- */
-private void moveOn(ITaskRepository tasks, IEventPublisher events, IndexPages indexPages, UUID taskId,
-    UUID fromLaneId, UUID toLaneId, UUID projectId)
-{
-    auto task = tasks.find(taskId);
-    if (task.isNull || task.get.laneId != fromLaneId || toLaneId == fromLaneId)
-    {
-        return;
-    }
-
-    tasks.move(taskId, toLaneId, UUID.init);
-    events.task(Event.moved, taskId, projectId, fromLaneId, toLaneId);
-    indexPages.check(projectId);
 }
 
 /// A lane per line, with "done" after the lanes whose tasks count as done.

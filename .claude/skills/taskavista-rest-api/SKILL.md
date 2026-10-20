@@ -89,9 +89,10 @@ There is **no ORM and no migration runner**. SQL is written out by hand in the r
 2. **Repository.** An interface `ILaneRepository` in `repository/package.d`, one method per
    operation, each with its Ddoc comment there; and its implementation
    `PostgresLaneRepository : ILaneRepository` in `repository/postgres.d`, whose methods carry no
-   doc comments of their own. The implementation's constructor takes `PostgresClient`, and its
-   methods use `QueryParams` + `execParams`. Leave these `@system` — do not chase `@safe` down
-   here. An exception a caller is meant to catch, such as `PositionConflict`, is part of the
+   doc comments of their own. The implementation's constructor takes `PostgresConnections`,
+   never the pool itself (see `docs/server-layers.md`), and its methods run their
+   `QueryParams` + `execParams` in `connections.use`, or in `connections.transaction` for a write
+   of several statements. Leave these `@system` — do not chase `@safe` down here. An exception a caller is meant to catch, such as `PositionConflict`, is part of the
    interface and goes in `package.d`.
 3. **Service.** A class in `service.d` whose constructor takes the repository interfaces it
    needs. Its methods return a `Result!(T, ILaneError)`, or an `OperationResult!ILaneError` when

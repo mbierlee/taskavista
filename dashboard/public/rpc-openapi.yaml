@@ -31,6 +31,7 @@ info:
     | 404 | Nothing has an id that was sent, a call that does not exist, or a method other than `POST` |
     | 409 | The call clashes with what is stored: a project slug that is taken or reserved, resuming the agents of a project not managed by AI, or rescheduling a task that cannot be |
     | 502 | An agent could not answer a chat message |
+    | 503 | The request clashed with another one made at the same time; send it again after the `Retry-After` seconds |
     | 500 | An unexpected server error |
 
 servers:
@@ -140,6 +141,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { statusMessage: No task has that id. }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /rescheduleTask:
@@ -209,6 +211,19 @@ paths:
                   value: { statusMessage: The task scheduler is choosing an agent for the task right now. }
                 beingWorkedOn:
                   value: { statusMessage: An agent is working on the task right now. }
+        "503":
+          description: |
+            The task kept moving to other lanes meanwhile, or the request clashed with another one
+            made at the same time. Nothing was changed. Send it again, after the `Retry-After`
+            seconds.
+          headers:
+            Retry-After:
+              description: Seconds to wait before sending the request again.
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { statusMessage: The request clashed with another one made at the same time. Send it again. }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /clearLane:
@@ -254,6 +269,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { statusMessage: No lane has that id. }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /createProject:
@@ -317,6 +333,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { statusMessage: "A project cannot be called “New”. Pick another name." }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /saveProjectSettings:
@@ -395,6 +412,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { statusMessage: "A project called “Website relaunch” already exists. Pick another name." }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /setAiPaused:
@@ -452,6 +470,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { statusMessage: "The project is not managed by AI agents, so its agents cannot be resumed." }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /setAgentEnabled:
@@ -506,6 +525,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { statusMessage: No agent has that id. }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /setAllAgentsEnabled:
@@ -550,6 +570,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { statusMessage: The argument enabled is missing. }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /sendChatMessage:
@@ -846,6 +867,18 @@ components:
           description: What went wrong, in a sentence.
 
   responses:
+    Clash:
+      description: |
+        The request clashed with another one made at the same time and was not carried out. Send
+        it again, after the `Retry-After` seconds.
+      headers:
+        Retry-After:
+          description: Seconds to wait before sending the request again.
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { statusMessage: The request clashed with another one made at the same time. Send it again. }
     ServerError:
       description: An unexpected server error.
       content:

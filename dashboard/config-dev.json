@@ -8,6 +8,6 @@
 		"port": 5432,
 		"user": "taskavista",
 		"password": "taskavista",
-		"connectionPoolSize": 4
+		"connectionPoolSize": 10
 	}
 }

@@ -1,5 +1,6 @@
 module api.errors;
 
+import vibe.core.log : logError;
 import vibe.http.common : HTTPStatusException;
 import vibe.http.server : HTTPServerRequest, HTTPServerResponse;
 import vibe.http.status : HTTPStatus;
@@ -13,6 +14,7 @@ import std.string : strip, stripRight;
 import std.uuid : UUIDParsingException;
 
 import model : Agent, Lane, Project, Task;
+import repository : Deadlock, ForeignKeyViolation, UniqueViolation;
 import service : AgentModelMissingError, AgentNameMissingError, AgentNameTakenError, AgentNotFoundError,
     AgentRuntimeMissingError, BeforeTaskNotFoundError, BeforeTaskNotInLaneError, EffortNotTakenError,
     IAgentError, ILaneError, IProjectError, ITaskError, LabelBlankError, LabelRepeatedError,
@@ -21,8 +23,8 @@ import service : AgentModelMissingError, AgentNameMissingError, AgentNameTakenEr
     MaxParallelTasksInvalidError, ModelNotOfferedError, NameReservedError, NameTakenError, ProjectNameMissingError,
     ProjectNameUnusableError, ProjectNotFoundError, ProjectNotManagedByAiError, RuntimeNotFoundError,
     SlugInvalidError, SlugReservedError, SlugTakenError, TaskBeforeItselfError, TaskBeingScheduledError,
-    TaskBeingWorkedOnError, TaskDescriptionMissingError, TaskDoneError, TaskLeavesProjectError, TaskNotFoundError,
-    TaskPositionNegativeError, TaskPositionTakenError;
+    TaskBeingWorkedOnError, TaskDescriptionMissingError, TaskDoneError, TaskKeptMovingError, TaskLeavesProjectError,
+    TaskNotFoundError, TaskPositionNegativeError, TaskPositionTakenError;
 
 /**
  * Answers a request under `/api/rest/v1` that no endpoint took, with a 404
@@ -57,6 +59,19 @@ void renderApiError(HTTPServerRequest request, HTTPServerResponse response, Rest
         response.statusCode = HTTPStatus.badRequest;
     }
 
+    if (auto clash = clashError(error.exception))
+    {
+        message = clash.msg;
+        clientError = true;
+        response.statusCode = clash.status;
+    }
+
+    // Each 503 is a write that is all but sure to go through when sent again.
+    if (response.statusCode == HTTPStatus.serviceUnavailable)
+    {
+        response.headers["Retry-After"] = "1";
+    }
+
     // vibe's default reports an unexpected exception as a 500 with its stack
     // trace in a debug build, and a handler replaces that default, so keep it.
     debug
@@ -70,6 +85,36 @@ void renderApiError(HTTPServerRequest request, HTTPServerResponse response, Rest
         }
     }
     response.writeJsonBody(["statusMessage": message]);
+}
+
+/**
+ * The answer to a write the database refused for clashing with another write made at the same
+ * time, which no check before the write can rule out and no service turned into an error of its
+ * own, or null for any other exception.
+ */
+private HTTPStatusException clashError(Exception exception) @safe
+{
+    if (cast(Deadlock) exception)
+    {
+        logError("A write was aborted to break a deadlock, so some transaction takes its locks out of order: %s",
+            exception.msg);
+        return new HTTPStatusException(HTTPStatus.serviceUnavailable,
+            "The request clashed with another one made at the same time. Send it again.");
+    }
+
+    if (cast(UniqueViolation) exception)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            "Another request made at the same time took a value this one needs to be unique.");
+    }
+
+    if (cast(ForeignKeyViolation) exception)
+    {
+        return new HTTPStatusException(HTTPStatus.notFound,
+            "Something the request refers to was deleted by another request made at the same time.");
+    }
+
+    return null;
 }
 
 /**
@@ -399,6 +444,12 @@ HTTPStatusException toHTTPError(ITaskError error, Task task)
     if (cast(TaskBeingWorkedOnError) error)
     {
         return new HTTPStatusException(HTTPStatus.conflict, "An agent is working on the task right now.");
+    }
+
+    if (cast(TaskKeptMovingError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.serviceUnavailable,
+            "The task kept moving to other lanes meanwhile. Send the request again.");
     }
 
     return unanswered(error);

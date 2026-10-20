@@ -1,5 +1,4 @@
 import vibe.vibe;
-import vibe.db.postgresql;
 import poodinis;
 
 import std.algorithm : startsWith;
@@ -12,14 +11,15 @@ import config : Config, connectionString, loadConfig;
 import helpers : formatURL;
 import prompt : PromptParser;
 import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
-    IRuntimeRepository, ITaskRepository;
-import repository.postgres : PostgresAgentLogRepository, PostgresAgentRepository, PostgresDefaultRepository,
-    PostgresLaneRepository, PostgresProjectRepository, PostgresRuntimeRepository, PostgresTaskRepository;
+    IRuntimeRepository, ITaskRepository, ITransactional;
+import repository.postgres : PostgresAgentLogRepository, PostgresAgentRepository, PostgresConnections,
+    PostgresDefaultRepository, PostgresLaneRepository, PostgresProjectRepository, PostgresRuntimeRepository,
+    PostgresTaskRepository;
 import api.rest : AgentApi, AgentController, DefaultApi, DefaultController, LaneApi, LaneController, ProjectApi,
     ProjectController, RuntimeApi, RuntimeController, TaskApi, TaskController;
 import api.errors : answerNoSuchEndpoint, renderApiError;
 import api.rpc : RpcApi, RpcController, answerNoSuchCall, enforceJsonObjectBody;
-import eventing : EventStream, IEventPublisher, IEventStream;
+import eventing : CommittedEventPublisher, EventStream, IEventPublisher, IEventStream;
 import schema : installSchemaWhenEmpty;
 import service : AgentService, DefaultService, LaneService, ProjectService, RuntimeService, TaskService;
 import workingdir : IndexPages, ProjectWorkingDirs;
@@ -35,10 +35,9 @@ class DashboardContext : ApplicationContext
     override void registerDependencies(shared(DependencyContainer) container)
     {
         container.register!Config.existingInstance(loadConfig());
-        // One stream for both, so that what is published reaches the sockets it serves.
-        auto events = new EventStream;
-        container.register!(IEventPublisher, EventStream).existingInstance(events);
-        container.register!(IEventStream, EventStream).existingInstance(events);
+        container.register!(IEventStream, EventStream);
+        // What is published reaches the stream once the write it reports has committed.
+        container.register!(IEventPublisher, CommittedEventPublisher);
         container.register!ProjectWorkingDirs;
         container.register!IndexPages;
         container.register!(IProjectRepository, PostgresProjectRepository);
@@ -72,15 +71,30 @@ class DashboardContext : ApplicationContext
         container.register!AgentDrafter;
     }
 
+    private PostgresConnections connections;
+
     /**
-     * The pool comes from a factory method because its connection string is
+     * The connections come from a factory method because their connection string is
      * config, not a dependency. One instance is shared, which is the point of a
-     * pool. It connects lazily, so the server still starts with no database running.
+     * pool, and serves both as the repositories' way to the database and as the
+     * services' ITransactional. It connects lazily, so the server still starts with
+     * no database running.
      */
-    @Component PostgresClient postgresClient()
+    @Component PostgresConnections postgresConnections()
     {
-        return new PostgresClient(config.database.connectionString,
-            config.database.connectionPoolSize);
+        if (connections is null)
+        {
+            connections = new PostgresConnections(config.database.connectionString,
+                config.database.connectionPoolSize);
+        }
+
+        return connections;
+    }
+
+    /// Ditto
+    @Component @RegisterByType!ITransactional PostgresConnections transactional()
+    {
+        return postgresConnections();
     }
 }
 

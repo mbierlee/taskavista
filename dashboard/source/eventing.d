@@ -9,6 +9,8 @@ import vibe.http.websockets : WebSocket;
 import std.algorithm.mutation : remove;
 import std.uuid : UUID;
 
+import repository : ITransactional;
+
 /**
  * What happened to a resource. Only a task can be moved, as the moveTask
  * call does; any other write to one is a change. Only a lane can be cleared,
@@ -218,5 +220,47 @@ private class Subscriber
     this()
     {
         signal = createManualEvent();
+    }
+}
+
+/**
+ * An IEventPublisher that holds each event back until the transaction the task has open, if any,
+ * has committed, and drops it should the transaction roll back, so that a UI never goes to fetch
+ * a write that is not there yet, or never will be.
+ */
+class CommittedEventPublisher : IEventPublisher
+{
+    private IEventStream stream;
+    private ITransactional transactions;
+
+    this(IEventStream stream, ITransactional transactions)
+    {
+        this.stream = stream;
+        this.transactions = transactions;
+    }
+
+    public void task(Event event, UUID taskId, UUID projectId, UUID fromLaneId, UUID toLaneId)
+    {
+        transactions.afterCommit(() => stream.task(event, taskId, projectId, fromLaneId, toLaneId));
+    }
+
+    public void lane(Event event, UUID laneId, UUID projectId)
+    {
+        transactions.afterCommit(() => stream.lane(event, laneId, projectId));
+    }
+
+    public void project(Event event, UUID projectId)
+    {
+        transactions.afterCommit(() => stream.project(event, projectId));
+    }
+
+    public void note(UUID taskId, UUID projectId)
+    {
+        transactions.afterCommit(() => stream.note(taskId, projectId));
+    }
+
+    public void agent(Event event, UUID agentId)
+    {
+        transactions.afterCommit(() => stream.agent(event, agentId));
     }
 }

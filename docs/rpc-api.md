@@ -137,7 +137,8 @@ for one and a body for the other.
 
 Every failure is `{"statusMessage": "…"}`, with a message written for whoever called. The error
 handler that rewrites vibe's messages about bodies and arguments is shared with the REST API
-and described in `docs/rest-api.md`. Two more pieces in `rpc.d`, mounted around `RpcApi` in
+and described in `docs/rest-api.md`, and so are the 503s for a request that clashed with another
+made at the same time. Two more pieces in `rpc.d`, mounted around `RpcApi` in
 `app.d`, are the RPC API's own:
 
 - **`enforceJsonObjectBody`** is a route on `POST /api/rpc/v1/*` registered before the calls.

@@ -57,6 +57,12 @@ called, not in vibe's or D's terms. The pieces shared by both APIs are in
   number where a string is expected." All of them are client errors, so a debug build answers
   them with 400 too. Any other exception is answered as vibe's default would answer it,
   including the debug-build 500 with a stack trace (see the `taskavista-rest-api` skill).
+- **`renderApiError` also answers a clash with another request made at the same time** that the
+  database refused and no service turned into an error of its own: a deadlock is a 503 (see
+  below), a unique value another request took first a 409, and a row another request deleted a
+  404. The services answer the clashes they know of themselves, such as a taken slug, so these
+  are a safety net. Every 503 carries `Retry-After: 1`, since the request is all but sure to go
+  through when sent again.
 - **`answerNoSuchEndpoint`** is registered after the REST interfaces and catches what none of
   them took: an unknown path, a trailing slash, or an unsupported method. It answers with a JSON
   404, such as "There is no PATCH /api/rest/v1/projects/…". The RPC API has its own, described in
@@ -70,3 +76,13 @@ bad-weather probes against both APIs: a body that is not JSON, a wrong type, a m
 argument, an unknown enum value, a malformed id in the path and in the body, and an unknown path.
 
 vibe does not say which field a type mismatch is in, so neither does the message.
+
+## 503: send it again
+
+A write that clashes with another made at the same time is answered with a 503 and
+`Retry-After: 1` in two cases, in both APIs: when the database broke a deadlock by aborting it,
+and when `rescheduleTask` found the task moving to other lanes every time it looked (see
+`docs/server-layers.md` for the locking behind both). Neither is the caller's mistake, and the same
+request sent again is all but sure to succeed, which is what a 503 with `Retry-After` says to a
+client or an agent that retries. A deadlock is also logged as an error, since it means some
+transaction took its locks out of order.

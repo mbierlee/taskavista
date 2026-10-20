@@ -37,7 +37,7 @@ struct DatabaseConfig
     @optional string name = "taskavista-dev";
     @optional string user = "taskavista";
     @optional string password = "taskavista";
-    @optional uint connectionPoolSize = 4;
+    @optional uint connectionPoolSize = 10;
 }
 
 enum configPath = "config.json";

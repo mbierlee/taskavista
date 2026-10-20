@@ -32,6 +32,7 @@ info:
     | 400 | A body that is not a JSON object, blank or missing `name`, a project `name` with no letter or digit, a malformed `slug`, an unknown `taskAddRule`, a lane `position` below 0, a malformed `color` or a non-boolean `marksDone`, a missing lane field, a blank or missing task `description` or a task `position` below 0, a task moved to a lane of another project, a blank agent `name`, `runtime` or `model`, an unknown runtime or a model the runtime does not offer, a field of the wrong type, a malformed UUID |
     | 404 | Nothing has that id — including the project or lane something is listed or created under, and the lane a task is moved to — or a path or method that is not a route |
     | 409 | Another project already has that `slug`, or it is a reserved one, another lane of the project or task of the lane is at that `position`, a task created outside the first lane of a `"first_lane"` project, or another agent already has that `name` |
+    | 503 | The request clashed with another one made at the same time; send it again after the `Retry-After` seconds |
     | 500 | An unexpected server error |
 
 servers:
@@ -153,6 +154,7 @@ paths:
                   value: { statusMessage: "A project called “Website relaunch” already exists. Pick another name." }
                 derivedSlugReserved:
                   value: { statusMessage: "A project cannot be called “New”. Pick another name." }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /projects/{id}:
@@ -210,6 +212,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
     delete:
       tags: [Projects]
@@ -220,6 +223,7 @@ paths:
         "200": { $ref: "#/components/responses/Deleted" }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /projects/{projectId}/lanes:
@@ -275,6 +279,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/LanePositionTaken" }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /lanes/{id}:
@@ -323,6 +328,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/LanePositionTaken" }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
     delete:
       tags: [Lanes]
@@ -333,6 +339,7 @@ paths:
         "200": { $ref: "#/components/responses/Deleted" }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /projects/{projectId}/tasks:
@@ -426,6 +433,7 @@ paths:
                   value: { statusMessage: The project only takes new tasks in its first lane. }
                 positionTaken:
                   value: { statusMessage: Another task of the lane is already at position 0. }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /tasks/{id}:
@@ -495,6 +503,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
     delete:
       tags: [Tasks]
@@ -505,6 +514,7 @@ paths:
         "200": { $ref: "#/components/responses/Deleted" }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /tasks/{id}/notes:
@@ -624,6 +634,7 @@ paths:
               example: { id: 2ef1de48-4687-4f4c-b65b-a42a0c1a01a4, name: Probe agent 3, runtime: claude-code, model: opus, effort: high, taskScheduler: false, enabled: true, instructions: You write the weekly status report. Keep it under 300 words., maxParallelTasks: 10, labels: [weekly, reports] }
         "400": { $ref: "#/components/responses/AgentBadRequest" }
         "409": { $ref: "#/components/responses/AgentNameTaken" }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /agents/{id}:
@@ -676,6 +687,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
               example: { statusMessage: No agent has that id. }
         "409": { $ref: "#/components/responses/AgentNameTaken" }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
     delete:
       tags: [Agents]
@@ -686,6 +698,7 @@ paths:
         "200": { $ref: "#/components/responses/Deleted" }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
   /defaults:
@@ -1055,6 +1068,18 @@ components:
           examples: [No project has that id.]
 
   responses:
+    Clash:
+      description: |
+        The request clashed with another one made at the same time and was not carried out. Send
+        it again, after the `Retry-After` seconds.
+      headers:
+        Retry-After:
+          description: Seconds to wait before sending the request again.
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { statusMessage: The request clashed with another one made at the same time. Send it again. }
     Deleted:
       description: Deleted. An empty body.
     BadRequest:

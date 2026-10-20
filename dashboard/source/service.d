@@ -10,8 +10,8 @@ import std.uuid : UUID;
 import eventing : Event, IEventPublisher;
 import helpers : hasLetterOrDigit, isHexColor, isSlug, slugify;
 import model : Agent, AgentStatus, Default, Lane, Model, Project, Runtime, Task, TaskNote, terminalAgentStatuses;
-import repository : IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository, IRuntimeRepository,
-    ITaskRepository, PositionConflict;
+import repository : ForeignKeyViolation, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
+    IRuntimeRepository, ITaskRepository, ITransactional, PositionConflict, UniqueViolation;
 import result : OperationResult, Result, failure, success;
 import servicemodel : ProjectWithLanes;
 import workingdir : IndexPages, ProjectWorkingDirs;
@@ -33,14 +33,16 @@ class ProjectService
     private ILaneRepository lanes;
     private IEventPublisher events;
     private ProjectWorkingDirs workingDirs;
+    private ITransactional transactions;
 
     this(IProjectRepository repository, ILaneRepository lanes, IEventPublisher events,
-        ProjectWorkingDirs workingDirs)
+        ProjectWorkingDirs workingDirs, ITransactional transactions)
     {
         this.repository = repository;
         this.lanes = lanes;
         this.events = events;
         this.workingDirs = workingDirs;
+        this.transactions = transactions;
     }
 
     /**
@@ -64,29 +66,48 @@ class ProjectService
             return projectFailure!Project(invalid);
         }
 
+        const derived = project.slug.length == 0;
         auto slug = checkSlug(project);
         if (slug.isFailure)
         {
             return projectFailure!Project(slug.error);
         }
 
-        if (project.id == UUID.init)
+        try
         {
-            repository.add(project);
-            workingDirs.createIfRootExists(project.slug);
-            events.project(Event.created, project.id);
-            return projectSuccess(withCanBeOpened(project));
-        }
+            if (project.id == UUID.init)
+            {
+                repository.add(project);
+                workingDirs.createIfRootExists(project.slug);
+                events.project(Event.created, project.id);
+                return projectSuccess(withCanBeOpened(project));
+            }
 
-        auto old = repository.find(project.id);
-        if (old.isNull || !repository.update(project))
+            // Locked, so that the slug the working directory is renamed from is the one the update
+            // replaces, whatever other save comes along meanwhile.
+            auto updated = transactionally(transactions, {
+                if (!repository.lock(project.id))
+                {
+                    return projectFailure!Project(new ProjectNotFoundError);
+                }
+
+                const oldSlug = repository.find(project.id).get.slug;
+                if (!repository.update(project))
+                {
+                    return projectFailure!Project(new ProjectNotFoundError);
+                }
+
+                transactions.afterCommit(() => workingDirs.rename(oldSlug, project.slug));
+                events.project(Event.changed, project.id);
+                return projectSuccess(project);
+            });
+
+            return updated.isSuccessful ? projectSuccess(withCanBeOpened(updated.value)) : updated;
+        }
+        catch (UniqueViolation violation)
         {
-            return projectFailure!Project(new ProjectNotFoundError);
+            return projectFailure!Project(slugTaken(project, derived, violation));
         }
-
-        workingDirs.rename(old.get.slug, project.slug);
-        events.project(Event.changed, project.id);
-        return projectSuccess(withCanBeOpened(project));
     }
 
     /**
@@ -115,32 +136,58 @@ class ProjectService
             return projectFailure!ProjectWithLanes(invalid);
         }
 
-        if (project.id == UUID.init)
+        const derived = project.slug.length == 0;
+        try
         {
-            auto invalidLane = checkLanes(projectWithLanes.lanes);
-            if (invalidLane !is null)
+            if (project.id == UUID.init)
             {
-                return projectFailure!ProjectWithLanes(invalidLane);
+                auto invalidLane = checkLanes(projectWithLanes.lanes);
+                if (invalidLane !is null)
+                {
+                    return projectFailure!ProjectWithLanes(invalidLane);
+                }
+
+                auto newSlug = checkSlug(project);
+                if (newSlug.isFailure)
+                {
+                    return projectFailure!ProjectWithLanes(newSlug.error);
+                }
+
+                repository.addWithLanes(project, projectWithLanes.lanes);
+                workingDirs.createIfRootExists(project.slug);
+                events.project(Event.created, project.id);
+                withCanBeOpened(project);
+                return projectSuccess(projectWithLanes);
             }
 
-            auto newSlug = checkSlug(project);
-            if (newSlug.isFailure)
+            auto replaced = transactionally(transactions, () => replace(projectWithLanes));
+            if (replaced.isSuccessful)
             {
-                return projectFailure!ProjectWithLanes(newSlug.error);
+                withCanBeOpened(project);
             }
 
-            repository.addWithLanes(project, projectWithLanes.lanes);
-            workingDirs.createIfRootExists(project.slug);
-            events.project(Event.created, project.id);
-            withCanBeOpened(project);
-            return projectSuccess(projectWithLanes);
+            return replaced;
         }
+        catch (UniqueViolation violation)
+        {
+            return projectFailure!ProjectWithLanes(slugTaken(project, derived, violation));
+        }
+    }
 
-        auto old = repository.find(project.id);
-        if (old.isNull)
+    /**
+     * Updates a project and gives it exactly its lanes, for save, in the transaction it opens.
+     * The project is locked first, as by every write to a project's lanes, so that the lanes it
+     * has stay the ones read here until the write is done.
+     */
+    private Result!(ProjectWithLanes, IProjectError) replace(ProjectWithLanes projectWithLanes)
+    {
+        auto project = projectWithLanes.project;
+        if (!repository.lock(project.id))
         {
             return projectFailure!ProjectWithLanes(new ProjectNotFoundError);
         }
+
+        const oldSlug = repository.find(project.id).get.slug;
 
         auto slug = checkSlug(project);
         if (slug.isFailure)
@@ -180,13 +227,15 @@ class ProjectService
         }
 
         auto removed = existing.filter!(id => id !in kept).array;
-        repository.replaceWithLanes(project, projectWithLanes.lanes, removed);
-        workingDirs.rename(old.get.slug, project.slug);
+        if (!repository.replaceWithLanes(project, projectWithLanes.lanes, removed))
+        {
+            return projectFailure!ProjectWithLanes(new ProjectNotFoundError);
+        }
+
+        transactions.afterCommit(() => workingDirs.rename(oldSlug, project.slug));
         // One event for the project and its lanes, which the UI reads as "its lanes may have
         // changed too", rather than one per lane.
         events.project(Event.changed, project.id);
-
-        withCanBeOpened(project);
         return projectSuccess(projectWithLanes);
     }
 
@@ -250,24 +299,27 @@ class ProjectService
      */
     OperationResult!IProjectError setAiPaused(UUID id, bool paused)
     {
-        auto project = repository.find(id);
-        if (project.isNull)
-        {
-            return projectFailure(new ProjectNotFoundError);
-        }
+        // Locked, so that the project is not taken off AI management between the check and the
+        // write, which would leave an unmanaged project with its agents running.
+        return transactionally(transactions, {
+            if (!repository.lock(id))
+            {
+                return projectFailure(new ProjectNotFoundError);
+            }
 
-        if (!paused && !project.get.managedByAi)
-        {
-            return projectFailure(new ProjectNotManagedByAiError);
-        }
+            if (!paused && !repository.find(id).get.managedByAi)
+            {
+                return projectFailure(new ProjectNotManagedByAiError);
+            }
 
-        if (!repository.setAiPaused(id, paused))
-        {
-            return projectFailure(new ProjectNotFoundError);
-        }
+            if (!repository.setAiPaused(id, paused))
+            {
+                return projectFailure(new ProjectNotFoundError);
+            }
 
-        events.project(Event.changed, id);
-        return projectSuccess();
+            events.project(Event.changed, id);
+            return projectSuccess();
+        });
     }
 
     /// Sets whether the project can be opened, by its working directory having an index.html, and returns it.
@@ -322,6 +374,29 @@ class ProjectService
 
         return projectSuccess();
     }
+
+    /**
+     * The error for a write the unique slug refused, as checkSlug would have answered had the
+     * other project taken the slug before it rather than after. Only to be called once the write's
+     * transaction is over, since it reads.
+     *
+     * Throws: The violation, when it is of another constraint than the slug's.
+     */
+    private IProjectError slugTaken(Project project, bool derived, UniqueViolation violation)
+    {
+        if (violation.constraint != "projects_slug_key")
+        {
+            throw violation;
+        }
+
+        if (!derived)
+        {
+            return new SlugTakenError;
+        }
+
+        const owner = repository.slugOwner(project.slug, project.id);
+        return new NameTakenError(owner.isNull ? project.name : owner.get);
+    }
 }
 
 /**
@@ -331,12 +406,17 @@ class ProjectService
 class LaneService
 {
     private ILaneRepository repository;
+    private IProjectRepository projects;
     private IEventPublisher events;
+    private ITransactional transactions;
 
-    this(ILaneRepository repository, IEventPublisher events)
+    this(ILaneRepository repository, IProjectRepository projects, IEventPublisher events,
+        ITransactional transactions)
     {
         this.repository = repository;
+        this.projects = projects;
         this.events = events;
+        this.transactions = transactions;
     }
 
     /**
@@ -398,10 +478,20 @@ class LaneService
             return laneFailure!Lane(invalid);
         }
 
+        return transactionally(transactions, () => place(lane));
+    }
+
+    /**
+     * Creates or updates a lane, for save, in the transaction it opens. The lane's project is
+     * locked first, as by every write to a project's lanes, so that lanes written at once are
+     * placed one after the other.
+     */
+    private Result!(Lane, ILaneError) place(Lane lane)
+    {
         const creating = lane.id == UUID.init;
         if (creating)
         {
-            if (!repository.projectExists(lane.projectId))
+            if (!projects.lock(lane.projectId))
             {
                 return laneFailure!Lane(new ProjectNotFoundError);
             }
@@ -409,7 +499,8 @@ class LaneService
         else
         {
             auto stored = repository.find(lane.id);
-            if (stored.isNull)
+            // A lane whose project is gone is gone with it.
+            if (stored.isNull || !projects.lock(stored.get.projectId))
             {
                 return laneFailure!Lane(new LaneNotFoundError);
             }
@@ -455,17 +546,31 @@ class LaneService
      */
     OperationResult!ILaneError remove(UUID id)
     {
-        // Looked up first, since the lane is gone afterwards.
-        auto lane = repository.find(id);
-        if (lane.isNull || !repository.remove(id))
-        {
-            return laneFailure(new LaneNotFoundError);
-        }
+        // The project is locked, as by every write to a project's lanes.
+        return transactionally(transactions, {
+            // Looked up first, since the lane is gone afterwards.
+            auto lane = repository.find(id);
+            if (lane.isNull || !projects.lock(lane.get.projectId) || !repository.remove(id))
+            {
+                return laneFailure(new LaneNotFoundError);
+            }
 
-        events.lane(Event.deleted, id, lane.get.projectId);
-        return laneSuccess();
+            events.lane(Event.deleted, id, lane.get.projectId);
+            return laneSuccess();
+        });
     }
 }
+
+/// A task with its lane and its project, read with all three locked (see TaskService.lockTask).
+private struct LockedTask
+{
+    Task task;
+    Lane lane;
+    Project project;
+}
+
+/// How many times TaskService.lockTask looks for the lane of a task that moves meanwhile.
+private enum maxLockAttempts = 3;
 
 /**
  * The rules tasks are read and written by. Every write it makes is reported to the event stream
@@ -478,15 +583,17 @@ class TaskService
     private ILaneRepository lanes;
     private IEventPublisher events;
     private IndexPages indexPages;
+    private ITransactional transactions;
 
     this(ITaskRepository repository, IProjectRepository projects, ILaneRepository lanes, IEventPublisher events,
-        IndexPages indexPages)
+        IndexPages indexPages, ITransactional transactions)
     {
         this.repository = repository;
         this.projects = projects;
         this.lanes = lanes;
         this.events = events;
         this.indexPages = indexPages;
+        this.transactions = transactions;
     }
 
     /**
@@ -628,48 +735,61 @@ class TaskService
         {
             return taskFailure!Task(new TaskPositionTakenError);
         }
+        catch (ForeignKeyViolation)
+        {
+            // The lane it moves to was deleted after the check above.
+            return taskFailure!Task(new LaneNotFoundError);
+        }
 
         auto projectId = repository.projectOfLane(task.laneId).get;
         events.task(Event.changed, task.id, projectId, fromLaneId, task.laneId);
         if (task.laneId != fromLaneId)
         {
             indexPages.check(projectId);
-            rescheduleMoved(task.id, task.laneId, projectId);
+            rescheduleMoved(task.id);
         }
 
         return taskSuccess(task);
     }
 
+    /**
+     * Creates a task, for save. The lane's project is locked first, so that its add-task rule,
+     * its lane order and whether it is managed by AI stay as read here until the task is in: a
+     * write to any of them takes the same lock.
+     */
     private Result!(Task, ITaskError) create(Task task)
     {
-        auto projectId = repository.projectOfLane(task.laneId);
-        if (projectId.isNull)
-        {
-            return taskFailure!Task(new LaneNotFoundError);
-        }
+        return transactionally(transactions, {
+            auto projectId = repository.projectOfLane(task.laneId);
+            // Looked up again once locked, since the lane may have been deleted before the lock.
+            if (projectId.isNull || !projects.lock(projectId.get) || repository.projectOfLane(task.laneId).isNull)
+            {
+                return taskFailure!Task(new LaneNotFoundError);
+            }
 
-        if (!repository.acceptsNewTasks(task.laneId))
-        {
-            return taskFailure!Task(new LaneClosedToNewTasksError);
-        }
+            if (!repository.acceptsNewTasks(task.laneId))
+            {
+                return taskFailure!Task(new LaneClosedToNewTasksError);
+            }
 
-        // Only a project managed by AI hands its tasks to the agents, and one that is not when
-        // the task is added keeps it from them, even should it be managed by AI later.
-        auto project = projects.find(projectId.get);
-        auto agentStatus = !project.isNull && project.get.managedByAi ? AgentStatus.toBeScheduled.nullable
-            : Nullable!AgentStatus.init;
+            // Only a project managed by AI hands its tasks to the agents, and one that is not when
+            // the task is added keeps it from them, even should it be managed by AI later.
+            auto project = projects.find(projectId.get);
+            auto agentStatus = project.get.managedByAi ? AgentStatus.toBeScheduled.nullable
+                : Nullable!AgentStatus.init;
 
-        try
-        {
-            repository.add(task, agentStatus);
-        }
-        catch (PositionConflict)
-        {
-            return taskFailure!Task(new TaskPositionTakenError);
-        }
+            try
+            {
+                repository.add(task, agentStatus);
+            }
+            catch (PositionConflict)
+            {
+                return taskFailure!Task(new TaskPositionTakenError);
+            }
 
-        events.task(Event.created, task.id, projectId.get, UUID.init, task.laneId);
-        return taskSuccess(task);
+            events.task(Event.created, task.id, projectId.get, UUID.init, task.laneId);
+            return taskSuccess(task);
+        });
     }
 
     /**
@@ -739,7 +859,7 @@ class TaskService
         indexPages.check(project.get);
         if (laneId != fromLaneId)
         {
-            rescheduleMoved(id, laneId, project.get);
+            rescheduleMoved(id);
         }
 
         return taskSuccess(repository.ofLane(laneId));
@@ -751,25 +871,80 @@ class TaskService
      * managed by AI and its new lane is not a done one. A move is how a person says the task is
      * to be worked on again.
      */
-    private void rescheduleMoved(UUID id, UUID laneId, UUID projectId)
+    private void rescheduleMoved(UUID id)
     {
-        auto status = repository.agentStatus(id);
-        if (status.isNull || !terminalAgentStatuses.canFind(status.get))
+        transactions.run({
+            // A task gone or moving on is left alone: the move that made it so has its own turn.
+            auto locked = lockTask(id);
+            if (locked.isFailure)
+            {
+                return false;
+            }
+
+            auto status = repository.agentStatus(id);
+            if (status.isNull || !terminalAgentStatuses.canFind(status.get))
+            {
+                return false;
+            }
+
+            auto project = locked.value.project;
+            if (!project.managedByAi || locked.value.lane.marksDone)
+            {
+                return false;
+            }
+
+            if (repository.reschedule(id))
+            {
+                events.note(id, project.id);
+            }
+
+            return true;
+        });
+    }
+
+    /**
+     * Locks a task's project, its lane and the task itself, in that order, in the open
+     * transaction, and reads all three as they are once locked.
+     *
+     * The lane is read from the task before it is locked, so the task can move to another lane in
+     * between. Then that lane is locked as well, and the task read again, a few times at most;
+     * once the task is locked it cannot move again, so one more time is enough. A lane locked
+     * after the task breaks the lock order, but only on this rare path, and the deadlock it can
+     * cause is answered as any other. The project needs no second look: a lane never changes
+     * project.
+     *
+     * Returns: The task, its lane and its project, or a failure: `TaskNotFoundError`, or
+     *   `TaskKeptMovingError` when the task moved every time.
+     */
+    private Result!(LockedTask, ITaskError) lockTask(UUID id)
+    {
+        auto task = repository.find(id);
+        auto lane = task.isNull ? Nullable!Lane.init : lanes.find(task.get.laneId);
+        // A lane, and its tasks, can only be deleted with its project locked, so a task whose
+        // lane is still there once the project is locked is still there too, unless deleted itself.
+        if (lane.isNull || !projects.lock(lane.get.projectId))
         {
-            return;
+            return taskFailure!LockedTask(new TaskNotFoundError);
         }
 
-        auto project = projects.find(projectId);
-        auto lane = lanes.find(laneId);
-        if (project.isNull || !project.get.managedByAi || lane.isNull || lane.get.marksDone)
+        auto laneId = lane.get.id;
+        foreach (attempt; 0 .. maxLockAttempts)
         {
-            return;
+            if (!lanes.lock(laneId) || !repository.lock(id))
+            {
+                return taskFailure!LockedTask(new TaskNotFoundError);
+            }
+
+            auto current = repository.find(id).get;
+            if (current.laneId == laneId)
+            {
+                return taskSuccess(LockedTask(current, lanes.find(laneId).get, projects.find(lane.get.projectId).get));
+            }
+
+            laneId = current.laneId;
         }
 
-        if (repository.reschedule(id))
-        {
-            events.note(id, projectId);
-        }
+        return taskFailure!LockedTask(new TaskKeptMovingError);
     }
 
     /**
@@ -788,48 +963,41 @@ class TaskService
      */
     OperationResult!ITaskError reschedule(UUID id)
     {
-        auto task = repository.find(id);
-        if (task.isNull)
-        {
-            return taskFailure(new TaskNotFoundError);
-        }
-
-        auto lane = lanes.find(task.get.laneId);
-        auto project = lane.isNull ? Nullable!Project.init : projects.find(lane.get.projectId);
-        if (project.isNull)
-        {
-            return taskFailure(new TaskNotFoundError);
-        }
-
-        if (!project.get.managedByAi)
-        {
-            return taskFailure(new ProjectNotManagedByAiError);
-        }
-
-        if (lane.get.marksDone)
-        {
-            return taskFailure(new TaskDoneError);
-        }
-
-        if (!repository.reschedule(id))
-        {
-            // The task may have been deleted since it was read, as well as be being scheduled.
-            if (repository.find(id).isNull)
+        // Locked, so that the project is not taken off AI management, nor the task put in a done
+        // lane, between the checks and the write.
+        return transactionally(transactions, {
+            auto locked = lockTask(id);
+            if (locked.isFailure)
             {
-                return taskFailure(new TaskNotFoundError);
+                return taskFailure(locked.error);
             }
 
-            auto status = repository.agentStatus(id);
-            if (!status.isNull && status.get == AgentStatus.executing)
+            auto project = locked.value.project;
+            if (!project.managedByAi)
             {
-                return taskFailure(new TaskBeingWorkedOnError);
+                return taskFailure(new ProjectNotManagedByAiError);
             }
 
-            return taskFailure(new TaskBeingScheduledError);
-        }
+            if (locked.value.lane.marksDone)
+            {
+                return taskFailure(new TaskDoneError);
+            }
 
-        events.note(id, project.get.id);
-        return taskSuccess();
+            if (!repository.reschedule(id))
+            {
+                // With the task locked, only its agent status can stand in the way.
+                auto status = repository.agentStatus(id);
+                if (!status.isNull && status.get == AgentStatus.executing)
+                {
+                    return taskFailure(new TaskBeingWorkedOnError);
+                }
+
+                return taskFailure(new TaskBeingScheduledError);
+            }
+
+            events.note(id, project.id);
+            return taskSuccess();
+        });
     }
 
     /**
@@ -1003,16 +1171,29 @@ class AgentService
             return agentFailure!Agent(new AgentNameTakenError);
         }
 
-        if (agent.id == UUID.init)
+        try
         {
-            repository.add(agent);
-            events.agent(Event.created, agent.id);
-            return agentSuccess(agent);
-        }
+            if (agent.id == UUID.init)
+            {
+                repository.add(agent);
+                events.agent(Event.created, agent.id);
+                return agentSuccess(agent);
+            }
 
-        if (!repository.update(agent))
+            if (!repository.update(agent))
+            {
+                return agentFailure!Agent(new AgentNotFoundError);
+            }
+        }
+        catch (UniqueViolation violation)
         {
-            return agentFailure!Agent(new AgentNotFoundError);
+            // Another agent took the name after the check above.
+            if (violation.constraint != "agents_name_key")
+            {
+                throw violation;
+            }
+
+            return agentFailure!Agent(new AgentNameTakenError);
         }
 
         events.agent(Event.changed, agent.id);
@@ -1271,6 +1452,11 @@ class TaskBeingWorkedOnError : ITaskError
 {
 }
 
+/// The task kept moving to other lanes while it was being locked, so it was left alone.
+class TaskKeptMovingError : ITaskError
+{
+}
+
 /// No agent has the id given.
 class AgentNotFoundError : IAgentError
 {
@@ -1465,6 +1651,28 @@ private IAgentError checkAgent(Agent agent)
     return null;
 }
 
+/**
+ * Runs work in one transaction, which is committed when the result work returns is a success and
+ * rolled back when it is a failure.
+ *
+ * Params:
+ *   R = The service's result type, a Result or an OperationResult.
+ *   transactions = What runs the transaction.
+ *   work = The checks and writes.
+ *
+ * Returns: The result work returned.
+ */
+private R transactionally(R)(ITransactional transactions, scope R delegate() work)
+{
+    R result;
+    transactions.run({
+        result = work();
+        return result.isSuccessful;
+    });
+
+    return result;
+}
+
 /// A successful result of a ProjectService call, which could have failed with an IProjectError.
 private Result!(T, IProjectError) projectSuccess(T)(T value)
 {
@@ -1617,6 +1825,44 @@ version (unittest)
         }
     }
 
+    /**
+     * An ITransactional with no database under it: it holds back what is to run after the
+     * commit until work is done, and drops it when work asks for a rollback, but undoes no write.
+     */
+    private class MockTransactional : ITransactional
+    {
+        private bool open;
+        private void delegate()[] pending;
+
+        void run(scope bool delegate() work)
+        {
+            open = true;
+            const commit = work();
+            open = false;
+
+            auto ran = pending;
+            pending = null;
+            if (commit)
+            {
+                foreach (dg; ran)
+                {
+                    dg();
+                }
+            }
+        }
+
+        void afterCommit(void delegate() dg)
+        {
+            if (open)
+            {
+                pending ~= dg;
+                return;
+            }
+
+            dg();
+        }
+    }
+
     /// The rows the mock repositories share, held in memory.
     private class MockDatabase
     {
@@ -1649,6 +1895,11 @@ version (unittest)
         {
             auto found = database.projects.filter!(project => project.id == id);
             return found.empty ? Nullable!Project.init : found.front.nullable;
+        }
+
+        bool lock(UUID id)
+        {
+            return !find(id).isNull;
         }
 
         Nullable!string slugOwner(string slug, UUID except)
@@ -1701,9 +1952,13 @@ version (unittest)
             }
         }
 
-        void replaceWithLanes(Project project, Lane[] lanes, UUID[] removed)
+        bool replaceWithLanes(Project project, Lane[] lanes, UUID[] removed)
         {
-            update(project);
+            if (!update(project))
+            {
+                return false;
+            }
+
             database.removedLanes = removed;
             database.lanes = database.lanes.filter!(lane => !removed.canFind(lane.id)).array;
             foreach (lane; lanes.filter!(lane => lane.id == UUID.init))
@@ -1712,6 +1967,8 @@ version (unittest)
                 lane.projectId = project.id;
                 database.lanes ~= lane;
             }
+
+            return true;
         }
 
         bool remove(UUID id)
@@ -1741,6 +1998,11 @@ version (unittest)
         {
             auto found = database.lanes.filter!(lane => lane.id == id);
             return found.empty ? Nullable!Lane.init : found.front.nullable;
+        }
+
+        bool lock(UUID id)
+        {
+            return !find(id).isNull;
         }
 
         bool projectExists(UUID projectId)
@@ -1820,6 +2082,11 @@ version (unittest)
         {
             auto found = database.tasks.filter!(task => task.id == id);
             return found.empty ? Nullable!Task.init : found.front.nullable;
+        }
+
+        bool lock(UUID id)
+        {
+            return !find(id).isNull;
         }
 
         Task[] awaitingScheduling()
@@ -2136,13 +2403,14 @@ version (unittest)
     private ProjectService serviceOver(MockDatabase database, MockEventPublisher events = new MockEventPublisher)
     {
         return new ProjectService(new MockProjectRepository(database), new MockLaneRepository(database), events,
-            noWorkingDirs());
+            noWorkingDirs(), new MockTransactional);
     }
 
-    /// A LaneService over a mock repository over `database`, reporting to `events`.
+    /// A LaneService over mock repositories that share `database`, reporting to `events`.
     private LaneService laneServiceOver(MockDatabase database, MockEventPublisher events = new MockEventPublisher)
     {
-        return new LaneService(new MockLaneRepository(database), events);
+        return new LaneService(new MockLaneRepository(database), new MockProjectRepository(database), events,
+            new MockTransactional);
     }
 
     /// A TaskService over mock repositories that share `database`.
@@ -2150,7 +2418,7 @@ version (unittest)
     {
         auto projects = new MockProjectRepository(database);
         return new TaskService(new MockTaskRepository(database), projects, new MockLaneRepository(database), events,
-            new IndexPages(noWorkingDirs(), projects, events));
+            new IndexPages(noWorkingDirs(), projects, events), new MockTransactional);
     }
 
     /// An AgentService over mock repositories, `database`'s agents and one runtime, reporting to `events`.
@@ -2717,4 +2985,58 @@ unittest
         Published(Event.changed, managed.id),
         Published(Event.changed, unmanaged.id)
     ]);
+}
+
+// A slug or an agent name another write took after the check is answered as the check would have.
+unittest
+{
+    import std.exception : assertThrown;
+
+    /// A project repository whose add finds the slug taken by a rival added after the check.
+    ProjectService racedOver(MockDatabase database, MockEventPublisher events)
+    {
+        auto repository = new class(database) MockProjectRepository
+        {
+            this(MockDatabase database)
+            {
+                super(database);
+            }
+
+            override Project add(Project project)
+            {
+                database.projects ~= new Project(randomUUID, "Q3 finance", project.slug);
+                throw new UniqueViolation("projects_slug_key", "Taken.");
+            }
+        };
+
+        return new ProjectService(repository, new MockLaneRepository(database), events, noWorkingDirs(),
+            new MockTransactional);
+    }
+
+    auto events = new MockEventPublisher;
+    assert(cast(SlugTakenError) racedOver(new MockDatabase, events).save(new Project("Other", "q3-finance")).error);
+    auto taken = cast(NameTakenError) racedOver(new MockDatabase, events).save(new Project("Q3 Finance!", null)).error;
+    assert(taken !is null && taken.ownerName == "Q3 finance");
+    assert(events.projects.length == 0);
+
+    auto database = new MockDatabase;
+    string constraint = "agents_name_key";
+    auto agents = new class(database) MockAgentRepository
+    {
+        this(MockDatabase database)
+        {
+            super(database);
+        }
+
+        override Agent add(Agent agent)
+        {
+            throw new UniqueViolation(constraint, "Taken.");
+        }
+    };
+    auto service = new AgentService(agents, new MockRuntimeRepository, events);
+    auto writer = new Agent(UUID.init, "Writer", "claude-code", "sonnet", "default", false);
+    assert(cast(AgentNameTakenError) service.save(writer).error);
+    constraint = "some_other_key";
+    assertThrown!UniqueViolation(service.save(writer));
+    assert(events.agents.length == 0);
 }

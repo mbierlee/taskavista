@@ -5,6 +5,41 @@ import std.uuid : UUID;
 
 import model : Agent, AgentLogEntry, AgentStatus, Default, Lane, Model, Project, Runtime, Task, TaskNote;
 
+/**
+ * Runs a service's checks and the writes that rely on them as one transaction, so that no other
+ * write comes between a check and its write.
+ *
+ * What a check relies on is held with the repositories' `lock` methods, always in the order
+ * project, lane, task, agent. Two transactions that keep to that order never wait on each other
+ * in a circle: the second just waits at the first lock they share. Nothing that runs in a task of
+ * its own (`runTask`) is part of a transaction it was started from; whatever is to happen once
+ * the transaction is done goes through `afterCommit` instead.
+ */
+interface ITransactional
+{
+    /**
+     * Runs work in one transaction. The repository calls work makes are part of it, and so is a
+     * repository write that is otherwise a transaction of its own. A run inside a run is part of
+     * the outer one, and its rollback rolls back the outer one too.
+     *
+     * Params:
+     *   work = The checks and the writes. Returns whether to commit them: false rolls them back.
+     *
+     * Throws: Whatever work throws, once the transaction is rolled back.
+     */
+    void run(scope bool delegate() work);
+
+    /**
+     * Runs dg once the open transaction has committed, and never should it roll back, or right
+     * away when no transaction is open. For what must not happen for a write that does not stand,
+     * such as an event or a renamed working directory. The delegates run in the order given.
+     *
+     * Params:
+     *   dg = What to run.
+     */
+    void afterCommit(void delegate() dg);
+}
+
 /// Reads and writes rows of the projects table.
 interface IProjectRepository
 {
@@ -24,6 +59,17 @@ interface IProjectRepository
      * Returns: The project with this id, or an empty Nullable when there is none.
      */
     Nullable!Project find(UUID id);
+
+    /**
+     * Locks a project's row until the open transaction ends (see ITransactional), so that a
+     * write to it waits, and a find returns it as it is from then on.
+     *
+     * Params:
+     *   id = The project's id.
+     *
+     * Returns: False when no row has that id.
+     */
+    bool lock(UUID id);
 
     /**
      * Finds the project that already has a slug.
@@ -100,8 +146,10 @@ interface IProjectRepository
      *   project = The project to write.
      *   lanes = The lanes it keeps or gains.
      *   removed = The ids of the lanes it loses.
+     *
+     * Returns: False when no row has the project's id, in which case nothing was written.
      */
-    void replaceWithLanes(Project project, Lane[] lanes, UUID[] removed);
+    bool replaceWithLanes(Project project, Lane[] lanes, UUID[] removed);
 
     /**
      * Deletes a project.
@@ -136,6 +184,16 @@ interface ILaneRepository
      * Returns: The lane with this id, or an empty Nullable when there is none.
      */
     Nullable!Lane find(UUID id);
+
+    /**
+     * Locks a lane's row until the open transaction ends (see ITransactional).
+     *
+     * Params:
+     *   id = The lane's id.
+     *
+     * Returns: False when no row has that id.
+     */
+    bool lock(UUID id);
 
     /**
      * Checks whether a project exists.
@@ -239,6 +297,16 @@ interface ITaskRepository
      * Returns: The task with this id, or an empty Nullable when there is none.
      */
     Nullable!Task find(UUID id);
+
+    /**
+     * Locks a task's row until the open transaction ends (see ITransactional).
+     *
+     * Params:
+     *   id = The task's id.
+     *
+     * Returns: False when no row has that id.
+     */
+    bool lock(UUID id);
 
     /**
      * Gets the tasks waiting for the task scheduler: those of the projects managed by AI that
@@ -501,6 +569,51 @@ interface ITaskRepository
  * A check made before the write cannot rule this out.
  */
 class PositionConflict : Exception
+{
+    this(string message) @safe pure nothrow
+    {
+        super(message);
+    }
+}
+
+/**
+ * Thrown by a write that would give a row a value another row already has in a unique column,
+ * such as a slug another project took after the check made before the write.
+ */
+class UniqueViolation : Exception
+{
+    /// The name of the unique constraint, such as projects_slug_key.
+    string constraint;
+
+    this(string constraint, string message) @safe pure nothrow
+    {
+        super(message);
+        this.constraint = constraint;
+    }
+}
+
+/**
+ * Thrown by a write that refers to a row that is not there, such as a task moved to a lane
+ * deleted after the check made before the write.
+ */
+class ForeignKeyViolation : Exception
+{
+    /// The name of the foreign key, such as tasks_lane_id_fkey.
+    string constraint;
+
+    this(string constraint, string message) @safe pure nothrow
+    {
+        super(message);
+        this.constraint = constraint;
+    }
+}
+
+/**
+ * Thrown when the database broke a deadlock by aborting the transaction, which it does to one of
+ * two transactions waiting on each other's locks. Sent again, the write is all but sure to go
+ * through. It means a transaction took its locks out of the order ITransactional gives.
+ */
+class Deadlock : Exception
 {
     this(string message) @safe pure nothrow
     {

@@ -1,5 +1,6 @@
 module repository.postgres;
 
+import vibe.core.task : TaskLocal, VibeTask = Task;
 import vibe.db.postgresql;
 
 import std.datetime.systime : SysTime;
@@ -9,8 +10,194 @@ import std.uuid : UUID;
 
 import model : Agent, AgentLogEntry, AgentStatus, Default, EffortLevel, Lane, Model, Project, Runtime, Task, TaskAddRule,
     TaskNote, toAgentStatus, toTaskAddRule;
-import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
-    IRuntimeRepository, ITaskRepository, PositionConflict;
+import repository : Deadlock, ForeignKeyViolation, IAgentLogRepository, IAgentRepository, IDefaultRepository,
+    ILaneRepository, IProjectRepository, IRuntimeRepository, ITaskRepository, ITransactional, PositionConflict,
+    UniqueViolation;
+
+/**
+ * How every postgres repository reaches the database, and the transactions the services open.
+ *
+ * It is the only holder of the connection pool, so that no repository call can take a connection
+ * of its own while its task has a transaction open on another: that call would wait on the
+ * transaction's locks, and postgres, seeing two sessions rather than a circle, would let it wait
+ * forever. The open transaction is kept per vibe.d task, which is one per HTTP request.
+ */
+class PostgresConnections : ITransactional
+{
+    private PostgresClient client;
+
+    /// The transaction each task has open. Static, as a TaskLocal must be.
+    private static TaskLocal!OpenSlot open;
+
+    this(string connectionString, uint poolSize)
+    {
+        client = new PostgresClient(connectionString, poolSize);
+    }
+
+    void run(scope bool delegate() work)
+    {
+        auto outer = current();
+        if (outer !is null)
+        {
+            if (!work())
+            {
+                outer.rollbackOnly = true;
+            }
+
+            return;
+        }
+
+        auto transaction = new OpenTransaction;
+        const committed = client.pickConnection((scope connection) {
+            return translated({
+                connection.exec("begin");
+                transaction.connection = connection.__conn;
+                open = OpenSlot(transaction);
+                scope (exit)
+                {
+                    open = OpenSlot.init;
+                }
+                scope (failure)
+                {
+                    connection.exec("rollback");
+                }
+
+                const commit = work() && !transaction.rollbackOnly;
+                connection.exec(commit ? "commit" : "rollback");
+                return commit;
+            });
+        });
+
+        // Once the connection is back in the pool and the task has no transaction open, so that
+        // what they run is a transaction of its own.
+        if (committed)
+        {
+            foreach (dg; transaction.afterCommit)
+            {
+                dg();
+            }
+        }
+    }
+
+    void afterCommit(void delegate() dg)
+    {
+        auto transaction = current();
+        if (transaction is null)
+        {
+            dg();
+            return;
+        }
+
+        transaction.afterCommit ~= dg;
+    }
+
+    /**
+     * Runs dg on a connection: the one of the transaction the task has open, or one from the pool.
+     * For statements that need no transaction of their own.
+     */
+    T use(T)(scope T delegate(scope Connection connection) dg)
+    {
+        auto transaction = current();
+        if (transaction !is null)
+        {
+            return translated(() => dg(transaction.connection));
+        }
+
+        return client.pickConnection((scope connection) {
+            return translated(() => dg(connection.__conn));
+        });
+    }
+
+    /**
+     * Runs dg as one transaction: its own, or part of the one the task has open, in which case
+     * it neither commits nor rolls back, and what it throws rolls back the whole. Either way, dg
+     * returning early, with nothing written, needs no rollback.
+     */
+    T transaction(T)(scope T delegate(scope Connection connection) dg)
+    {
+        auto transaction = current();
+        if (transaction !is null)
+        {
+            return translated(() => dg(transaction.connection));
+        }
+
+        return client.pickConnection((scope connection) {
+            return translated({
+                connection.exec("begin");
+                scope (failure)
+                {
+                    connection.exec("rollback");
+                }
+
+                static if (is(T == void))
+                {
+                    dg(connection.__conn);
+                    connection.exec("commit");
+                }
+                else
+                {
+                    auto result = dg(connection.__conn);
+                    connection.exec("commit");
+                    return result;
+                }
+            });
+        });
+    }
+
+    /// The transaction the task has open, or null, as code outside any task never has one.
+    private static OpenTransaction current()
+    {
+        return VibeTask.getThis() == VibeTask.init ? null : open.storage.transaction;
+    }
+}
+
+/**
+ * Where PostgresConnections keeps a task's open transaction. A struct, since a TaskLocal of a
+ * class type would build an object in its slot, which only has room for a reference.
+ */
+private struct OpenSlot
+{
+    /// The transaction, or null when none is open.
+    OpenTransaction transaction;
+}
+
+/// A transaction run by PostgresConnections.run, while it is open.
+private class OpenTransaction
+{
+    Connection connection;
+    /// What to run once it has committed.
+    void delegate()[] afterCommit;
+    /// Set by a run inside it whose work asked for a rollback, which can only be of the whole.
+    bool rollbackOnly;
+}
+
+/**
+ * Runs dg, turning the errors a caller is meant to tell apart into the exceptions the repository
+ * interfaces name, by their SQLSTATE.
+ */
+private T translated(T)(scope T delegate() dg)
+{
+    try
+    {
+        return dg();
+    }
+    catch (ResponseException exception)
+    {
+        switch (exception.resultErrorField(PG_DIAG_SQLSTATE))
+        {
+            case "23505":
+                throw new UniqueViolation(exception.resultErrorField(PG_DIAG_CONSTRAINT_NAME),
+                    exception.msg);
+            case "23503":
+                throw new ForeignKeyViolation(exception.resultErrorField(PG_DIAG_CONSTRAINT_NAME),
+                    exception.msg);
+            case "40P01":
+                throw new Deadlock(exception.msg);
+            default:
+                throw exception;
+        }
+    }
+}
 
 /**
  * The assignment to ai_paused in an update that sets managed_by_ai to $6. A
@@ -24,11 +211,11 @@ private enum pausedOnceManaged =
 /// IProjectRepository over postgres.
 class PostgresProjectRepository : IProjectRepository
 {
-    private PostgresClient client;
+    private PostgresConnections connections;
 
-    this(PostgresClient client)
+    this(PostgresConnections connections)
     {
-        this.client = client;
+        this.connections = connections;
     }
 
     Project[] all()
@@ -36,7 +223,7 @@ class PostgresProjectRepository : IProjectRepository
         QueryParams query;
         query.sqlCommand = "select id, name, slug, description, task_add_rule, managed_by_ai, ai_paused from projects order by name";
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             Project[] projects;
@@ -57,10 +244,21 @@ class PostgresProjectRepository : IProjectRepository
         query.sqlCommand = "select id, name, slug, description, task_add_rule, managed_by_ai, ai_paused from projects where id = $1";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             return answer.length == 0 ? Nullable!Project.init : answer[0].toProject.nullable;
+        });
+    }
+
+    bool lock(UUID id)
+    {
+        QueryParams query;
+        query.sqlCommand = "select 1 from projects where id = $1 for update";
+        query.argsVariadic(id);
+
+        return connections.use((scope connection) {
+            return connection.execParams(query).length > 0;
         });
     }
 
@@ -70,7 +268,7 @@ class PostgresProjectRepository : IProjectRepository
         query.sqlCommand = "select name from projects where slug = $1 and id <> $2";
         query.argsVariadic(slug, except);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             return answer.length == 0 ? Nullable!string.init : answer[0]["name"]
@@ -85,7 +283,7 @@ class PostgresProjectRepository : IProjectRepository
         query.argsVariadic(project.name, project.slug, project.description,
             cast(string) project.taskAddRule, project.managedByAi);
 
-        client.pickConnection((scope connection) {
+        connections.use((scope connection) {
             auto row = connection.execParams(query)[0];
             project.id = row["id"].as!UUID;
             project.aiPaused = row["ai_paused"].as!bool;
@@ -102,7 +300,7 @@ class PostgresProjectRepository : IProjectRepository
         query.argsVariadic(project.id, project.name, project.slug, project.description,
             cast(string) project.taskAddRule, project.managedByAi);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
             if (answer.length == 0)
             {
@@ -120,20 +318,14 @@ class PostgresProjectRepository : IProjectRepository
         query.sqlCommand = "update projects set ai_paused = $2 where id = $1 returning id";
         query.argsVariadic(id, paused);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
 
     void addWithLanes(Project project, Lane[] lanes)
     {
-        client.pickConnection((scope connection) {
-            connection.exec("begin");
-            scope (failure)
-            {
-                connection.exec("rollback");
-            }
-
+        connections.transaction((scope connection) {
             QueryParams insert;
             insert.sqlCommand = "insert into projects (name, slug, description, task_add_rule, managed_by_ai, ai_paused) values ($1, $2, $3, $4, $5, not $5) returning id, ai_paused";
             insert.argsVariadic(project.name, project.slug, project.description,
@@ -152,19 +344,12 @@ class PostgresProjectRepository : IProjectRepository
                     .marksDone);
                 lane.id = connection.execParams(add)[0]["id"].as!UUID;
             }
-
-            connection.exec("commit");
         });
     }
 
-    void replaceWithLanes(Project project, Lane[] lanes, UUID[] removed)
+    bool replaceWithLanes(Project project, Lane[] lanes, UUID[] removed)
     {
-        client.pickConnection((scope connection) {
-            connection.exec("begin");
-            scope (failure)
-            {
-                connection.exec("rollback");
-            }
+        return connections.transaction((scope connection) {
             connection.exec("set constraints all deferred");
 
             QueryParams update;
@@ -172,7 +357,13 @@ class PostgresProjectRepository : IProjectRepository
                 ~ pausedOnceManaged ~ " where id = $1 returning ai_paused";
             update.argsVariadic(project.id, project.name, project.slug, project.description,
                 cast(string) project.taskAddRule, project.managedByAi);
-            project.aiPaused = connection.execParams(update)[0]["ai_paused"].as!bool;
+            auto answer = connection.execParams(update);
+            if (answer.length == 0)
+            {
+                return false;
+            }
+
+            project.aiPaused = answer[0]["ai_paused"].as!bool;
 
             foreach (id; removed)
             {
@@ -203,7 +394,7 @@ class PostgresProjectRepository : IProjectRepository
                 }
             }
 
-            connection.exec("commit");
+            return true;
         });
     }
 
@@ -213,7 +404,7 @@ class PostgresProjectRepository : IProjectRepository
         query.sqlCommand = "delete from projects where id = $1 returning id";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -235,11 +426,11 @@ private Project toProject(immutable Row row)
 /// ILaneRepository over postgres.
 class PostgresLaneRepository : ILaneRepository
 {
-    private PostgresClient client;
+    private PostgresConnections connections;
 
-    this(PostgresClient client)
+    this(PostgresConnections connections)
     {
-        this.client = client;
+        this.connections = connections;
     }
 
     Lane[] ofProject(UUID projectId)
@@ -248,7 +439,7 @@ class PostgresLaneRepository : ILaneRepository
         query.sqlCommand = "select id, project_id, name, position, color, marks_done from lanes where project_id = $1 order by position";
         query.argsVariadic(projectId);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             Lane[] lanes;
@@ -269,10 +460,21 @@ class PostgresLaneRepository : ILaneRepository
         query.sqlCommand = "select id, project_id, name, position, color, marks_done from lanes where id = $1";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             return answer.length == 0 ? Nullable!Lane.init : answer[0].toLane.nullable;
+        });
+    }
+
+    bool lock(UUID id)
+    {
+        QueryParams query;
+        query.sqlCommand = "select 1 from lanes where id = $1 for update";
+        query.argsVariadic(id);
+
+        return connections.use((scope connection) {
+            return connection.execParams(query).length > 0;
         });
     }
 
@@ -282,7 +484,7 @@ class PostgresLaneRepository : ILaneRepository
         query.sqlCommand = "select 1 from projects where id = $1";
         query.argsVariadic(projectId);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -293,7 +495,7 @@ class PostgresLaneRepository : ILaneRepository
         query.sqlCommand = "select coalesce(max(position) + 1, 0) as next from lanes where project_id = $1 and id <> $2";
         query.argsVariadic(projectId, except);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query)[0]["next"].as!int;
         });
     }
@@ -304,7 +506,7 @@ class PostgresLaneRepository : ILaneRepository
         query.sqlCommand = "select 1 from lanes where project_id = $1 and position = $2 and id <> $3";
         query.argsVariadic(projectId, position, except);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -315,7 +517,7 @@ class PostgresLaneRepository : ILaneRepository
         query.sqlCommand = "insert into lanes (project_id, name, position, color, marks_done) values ($1, $2, $3, $4, $5) returning id";
         query.argsVariadic(lane.projectId, lane.name, lane.position.get, lane.color, lane.marksDone);
 
-        lane.id = client.pickConnection((scope connection) {
+        lane.id = connections.use((scope connection) {
             return connection.execParams(query)[0]["id"].as!UUID;
         });
 
@@ -328,7 +530,7 @@ class PostgresLaneRepository : ILaneRepository
         query.sqlCommand = "update lanes set name = $2, position = $3, color = $4, marks_done = $5 where id = $1 returning id";
         query.argsVariadic(lane.id, lane.name, lane.position.get, lane.color, lane.marksDone);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -339,7 +541,7 @@ class PostgresLaneRepository : ILaneRepository
         query.sqlCommand = "delete from lanes where id = $1 returning id";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -360,11 +562,11 @@ private Lane toLane(immutable Row row)
 /// ITaskRepository over postgres.
 class PostgresTaskRepository : ITaskRepository
 {
-    private PostgresClient client;
+    private PostgresConnections connections;
 
-    this(PostgresClient client)
+    this(PostgresConnections connections)
     {
-        this.client = client;
+        this.connections = connections;
     }
 
     Task[] ofLane(UUID laneId)
@@ -373,7 +575,7 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = "select " ~ taskColumns ~ " from tasks t where t.lane_id = $1 order by t.position";
         query.argsVariadic(laneId);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).toTasks;
         });
     }
@@ -385,7 +587,7 @@ class PostgresTaskRepository : ITaskRepository
             ~ " join lanes l on l.id = t.lane_id where l.project_id = $1 order by l.position, t.position";
         query.argsVariadic(projectId);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).toTasks;
         });
     }
@@ -396,10 +598,21 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = "select " ~ taskColumns ~ " from tasks t where t.id = $1";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             return answer.length == 0 ? Nullable!Task.init : answer[0].toTask.nullable;
+        });
+    }
+
+    bool lock(UUID id)
+    {
+        QueryParams query;
+        query.sqlCommand = "select 1 from tasks where id = $1 for update";
+        query.argsVariadic(id);
+
+        return connections.use((scope connection) {
+            return connection.execParams(query).length > 0;
         });
     }
 
@@ -411,7 +624,7 @@ class PostgresTaskRepository : ITaskRepository
             ~ " where t.agent_status = 'to_be_scheduled' and t.assigned_ai_agent_id is null and not l.marks_done"
             ~ " and p.managed_by_ai and not p.ai_paused order by t.created_at";
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).toTasks;
         });
     }
@@ -424,7 +637,7 @@ class PostgresTaskRepository : ITaskRepository
             ~ " where t.agent_status = 'scheduled' and not l.marks_done and p.managed_by_ai and not p.ai_paused"
             ~ " order by t.created_at";
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).toTasks;
         });
     }
@@ -436,7 +649,7 @@ class PostgresTaskRepository : ITaskRepository
             ~ " where id = $1 and agent_status = $2 returning id";
         query.argsVariadic(id, cast(string) from, cast(string) to);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -447,7 +660,7 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = "update tasks set agent_status = $2, updated_at = now() where agent_status = $1 returning id";
         query.argsVariadic(cast(string) from, cast(string) to);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length;
         });
     }
@@ -459,7 +672,7 @@ class PostgresTaskRepository : ITaskRepository
             ~ " where task_id = $1 order by inserted_at desc";
         query.argsVariadic(taskId);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             TaskNote[] entries;
@@ -487,7 +700,7 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = "select 1 from projects where id = $1";
         query.argsVariadic(projectId);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -498,7 +711,7 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = "select project_id from lanes where id = $1";
         query.argsVariadic(laneId);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             return answer.length == 0 ? Nullable!UUID.init
@@ -514,7 +727,7 @@ class PostgresTaskRepository : ITaskRepository
             ~ " from lanes l join projects p on p.id = l.project_id where l.id = $1";
         query.argsVariadic(laneId, cast(string) TaskAddRule.anyLane);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             return answer.length > 0 && answer[0]["accepts"].as!bool;
@@ -523,12 +736,7 @@ class PostgresTaskRepository : ITaskRepository
 
     Task add(Task task, Nullable!AgentStatus agentStatus)
     {
-        client.pickConnection((scope connection) {
-            connection.exec("begin");
-            scope (failure)
-            {
-                connection.exec("rollback");
-            }
+        connections.transaction((scope connection) {
             connection.lockLane(task.laneId);
             connection.placeTask(task);
 
@@ -543,8 +751,6 @@ class PostgresTaskRepository : ITaskRepository
             created.sqlCommand = recordCreated;
             created.argsVariadic(task.id);
             connection.execParams(created);
-
-            connection.exec("commit");
         });
 
         return task;
@@ -552,12 +758,7 @@ class PostgresTaskRepository : ITaskRepository
 
     bool update(Task task)
     {
-        return client.pickConnection((scope connection) {
-            connection.exec("begin");
-            scope (failure)
-            {
-                connection.exec("rollback");
-            }
+        return connections.transaction((scope connection) {
             connection.lockLane(task.laneId);
 
             QueryParams current;
@@ -566,7 +767,6 @@ class PostgresTaskRepository : ITaskRepository
             auto answer = connection.execParams(current);
             if (answer.length == 0)
             {
-                connection.exec("rollback");
                 return false;
             }
             const oldLaneId = answer[0]["lane_id"].as!UUID;
@@ -593,19 +793,13 @@ class PostgresTaskRepository : ITaskRepository
                 connection.execParams(changed);
             }
 
-            connection.exec("commit");
             return true;
         });
     }
 
     void move(UUID id, UUID laneId, UUID before)
     {
-        client.pickConnection((scope connection) {
-            connection.exec("begin");
-            scope (failure)
-            {
-                connection.exec("rollback");
-            }
+        connections.transaction((scope connection) {
             connection.exec("set constraints all deferred");
             connection.lockLane(laneId);
 
@@ -653,8 +847,6 @@ class PostgresTaskRepository : ITaskRepository
                 moved.argsVariadic(id, oldLaneId, laneId);
                 connection.execParams(moved);
             }
-
-            connection.exec("commit");
         });
     }
 
@@ -664,7 +856,7 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = "select assigned_ai_agent_id from tasks where id = $1";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
             if (answer.length == 0 || answer[0]["assigned_ai_agent_id"].isNull)
             {
@@ -677,20 +869,13 @@ class PostgresTaskRepository : ITaskRepository
 
     bool assignAiAgent(UUID id, Nullable!UUID agentId)
     {
-        return client.pickConnection((scope connection) {
-            connection.exec("begin");
-            scope (failure)
-            {
-                connection.exec("rollback");
-            }
-
+        return connections.transaction((scope connection) {
             QueryParams current;
             current.sqlCommand = "select assigned_ai_agent_id from tasks where id = $1 for update";
             current.argsVariadic(id);
             auto answer = connection.execParams(current);
             if (answer.length == 0)
             {
-                connection.exec("rollback");
                 return false;
             }
             auto old = answer[0]["assigned_ai_agent_id"];
@@ -717,7 +902,6 @@ class PostgresTaskRepository : ITaskRepository
                 connection.execParams(assigned);
             }
 
-            connection.exec("commit");
             return true;
         });
     }
@@ -743,7 +927,7 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = "insert into task_notes (task_id, note) select id, $2 from tasks where id = $1 returning id";
         query.argsVariadic(id, note);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -754,7 +938,7 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = "select agent_status from tasks where id = $1";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
             if (answer.length == 0 || answer[0]["agent_status"].isNull)
             {
@@ -767,13 +951,7 @@ class PostgresTaskRepository : ITaskRepository
 
     bool reschedule(UUID id)
     {
-        return client.pickConnection((scope connection) {
-            connection.exec("begin");
-            scope (failure)
-            {
-                connection.exec("rollback");
-            }
-
+        return connections.transaction((scope connection) {
             QueryParams update;
             update.sqlCommand = "update tasks set assigned_ai_agent_id = null, agent_status = 'to_be_scheduled', updated_at = now()"
                 ~ " where id = $1 and agent_status is distinct from 'scheduling' and agent_status is distinct from 'executing'"
@@ -781,7 +959,6 @@ class PostgresTaskRepository : ITaskRepository
             update.argsVariadic(id);
             if (connection.execParams(update).length == 0)
             {
-                connection.exec("rollback");
                 return false;
             }
 
@@ -790,7 +967,6 @@ class PostgresTaskRepository : ITaskRepository
             note.argsVariadic(id);
             connection.execParams(note);
 
-            connection.exec("commit");
             return true;
         });
     }
@@ -802,7 +978,7 @@ class PostgresTaskRepository : ITaskRepository
             ~ " select id, 'Not assigned, since there is no enabled task scheduler agent' from tasks where id = $1 returning id";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -814,7 +990,7 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = recordAgentOutcomeNote;
         query.argsVariadic(id, agentId, note);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -825,7 +1001,7 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = "delete from tasks where id = $1 returning id";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -836,7 +1012,7 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = "delete from tasks where lane_id = $1 returning id";
         query.argsVariadic(laneId);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return cast(ulong) connection.execParams(query).length;
         });
     }
@@ -951,11 +1127,11 @@ private Task toTask(immutable Row row)
 /// IRuntimeRepository over postgres.
 class PostgresRuntimeRepository : IRuntimeRepository
 {
-    private PostgresClient client;
+    private PostgresConnections connections;
 
-    this(PostgresClient client)
+    this(PostgresConnections connections)
     {
-        this.client = client;
+        this.connections = connections;
     }
 
     Runtime[] all()
@@ -963,7 +1139,7 @@ class PostgresRuntimeRepository : IRuntimeRepository
         QueryParams query;
         query.sqlCommand = "select id, name from runtimes order by name";
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             Runtime[] runtimes;
@@ -984,7 +1160,7 @@ class PostgresRuntimeRepository : IRuntimeRepository
         QueryParams query;
         query.sqlCommand = "select id, name, runtime from models order by runtime, name";
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             Model[] models;
@@ -1022,7 +1198,7 @@ class PostgresRuntimeRepository : IRuntimeRepository
         query.sqlCommand = "select name from runtimes where id = $1";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             return answer.length == 0 ? Nullable!string.init : answer[0]["name"]
@@ -1036,7 +1212,7 @@ class PostgresRuntimeRepository : IRuntimeRepository
         query.sqlCommand = "select 1 from models where runtime = $1 and id = $2";
         query.argsVariadic(runtime, model);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -1047,7 +1223,7 @@ class PostgresRuntimeRepository : IRuntimeRepository
         query.sqlCommand = "select 1 from model_effort_levels where model = $1 and effort_level = $2";
         query.argsVariadic(model, effort);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -1056,11 +1232,11 @@ class PostgresRuntimeRepository : IRuntimeRepository
 /// IAgentRepository over postgres.
 class PostgresAgentRepository : IAgentRepository
 {
-    private PostgresClient client;
+    private PostgresConnections connections;
 
-    this(PostgresClient client)
+    this(PostgresConnections connections)
     {
-        this.client = client;
+        this.connections = connections;
     }
 
     Agent[] all()
@@ -1068,7 +1244,7 @@ class PostgresAgentRepository : IAgentRepository
         QueryParams query;
         query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, enabled, instructions, max_parallel_tasks from agents order by task_scheduler desc, name";
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             Agent[] agents;
@@ -1102,7 +1278,7 @@ class PostgresAgentRepository : IAgentRepository
         query.sqlCommand = "select id, name, runtime, model, effort, task_scheduler, enabled, instructions, max_parallel_tasks from agents where id = $1";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             if (answer.length == 0)
@@ -1123,7 +1299,7 @@ class PostgresAgentRepository : IAgentRepository
         query.sqlCommand = "update agents set enabled = $2 where id = $1 returning id";
         query.argsVariadic(id, enabled);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -1134,7 +1310,7 @@ class PostgresAgentRepository : IAgentRepository
         query.sqlCommand = "update agents set enabled = $1 where enabled <> $1 returning id";
         query.argsVariadic(enabled);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             UUID[] ids;
@@ -1155,7 +1331,7 @@ class PostgresAgentRepository : IAgentRepository
         query.sqlCommand = "select 1 from agents where name = $1 and id <> $2";
         query.argsVariadic(name, except);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -1167,19 +1343,11 @@ class PostgresAgentRepository : IAgentRepository
         query.argsVariadic(agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler, agent.instructions,
             agent.maxParallelTasks);
 
-        client.pickConnection((scope connection) {
-            connection.exec("begin");
-            scope (failure)
-            {
-                connection.exec("rollback");
-            }
-
+        connections.transaction((scope connection) {
             auto row = connection.execParams(query)[0];
             agent.id = row["id"].as!UUID;
             agent.enabled = row["enabled"].as!bool;
             connection.insertLabels(agent.id, agent.labels);
-
-            connection.exec("commit");
         });
 
         return agent;
@@ -1192,17 +1360,10 @@ class PostgresAgentRepository : IAgentRepository
         query.argsVariadic(agent.id, agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler, agent.instructions,
             agent.maxParallelTasks);
 
-        return client.pickConnection((scope connection) {
-            connection.exec("begin");
-            scope (failure)
-            {
-                connection.exec("rollback");
-            }
-
+        return connections.transaction((scope connection) {
             auto answer = connection.execParams(query);
             if (answer.length == 0)
             {
-                connection.exec("rollback");
                 return false;
             }
 
@@ -1214,7 +1375,6 @@ class PostgresAgentRepository : IAgentRepository
             connection.execParams(clear);
             connection.insertLabels(agent.id, agent.labels);
 
-            connection.exec("commit");
             return true;
         });
     }
@@ -1225,7 +1385,7 @@ class PostgresAgentRepository : IAgentRepository
         query.sqlCommand = "delete from agents where id = $1 returning id";
         query.argsVariadic(id);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -1280,11 +1440,11 @@ private Agent toAgent(immutable Row row)
 /// IAgentLogRepository over postgres.
 class PostgresAgentLogRepository : IAgentLogRepository
 {
-    private PostgresClient client;
+    private PostgresConnections connections;
 
-    this(PostgresClient client)
+    this(PostgresConnections connections)
     {
-        this.client = client;
+        this.connections = connections;
     }
 
     AgentLogEntry[] ofAgent(UUID agentId)
@@ -1294,7 +1454,7 @@ class PostgresAgentLogRepository : IAgentLogRepository
             ~ " where agent_id = $1 order by created_at desc";
         query.argsVariadic(agentId);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             AgentLogEntry[] entries;
@@ -1323,7 +1483,7 @@ class PostgresAgentLogRepository : IAgentLogRepository
         query.sqlCommand = "insert into agent_log (agent_id, prompt, result) values ($1, $2, $3) returning id, created_at";
         query.argsVariadic(entry.agentId, entry.prompt, entry.result);
 
-        client.pickConnection((scope connection) {
+        connections.use((scope connection) {
             auto row = connection.execParams(query)[0];
             entry.id = row["id"].as!UUID;
             entry.createdAt = row["created_at"].as!SysTime;
@@ -1338,7 +1498,7 @@ class PostgresAgentLogRepository : IAgentLogRepository
         query.sqlCommand = "update agent_log set result = $2 where id = $1 returning id";
         query.argsVariadic(id, result);
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
         });
     }
@@ -1347,11 +1507,11 @@ class PostgresAgentLogRepository : IAgentLogRepository
 /// IDefaultRepository over postgres.
 class PostgresDefaultRepository : IDefaultRepository
 {
-    private PostgresClient client;
+    private PostgresConnections connections;
 
-    this(PostgresClient client)
+    this(PostgresConnections connections)
     {
-        this.client = client;
+        this.connections = connections;
     }
 
     Default[] all()
@@ -1359,7 +1519,7 @@ class PostgresDefaultRepository : IDefaultRepository
         QueryParams query;
         query.sqlCommand = "select key, value from defaults order by key";
 
-        return client.pickConnection((scope connection) {
+        return connections.use((scope connection) {
             auto answer = connection.execParams(query);
 
             Default[] defaults;

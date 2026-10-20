@@ -60,6 +60,46 @@ A controller never calls a repository, and never publishes an event.
   `IEventPublisher`, so that open web UIs show it (see [event-stream.md](event-stream.md)). A
   failed write reports nothing.
 
+### Transactions and locks
+
+A check and the write that relies on it are two statements, and another request, or an agent,
+can write between them. Where that would leave the data other than asked for, the service runs
+both in one transaction it opens through `ITransactional` (in `repository/package.d`), with the
+rows its checks rely on locked, so that a write to them waits until it is done:
+
+```d
+return transactionally(transactions, {
+    if (!projects.lock(lane.projectId))
+    {
+        return laneFailure!Lane(new ProjectNotFoundError);
+    }
+    // the checks and the write, as they would be without the transaction
+});
+```
+
+- **`transactionally`** (in `service.d`) commits when the result the block returns is a success,
+  and rolls back when it is a failure or the block throws. So a failure found after a write still
+  undoes it.
+- **A repository write that is a transaction of its own** (`addWithLanes`, the task writes, the
+  agent with its labels) becomes part of the open one, and commits or rolls back with it.
+- **Locks are taken in the order project, lane, task, agent.** Two transactions that keep to it
+  never wait on each other in a circle: one just waits at the first lock they share. Every write
+  to a project's lanes locks the project first, which is what keeps a project's lanes, its
+  add-task rule and its lane order still while a task is added or the project is saved. A
+  deadlock means some transaction broke the order; postgres aborts it, the repository throws
+  `Deadlock`, and the API answers 503 (see [rest-api.md](rest-api.md)) and logs it.
+- **Nothing in a transaction starts a task of its own** (`runTask`). The open transaction is kept
+  per vibe.d task, so work in another task would quietly run outside it, and could wait forever
+  on its locks.
+- **What is to happen only for a write that stands** goes through `ITransactional.afterCommit`:
+  renaming a working directory, checking a project's index page, and every event, since
+  `IEventPublisher` is a `CommittedEventPublisher` that holds each one back until the commit.
+  Outside a transaction, `afterCommit` runs its delegate right away.
+- **A clash no lock can prevent**, such as two new projects with one slug, is answered after the
+  fact: the repository turns the database's refusal into `UniqueViolation` or
+  `ForeignKeyViolation`, and the service catches it outside the transaction and answers as its
+  check would have. One it does not catch is a 409 or 404 from `renderApiError`.
+
 A service knows nothing of HTTP. Its methods return a `Result!(T, IXError)`, or an
 `OperationResult!IXError` when there is no value, both from `result.d`, rather than throwing for
 an outcome that is expected. A read that cannot fail, such as `getAll`, returns its value as is.
@@ -97,24 +137,71 @@ caller is meant to catch, such as `PositionConflict`, is part of the interface a
 `package.d`.
 
 A repository reports a miss as an empty `Nullable` or `false`, never as an error of its own; the
-service turns that into the error class. See the `taskavista-database` skill for the SQL side.
+service turns that into the error class. The project, lane and task repositories each have a
+`lock`, which only means something inside a transaction (see above).
+
+Every postgres repository reaches the database through `PostgresConnections`, never through the
+pool: it hands out the open transaction's connection when the task has one, and a pooled one
+otherwise, and turns a unique or foreign-key violation or a deadlock into the exceptions
+`package.d` names. It alone holds the `PostgresClient`. A repository call that took a pooled
+connection while its task held a transaction would wait on that transaction's locks, and postgres,
+seeing two sessions, would let it wait forever; with no pool to reach, that cannot be written. See the `taskavista-database` skill for the SQL side.
 
 ## Wiring
 
 `DashboardContext` in `app.d` registers every repository under its interface, every service, and
-every controller under its API. Poodinis builds each one with what its constructor asks for. The
-one shared instance is `EventStream`, registered under both `IEventPublisher`, which the services
-publish to, and `IEventStream`, which also serves the WebSockets, so that what is published
-reaches the sockets.
+every controller under its API. Poodinis builds each one with what its constructor asks for.
+`EventStream` is registered under `IEventStream`, which serves the WebSockets, and
+`CommittedEventPublisher`, which hands it each event once the write has committed, under
+`IEventPublisher`, which the services publish to. `PostgresConnections` is made by a factory
+method, as its connection string is config, and the one instance is registered both as itself,
+for the repositories, and as `ITransactional`, for the services.
 
 ## Testing
 
 The services are unit-tested in `service.d` against mocks of the interfaces they take: the
-repositories and `IEventPublisher`. A mock repository keeps its
+repositories, `IEventPublisher` and `ITransactional`, whose mock holds back what is to run after
+the commit but undoes no write. A mock repository keeps its
 rows in a `MockDatabase` in memory, and `MockEventPublisher` keeps the events it was told about,
 so that a test can check both what was written and what was reported.
 
-## What is not layered yet
+The locking cannot be unit-tested, since the mocks have no database. It is checked by hand against
+postgres: hold the lock a fix relies on in a `psql` session, send the clashing request, and see it
+wait and then answer as it should.
+
+### Checking the locks by hand
+
+Against a database of its own, so that no agent gets to work: create one
+(`create database "taskavista-race"` through `-d postgres`, see the `taskavista-database`
+skill), point a copy of `config-dev.json` at it with another port, start the server so it
+applies the schema, then disable the seeded agents (`update agents set enabled = false`). Drop the
+database afterwards.
+
+Each check holds the clashing write open in a `psql` session in the background and sends the
+request half a second later. The request must take about as long as the session sleeps, then
+answer as shown:
+
+| What | Held open in `psql` | Request | Answer |
+|---|---|---|---|
+| Project settings | `insert into lanes … (project P)`, sleep 3 | `saveProjectSettings` for P, without that lane | 200; P has only the lanes sent |
+| Settings, project gone | `delete from projects where id = P`, sleep 3 | `saveProjectSettings` for P | 404 "No project has that id." |
+| Lane positions | `select … from projects where id = P for update`, sleep 2 | two lanes created in P at once, no position | both 200, positions one after the other |
+| Resuming agents | `update projects set managed_by_ai = false` (P managed, paused), sleep 3 | `setAiPaused` P false | 409 not managed by AI agents; P still paused |
+| Rescheduling | `update lanes set marks_done = true` (the task's lane), sleep 3 | `rescheduleTask` (task declined, P managed) | 409 "The task is in a done lane, so it is done." |
+| Rescheduling, task moved | lock P, sleep 1.5, move the task to a done lane, commit | `rescheduleTask`, sent after 0.3 s | 409 done lane: the lane it moved to was checked |
+| Add-task rule | `update projects set task_add_rule = 'first_lane'`, sleep 3 | task created in P's second lane | 409 "The project only takes new tasks in its first lane." |
+| Unique names | `insert into projects (…, slug 'rival2', ai_paused true)`, sleep 3 | `POST /projects` with slug `rival2` | 409 "Another project already has the slug 'rival2'." |
+| Unique names | the same with slug `sails` | `createProject` named "Sails!" | 409 "A project called “Sails” already exists. Pick another name." |
+| Unique names | `insert into agents (… 'Twin2' …)`, sleep 3 | `POST /agents` named Twin2 | 409 "An agent called “Twin2” already exists. …" |
+| Lane gone | `delete from lanes where id = Z`, sleep 3 | `PUT /tasks/{id}` moving the task to Z | 404 "No lane has that id." |
+| Deadlock | lock the task, sleep 1, then lock its lane | `rescheduleTask` on it, after 0.2 s | 503 with `Retry-After: 1`; the server logs the deadlock |
+
+Also check that the events still reach a WebSocket on `/api/events/v1`: a lane created and the
+agents paused each send one, and a refused `setAiPaused` sends none.
+
+## The agent loops
 
 `TaskScheduler` and `TaskExecutor` in `agent.d` read and write the repositories and publish
-events themselves, rather than going through the services.
+events themselves, rather than going through the services. That is by design. Where one of their
+sequences checks and then writes, it uses `ITransactional` and the repositories' locks as a
+service does, as `TaskScheduler.moveOn` does.
