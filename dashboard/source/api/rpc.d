@@ -14,7 +14,7 @@ import std.string : strip;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
-import agent : AgentDrafter, IAgentChat;
+import agent : AgentDrafter, IAgentChat, ProjectDrafter;
 import api.errors : toHTTPError;
 import model : Lane, Project, TaskAddRule;
 import service : AgentService, ProjectService, TaskService;
@@ -183,6 +183,15 @@ interface RpcApi
      */
     @method(HTTPMethod.POST) @path("draftAgent")
     Json draftAgent(string description) @safe;
+
+    /**
+     * Has the agent named Generic draft a new project from what the person
+     * wrote they are working on, without creating it. Answers with the
+     * project's fields, for the new project screen to show, or with only an
+     * `error` when the agent could not draft one.
+     */
+    @method(HTTPMethod.POST) @path("draftProject")
+    Json draftProject(string description) @safe;
 }
 
 /// Serves the RPC calls out of the services.
@@ -193,14 +202,17 @@ class RpcController : RpcApi
     private AgentService agents;
     private IAgentChat chat;
     private AgentDrafter drafter;
+    private ProjectDrafter projectDrafter;
 
-    this(ProjectService projects, TaskService tasks, AgentService agents, IAgentChat chat, AgentDrafter drafter)
+    this(ProjectService projects, TaskService tasks, AgentService agents, IAgentChat chat, AgentDrafter drafter,
+        ProjectDrafter projectDrafter)
     {
         this.projects = projects;
         this.tasks = tasks;
         this.agents = agents;
         this.chat = chat;
         this.drafter = drafter;
+        this.projectDrafter = projectDrafter;
     }
 
     override MoveTaskResult moveTask(UUID taskId, UUID laneId, Nullable!UUID beforeTaskId) @trusted
@@ -362,6 +374,13 @@ class RpcController : RpcApi
         enforceHTTP(description.strip.length > 0, HTTPStatus.badRequest, "A description cannot be blank.");
 
         return drafter.draft(description);
+    }
+
+    override Json draftProject(string description) @trusted
+    {
+        enforceHTTP(description.strip.length > 0, HTTPStatus.badRequest, "A description cannot be blank.");
+
+        return projectDrafter.draft(description);
     }
 }
 

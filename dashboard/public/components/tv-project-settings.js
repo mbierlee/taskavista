@@ -91,6 +91,7 @@ function hasLetterOrDigit(name) {
 export class TvProjectSettings extends HTMLElement {
   #project = null;
   #projects = [];
+  #noProjects = false;
   #unwatch = null;
   #nameCheck = null;
   /* Each lane has a `key` of its own, since a lane added here has no id yet. */
@@ -205,9 +206,12 @@ export class TvProjectSettings extends HTMLElement {
     this.setAttribute("role", "region");
     this.#renderTitle();
     this.#unwatch = store.watch(
-      (state) => state.projects.list,
-      (list) => {
-        this.#projects = list;
+      (state) => state.projects,
+      (projects) => {
+        this.#projects = projects.list;
+        this.#noProjects =
+          projects.status === "ready" && projects.list.length === 0;
+        this.#renderTitle();
         this.#checkName();
       },
     );
@@ -227,19 +231,22 @@ export class TvProjectSettings extends HTMLElement {
     );
   }
 
-  /* `lanes` are { name, color, marksDone }. The name takes the focus, so the
-     screen must be on the page by then. "/" goes back to the last project
-     shown. */
-  create(lanes) {
+  /* `lanes` are { name, color, marksDone }, and `draft`, when an agent
+     suggested the project, has its { name, description, taskAddRule,
+     managedByAi } to start from. The name takes the focus, so the screen
+     must be on the page by then. "/" goes back to the last project shown. */
+  create(lanes, draft = null) {
     this.#start(
       null,
       lanes.map((lane) => ({ ...lane, id: null, taskCount: 0 })),
       "/",
+      draft,
     );
     this.#name.focus();
   }
 
-  #start(project, lanes, board) {
+  #start(project, lanes, board, draft = null) {
+    const fields = project ?? draft;
     this.#project = project;
     this.#closePicker();
     this.#lanes = lanes.map((lane) => ({ ...lane, key: this.#nextKey++ }));
@@ -254,14 +261,14 @@ export class TvProjectSettings extends HTMLElement {
 
     this.#back.href = board;
     this.#cancel.href = board;
-    this.#name.value = project?.name ?? "";
+    this.#name.value = fields?.name ?? "";
     this.#name.placeholder = "";
     if (!project) {
       this.#name.placeholder = `e.g. ${examplePlaceholders[nextPlaceholder]}`;
       nextPlaceholder = (nextPlaceholder + 1) % examplePlaceholders.length;
     }
-    this.#description.value = project?.description ?? "";
-    const rule = project?.taskAddRule ?? "first_lane";
+    this.#description.value = fields?.description ?? "";
+    const rule = fields?.taskAddRule ?? "first_lane";
     for (const option of this.#rules) {
       option.checked = option.value === rule;
     }
@@ -274,7 +281,7 @@ export class TvProjectSettings extends HTMLElement {
     for (const option of this.#closeRules) {
       option.checked = option.value === closeRule;
     }
-    this.#managed.checked = project?.managedByAi ?? false;
+    this.#managed.checked = fields?.managedByAi ?? false;
     this.#checkName();
 
     this.#status.hidden = true;
@@ -609,10 +616,15 @@ export class TvProjectSettings extends HTMLElement {
 
   /* ---------- rendering ---------- */
 
+  /* With no projects yet, "/" shows the project prompt rather than a board,
+     so that is what the back link goes to. */
   #renderTitle() {
-    const title = this.hasAttribute("new") ? "New project" : "Project settings";
+    const isNew = this.hasAttribute("new");
+    const title = isNew ? "New project" : "Project settings";
     this.#title.textContent = title;
     this.setAttribute("aria-label", title);
+    this.#back.textContent =
+      isNew && this.#noProjects ? "← Back to AI setup" : "← Back to board";
   }
 
   /* The list is short, so it is drawn again whole after every change to it

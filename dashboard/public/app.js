@@ -22,6 +22,7 @@ import "./components/tv-board.js";
 import "./components/tv-topbar.js";
 import "./components/tv-not-found.js";
 import "./components/tv-project-settings.js";
+import "./components/tv-project-prompt.js";
 import "./components/tv-app-settings.js";
 import "./components/tv-task-details.js";
 import "./components/tv-agent-chat.js";
@@ -686,6 +687,35 @@ async function createProject(draft) {
   await loadProjects();
   if (newProjectDraft === shown && newProjectEl.isConnected) {
     navigation.navigate(projectPath(created.slug), { history: "replace" });
+  }
+}
+
+/* ---------- project prompt ---------- */
+
+const projectPromptEl = document.createElement("tv-project-prompt");
+
+/* An agent suggests the project, which can take a while, and
+   the person then reviews it on the new project screen: nothing is created
+   until they create it there. The draft goes with that screen's history
+   entry, so back and forward, and a reload, show it again. */
+async function draftProject(description) {
+  projectPromptEl.generating = true;
+  let draft;
+  try {
+    draft = await sendJson("POST", "/api/rpc/v1/draftProject", {
+      description,
+    });
+  } catch (error) {
+    console.error("Could not draft the project:", error);
+    draft = { error: error.message };
+  } finally {
+    projectPromptEl.generating = false;
+  }
+
+  if (draft.error) {
+    projectPromptEl.error = `Couldn’t set up a project. ${draft.error}`;
+  } else if (projectPromptEl.isConnected) {
+    navigation.navigate("/projects/new", { state: { draft } });
   }
 }
 
@@ -1542,7 +1572,15 @@ async function showRoot(params, signal) {
       : (store.state.projects.list[0]?.slug ?? null);
   if (slug === null) {
     store.update({ currentProjectSlug: null });
-    mainEl.replaceChildren(boardEl);
+    /* With no projects at all, the first project is set up here. A list that
+       could not be loaded is not known to be empty, so that gets the board. */
+    if (store.state.projects.status === "ready") {
+      topbarEl.toggleAttribute("no-switcher", true);
+      mainEl.replaceChildren(projectPromptEl);
+      projectPromptEl.focus();
+    } else {
+      mainEl.replaceChildren(boardEl);
+    }
     return;
   }
 
@@ -1580,13 +1618,15 @@ function showAppSettings(params, signal) {
   return loadAppSettings(signal);
 }
 
-/* A fresh draft each time, as the settings screen is. The route names no
-   project, so the selection is left as it was, and "Back to board" goes to
-   it by way of the root. */
+/* A fresh draft each time, as the settings screen is, or the one an agent
+   suggested, which the project prompt puts in the history entry. The route
+   names no project, so the selection is left as it was, and "Back to board"
+   goes to it by way of the root. */
 function showNewProject() {
   newProjectDraft++;
   mainEl.replaceChildren(newProjectEl);
-  newProjectEl.create(startingLanes);
+  const draft = navigation.currentEntry.getState()?.draft ?? null;
+  newProjectEl.create(draft?.lanes ?? startingLanes, draft);
 }
 
 /* Before the project list is in, the screen shows on trust, so a fresh load
@@ -1699,6 +1739,10 @@ newProjectEl.addEventListener("project-create", (event) => {
   createProject(event.detail);
 });
 
+projectPromptEl.addEventListener("project-draft", (event) => {
+  draftProject(event.detail.description);
+});
+
 appSettingsEl.addEventListener("agent-draft", (event) => {
   draftAgent(event.detail.description);
 });
@@ -1789,6 +1833,17 @@ store.watch(
   },
 );
 
+/* A project made elsewhere, such as by an agent in the chat or in another
+   window, ends the first run: the root goes to it. */
+store.watch(
+  (state) => state.projects.list,
+  (list) => {
+    if (projectPromptEl.isConnected && list.length > 0) {
+      redirect("/");
+    }
+  },
+);
+
 /* An agent that has been deleted ends its chat. */
 store.watch(
   (state) => state.agents,
@@ -1811,5 +1866,9 @@ listenForChanges();
 
 /* The navigate event does not fire for the page load itself, so the first
    route is taken by navigating to where the page already is. Every path the
-   page is served at has a route, if only the not-found screen. */
-navigation.navigate(location.href, { history: "replace" });
+   page is served at has a route, if only the not-found screen. The entry's
+   state goes along, so a reload keeps a draft the project prompt put there. */
+navigation.navigate(location.href, {
+  history: "replace",
+  state: navigation.currentEntry.getState(),
+});

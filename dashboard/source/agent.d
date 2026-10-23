@@ -27,8 +27,8 @@ import std.uuid : UUID, randomUUID;
 
 import eventing : Event, IEventPublisher;
 import config : Config, apiUrl;
-import model : Agent, AgentLogEntry, AgentStatus, EffortLevel, Lane, Model, Project, Runtime, Task, TaskNote,
-    defaultEffort;
+import model : Agent, AgentLogEntry, AgentStatus, EffortLevel, Lane, Model, Project, Runtime, Task, TaskAddRule,
+    TaskNote, defaultEffort;
 import prompt : PromptParser;
 import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
     IRuntimeRepository, ITaskRepository, ITransactional;
@@ -2000,15 +2000,6 @@ class AgentDrafter
         return draftError("No agent could draft one. The server's log says why.");
     }
 
-    /**
-     * Found by name, as the chat finds it, since it is an ordinary agent with
-     * nothing else to tell it by.
-     */
-    private static bool isGeneric(Agent agent)
-    {
-        return agent.name.toLower == "generic";
-    }
-
     /// One block per runtime, with a line per model it offers.
     private static string runtimeList(Runtime[] all, Model[] models)
     {
@@ -2027,6 +2018,15 @@ class AgentDrafter
         return format("- %s (labels: %s)", agent.name, agent.labels.length == 0 ? "none" : agent.labels.join(
                 ", "));
     }
+}
+
+/**
+ * Whether the agent is the one named Generic, found by name, as the chat finds
+ * it, since it is an ordinary agent with nothing else to tell it by.
+ */
+private bool isGeneric(Agent agent)
+{
+    return agent.name.toLower == "generic";
 }
 
 private Json draftError(string message)
@@ -2188,4 +2188,230 @@ unittest
     assert(readDraft("I cannot help with that.", models, defaultIds).isNull);
     assert(readDraft(`{"name": " "}`, models, defaultIds).isNull);
     assert(readDraft(`{"name": "Writer"`, models, defaultIds).isNull);
+}
+
+/// Asks an agent to suggest a new project from a person's description of it.
+private enum quickCreateProjectPrompt = import("quick-create-project.txt");
+
+/**
+ * The colours a suggested lane can be given, with what each looks like, for the
+ * agent to choose by. Mirrors standardColors in tv-project-settings.js.
+ */
+private enum string[2][] laneColors = [
+    ["#8fa6ff", "blue"],
+    ["#e8b154", "amber"],
+    ["#5fd6ab", "green"],
+    ["#f2836b", "coral"],
+    ["#c79bf0", "lilac"],
+    ["#8a929e", "grey"],
+    ["#6fc7e8", "sky blue"]
+];
+
+/**
+ * Drafts a new project from a person's description of it, for the person to
+ * review on the new project screen before anything is created: the project
+ * prompt's "Set up project", shown at first run. As with `AgentDrafter`, the agent named Generic
+ * is asked first, and then each task scheduler.
+ */
+class ProjectDrafter
+{
+    private IAgentRepository agents;
+    private IProjectRepository projects;
+    private PromptParser parser;
+    private AgentPrompt agentPrompt;
+    private RuntimeExecutor executor;
+
+    this(IAgentRepository agents, IProjectRepository projects, PromptParser parser, AgentPrompt agentPrompt,
+        RuntimeExecutor executor)
+    {
+        this.agents = agents;
+        this.projects = projects;
+        this.parser = parser;
+        this.agentPrompt = agentPrompt;
+        this.executor = executor;
+    }
+
+    /**
+     * Has an agent draft a new project from the description. An agent that
+     * fails to answer, or answers with something that is not a draft, is
+     * passed over for the next.
+     *
+     * Params:
+     *   description = What the person wrote they are working on.
+     *
+     * Returns: The draft, as an object with the fields of the new project
+     *   screen, or one with only an `error`, a message for the person, when the
+     *   agent found the description too vague or no agent could draft one.
+     */
+    public Json draft(string description)
+    {
+        auto all = agents.all();
+        auto drafters = all.filter!(agent => isGeneric(agent))
+            .chain(all.filter!(agent => agent.taskScheduler && !isGeneric(agent)))
+            .array;
+        if (drafters.length == 0)
+        {
+            return draftError("There is no agent to suggest one with. Add an agent named Generic, or a task "
+                    ~ "scheduler, or set the project up manually.");
+        }
+
+        auto existing = projects.all();
+        string[string] placeholders = [
+            "<project request>": description.strip,
+            "<project list>": existing.map!(project => "- " ~ project.name).join("\n"),
+            "<color list>": laneColors.map!(color => format("- %s (%s)", color[0], color[1])).join("\n")
+        ];
+        auto prompt = parser.parse(quickCreateProjectPrompt, placeholders, [
+                "projects": existing.length > 0
+            ]);
+
+        foreach (drafter; drafters)
+        {
+            string answer;
+            try
+            {
+                string noSession;
+                answer = executor.prompt(drafter.id.toString, prompt, false, noSession,
+                    agentPrompt.systemPrompt(drafter, "").strip);
+            }
+            catch (Exception exception)
+            {
+                logError("Agent %s could not draft a project: %s", drafter.name, exception.msg);
+                continue;
+            }
+
+            auto draft = readProjectDraft(answer);
+            if (draft.isNull)
+            {
+                logError("Agent %s answered a request to draft a project with \"%s\", which is not a draft.",
+                    drafter.name, answer);
+                continue;
+            }
+
+            return draft.get;
+        }
+
+        return draftError("No agent could suggest one. The server's log says why.");
+    }
+}
+
+/**
+ * Reads an agent's answer to the quick-create project prompt, as `answerObject`
+ * finds it. A lane without a name is dropped, a colour that is not one of
+ * `laneColors` is replaced by one of them, and a rule the schema does not know
+ * becomes "first_lane", so the screen shows only what it could save. Whatever
+ * else is in the object is dropped.
+ *
+ * Returns: The draft, or an error object when the agent answered with one, or
+ *   an empty Nullable when the answer is neither, or has no lanes.
+ */
+private Nullable!Json readProjectDraft(string answer)
+{
+    auto parsed = answerObject(answer);
+    if (parsed.isNull)
+    {
+        return Nullable!Json.init;
+    }
+
+    auto json = parsed.get;
+
+    string text(Json object, string key)
+    {
+        auto value = key in object;
+        return value !is null && value.type == Json.Type.string ? value.get!string.strip : "";
+    }
+
+    bool flag(Json object, string key)
+    {
+        auto value = key in object;
+        return value !is null && value.type == Json.Type.bool_ && value.get!bool;
+    }
+
+    if (text(json, "error").length > 0)
+    {
+        return draftError(text(json, "error")).nullable;
+    }
+
+    if (text(json, "name").length == 0)
+    {
+        return Nullable!Json.init;
+    }
+
+    Json[] lanes;
+    if (auto list = "lanes" in json)
+    {
+        if (list.type == Json.Type.array)
+        {
+            foreach (item; *list)
+            {
+                if (item.type != Json.Type.object || text(item, "name").length == 0)
+                {
+                    continue;
+                }
+
+                auto color = text(item, "color").toLower;
+                if (!laneColors.canFind!(standard => standard[0] == color))
+                {
+                    color = laneColors[lanes.length % laneColors.length][0];
+                }
+
+                auto lane = Json.emptyObject;
+                lane["name"] = text(item, "name");
+                lane["color"] = color;
+                lane["marksDone"] = flag(item, "marksDone");
+                lanes ~= lane;
+            }
+        }
+    }
+
+    if (lanes.length == 0)
+    {
+        return Nullable!Json.init;
+    }
+
+    auto rule = text(json, "taskAddRule");
+
+    auto draft = Json.emptyObject;
+    draft["name"] = text(json, "name");
+    draft["description"] = text(json, "description");
+    draft["taskAddRule"] = rule == TaskAddRule.anyLane ? TaskAddRule.anyLane : TaskAddRule.firstLane;
+    draft["managedByAi"] = flag(json, "managedByAi");
+    draft["lanes"] = Json(lanes);
+
+    return draft.nullable;
+}
+
+unittest
+{
+    auto fenced = readProjectDraft("Here it is:\n```json\n{\"name\": \" Site Relaunch \", \"description\": \"New site.\","
+            ~ " \"lanes\": [{\"name\": \"To do\", \"color\": \"#8FA6FF\"}, {\"name\": \" \", \"color\": \"#e8b154\"},"
+            ~ " {\"name\": \"Doing\", \"color\": \"#123456\"}, 3, {\"name\": \"Done\", \"color\": \"#5fd6ab\","
+            ~ " \"marksDone\": true}], \"taskAddRule\": \"any_lane\", \"managedByAi\": true, \"extra\": 1}\n```");
+    assert(!fenced.isNull);
+    auto draft = fenced.get;
+    assert(draft["name"].get!string == "Site Relaunch");
+    assert(draft["description"].get!string == "New site.");
+    assert(draft["taskAddRule"].get!string == "any_lane");
+    assert(draft["managedByAi"].get!bool);
+    assert("extra" !in draft);
+    assert(draft["lanes"].length == 3);
+    assert(draft["lanes"][0]["color"].get!string == "#8fa6ff");
+    assert(!draft["lanes"][0]["marksDone"].get!bool);
+    assert(draft["lanes"][1]["name"].get!string == "Doing");
+    assert(draft["lanes"][1]["color"].get!string == "#e8b154");
+    assert(draft["lanes"][2]["marksDone"].get!bool);
+
+    auto plain = readProjectDraft(`{"name": "Site", "lanes": [{"name": "To do", "color": "#8fa6ff"}],`
+            ~ ` "taskAddRule": "last_lane"}`);
+    assert(plain.get["taskAddRule"].get!string == "first_lane");
+    assert(!plain.get["managedByAi"].get!bool);
+    assert(plain.get["description"].get!string == "");
+
+    auto error = readProjectDraft(`{"error": "Say what the project is."}`);
+    assert(error.get["error"].get!string == "Say what the project is." && "name" !in error.get);
+
+    assert(readProjectDraft("I cannot help with that.").isNull);
+    assert(readProjectDraft(`{"name": "Site"}`).isNull);
+    assert(readProjectDraft(`{"name": "Site", "lanes": [{"name": " "}]}`).isNull);
+    assert(readProjectDraft(`{"name": " ", "lanes": [{"name": "To do"}]}`).isNull);
 }

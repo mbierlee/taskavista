@@ -8,7 +8,7 @@ info:
     Calls that do more than read or write a single resource: moving a task, handing a task back to
     the task scheduler, creating or saving a
     project together with its lanes, pausing a project's agents, chatting with an agent, and
-    having an agent draft a new one. The resources themselves are read and written through the REST API, under `/api/rest/v1`.
+    having an agent draft a new agent or project. The resources themselves are read and written through the REST API, under `/api/rest/v1`.
 
     Every call follows the same rules:
 
@@ -43,8 +43,9 @@ tags:
     description: Placing tasks on the board, and handing them back to the task scheduler.
   - name: Projects
     description: |
-      Saving a project together with its lanes, in one go, and pausing or resuming its AI agents.
-      The server makes a project's slug from its name; neither call takes one.
+      Saving a project together with its lanes, in one go, pausing or resuming its AI agents, and
+      having an AI agent draft a new one. The server makes a project's slug from its name; no
+      call takes one.
   - name: Agents
     description: Chatting with an AI agent, and having one draft a new agent.
 
@@ -808,6 +809,119 @@ paths:
                 vague:
                   summary: A description that says too little ("hmm")
                   value: { error: "The description (\"hmm\") does not say what the agent should do." }
+        "400":
+          description: "`description` missing or blank."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                blank:
+                  summary: Blank
+                  value: { statusMessage: A description cannot be blank. }
+                missing:
+                  summary: Missing
+                  value: { statusMessage: The argument description is missing. }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /draftProject:
+    post:
+      tags: [Projects]
+      operationId: draftProject
+      summary: Have an AI agent draft a new project from a description
+      description: |
+        Has an AI agent draft a new project from what a person wrote they are working on, and
+        answers with the draft's fields, ready to be sent on to `createProject` once they have
+        been reviewed. Nothing is created: the draft is only an answer.
+
+        The draft is made by the agent named "Generic", or, when there is none or it fails, by
+        each task scheduler in turn. The call waits for the agent, which usually takes some
+        seconds.
+
+        Every lane has a name and one of the standard lane colours, as a lowercase hex code: a
+        lane the agent gave no name is dropped, and one it gave any other colour gets a
+        standard one instead. With more lanes than standard colours, some lanes share one. The draft's name is not checked against the other projects', so it may be
+        taken.
+
+        When no draft can be made, the answer is still a 200, holding only an `error`: the
+        description does not say enough, or no agent could draft one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [description]
+              properties:
+                description:
+                  type: string
+                  minLength: 1
+                  description: What the project is, in the person's own words. Not blank or only whitespace.
+            example: { description: "Relaunching our marketing site by December: new pricing page, blog migration, faster load times. Every change gets reviewed by legal before it goes live." }
+      responses:
+        "200":
+          description: The draft, or an `error` saying why there is none.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    title: Draft
+                    required: [name, description, taskAddRule, managedByAi, lanes]
+                    properties:
+                      name:
+                        type: string
+                        description: The project's name, not blank.
+                      description:
+                        type: string
+                        description: What the project is about; empty for none.
+                      taskAddRule:
+                        $ref: "#/components/schemas/TaskAddRule"
+                      managedByAi:
+                        type: boolean
+                        description: Whether AI agents would schedule and work on its tasks.
+                      lanes:
+                        type: array
+                        minItems: 1
+                        description: The lanes, in board order.
+                        items:
+                          type: object
+                          required: [name, color, marksDone]
+                          properties:
+                            name:
+                              type: string
+                              description: The lane's name, not blank.
+                            color:
+                              type: string
+                              pattern: "^#[0-9a-f]{6}$"
+                              description: The lane's colour.
+                            marksDone:
+                              type: boolean
+                              description: Whether a task in the lane is done.
+                  - type: object
+                    title: No draft
+                    required: [error]
+                    properties:
+                      error:
+                        type: string
+                        description: Why there is no draft, in a sentence fit to show the person.
+              examples:
+                draft:
+                  summary: A draft
+                  value:
+                    name: Marketing Site Relaunch
+                    description: Relaunch the marketing site by December, with a new pricing page, the blog migrated, and faster load times. Every change gets reviewed by legal before it goes live.
+                    taskAddRule: first_lane
+                    managedByAi: false
+                    lanes:
+                      - { name: To do, color: "#8fa6ff", marksDone: false }
+                      - { name: In progress, color: "#e8b154", marksDone: false }
+                      - { name: Done, color: "#5fd6ab", marksDone: true }
+                vague:
+                  summary: A description that says too little ("hmm")
+                  value: { error: "The description does not say what the project is about." }
+                noAgent:
+                  summary: No agent named Generic, and no task scheduler
+                  value: { error: "There is no agent to suggest one with. Add an agent named Generic, or a task scheduler, or set the project up manually." }
         "400":
           description: "`description` missing or blank."
           content:

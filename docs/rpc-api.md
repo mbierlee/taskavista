@@ -140,6 +140,23 @@ an agent to give for a description too vague to work from. That makes "no agent 
 description says too little" one case for the UI, which shows the message, rather than a status
 for one and a body for the other.
 
+## Drafting a project
+
+`draftProject` is the project prompt's "Set up project" (`tv-project-prompt`, shown at first run). It works as `draftAgent` does, with
+`dashboard/prompts/quick-create-project.txt` (`ProjectDrafter` in `agent.d`): it creates nothing,
+and the UI opens the draft on the new project screen, so the person reviews it before the ordinary
+`createProject`. Its fields are what `createProject` takes, its lanes without ids.
+
+The agents are asked as for `draftAgent`: the one named Generic, then each task scheduler, each
+one that fails or does not answer with a draft logged and passed over for the next. When none
+can, the answer is an `error`, and the person can set the project up by hand instead. The answer
+is cleaned as an agent draft is: a lane without a name is dropped, a
+colour that is not one of the standard lane colours (`laneColors` in `agent.d`, which mirrors
+`standardColors` in `tv-project-settings.js` and is all the prompt lets the agent choose from) is
+replaced by one of them, since the agent's own colours are not kept to a readable range as the
+colour picker's are, and a rule the schema does not know becomes `first_lane`. A draft with no lanes
+is not a draft. The name is not checked, since the new project screen checks it as it is shown.
+
 ## Error messages
 
 Every failure is `{"statusMessage": "…"}`, with a message written for whoever called. The error

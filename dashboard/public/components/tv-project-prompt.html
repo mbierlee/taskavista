@@ -1,0 +1,110 @@
+<style>
+  /* As the first-run mockup draws it: one column in the middle of the
+     window, the prompt the whole of the screen. */
+  :host {
+    display: flex;
+    justify-content: center;
+    padding: 96px 24px;
+  }
+
+  .column {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    width: 100%;
+    max-width: 560px;
+  }
+
+  header {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: -0.8px;
+  }
+
+  .intro {
+    margin: 0;
+    line-height: 1.5;
+    color: var(--muted);
+    text-wrap: pretty;
+  }
+
+  .input {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .field {
+    min-height: 132px;
+    padding: 14px 16px;
+    border-radius: var(--r-card);
+    background: var(--surface-1);
+    line-height: 1.5;
+    /* Grows with what is typed rather than scrolling, as the quick-create
+       tile's does. */
+    field-sizing: content;
+    resize: none;
+  }
+  .field:focus,
+  .field[aria-invalid="true"] {
+    background: var(--surface-1);
+  }
+
+  .actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .manual {
+    font-size: 14px;
+    font-weight: 500;
+    text-underline-offset: 3px;
+  }
+  .manual:hover {
+    color: var(--accent-hover);
+  }
+
+  .set-up {
+    flex: none;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .set-up:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+</style>
+
+<div class="column">
+  <header>
+    <h1>What are you working on?</h1>
+    <p class="intro">
+      Describe your first project. An agent suggests a name and lanes; you
+      review them before anything is created.
+    </p>
+  </header>
+  <div class="input">
+    <textarea
+      class="field"
+      placeholder="e.g. Relaunching our marketing site by December: new pricing page, blog migration, faster load times…"
+      aria-label="Describe your first project"
+      aria-describedby="project-prompt-error"
+    ></textarea>
+    <p class="field-error" id="project-prompt-error" role="alert" hidden></p>
+  </div>
+  <div class="actions">
+    <a class="link manual" href="/projects/new">Set up manually</a>
+    <button class="btn primary set-up" type="button" disabled>
+      <span aria-hidden="true">✦</span>
+      <span class="set-up-label">Set up project</span>
+    </button>
+  </div>
+</div>

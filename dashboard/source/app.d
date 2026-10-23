@@ -6,7 +6,7 @@ import std.functional : toDelegate;
 import std.path : baseName, extension;
 
 import agent : AgentChat, AgentDrafter, AgentHelp, AgentPrompt, ClaudeCodeRuntime, IAgentChat, IRuntime,
-    RuntimeExecutor, TaskExecutor, TaskScheduler;
+    ProjectDrafter, RuntimeExecutor, TaskExecutor, TaskScheduler;
 import config : Config, connectionString, loadConfig;
 import helpers : formatURL;
 import prompt : PromptParser;
@@ -69,6 +69,7 @@ class DashboardContext : ApplicationContext
         container.register!AgentPrompt;
         container.register!(IAgentChat, AgentChat);
         container.register!AgentDrafter;
+        container.register!ProjectDrafter;
     }
 
     private PostgresConnections connections;
