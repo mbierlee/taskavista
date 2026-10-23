@@ -1,0 +1,13 @@
+{
+	"bindAddresses": ["::1", "127.0.0.1"],
+	"port": 8090,
+	"projectWorkingDirRoot": "/var/lib/taskavista/projects",
+	"database": {
+		"name": "taskavista",
+		"host": "localhost",
+		"port": 5432,
+		"user": "taskavista",
+		"password": "taskavista",
+		"connectionPoolSize": 10
+	}
+}
