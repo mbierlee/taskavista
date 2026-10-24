@@ -1,9 +1,11 @@
-/* <tv-project-prompt></tv-project-prompt>
+/* <tv-project-prompt first-run></tv-project-prompt>
 
    The screen where a person describes a project for an agent to suggest one.
-   For now it is shown only at first run, in place of a board while there are
-   no projects, so its text speaks of the first project. "Set up manually" is
-   an ordinary link to the new project screen.
+   `first-run` is for when there are no projects yet, and it is shown in place
+   of a board: its text speaks of the first project, and there is no board to
+   go back to. Without it, it is the switcher's quick-create screen, with a
+   link back to the board. "Set up manually" is an ordinary link to the new
+   project screen.
 
    "Set up project" raises project-draft. The caller has the draft made,
    holding the screen with `generating` meanwhile, then opens it on the new
@@ -18,6 +20,10 @@ import { attachTemplate, loadTemplate } from "./template.js";
 const template = await loadTemplate("tv-project-prompt.html");
 
 export class TvProjectPrompt extends HTMLElement {
+  static observedAttributes = ["first-run"];
+
+  #back;
+  #intro;
   #description;
   #setUp;
   #setUpLabel;
@@ -27,6 +33,8 @@ export class TvProjectPrompt extends HTMLElement {
     super();
     const root = attachTemplate(this, template);
 
+    this.#back = root.querySelector(".back");
+    this.#intro = root.querySelector(".intro");
     this.#description = root.querySelector("textarea");
     this.#setUp = root.querySelector(".set-up");
     this.#setUpLabel = root.querySelector(".set-up-label");
@@ -52,6 +60,14 @@ export class TvProjectPrompt extends HTMLElement {
     );
   }
 
+  attributeChangedCallback() {
+    const firstRun = this.hasAttribute("first-run");
+    this.#back.hidden = firstRun;
+    const project = firstRun ? "your first project" : "the new project";
+    this.#intro.textContent = `Describe ${project}. An agent suggests a name and lanes; you review them before anything is created.`;
+    this.#description.setAttribute("aria-label", `Describe ${project}`);
+  }
+
   connectedCallback() {
     this.setAttribute("role", "region");
     this.setAttribute("aria-label", "Set up a project");
@@ -59,6 +75,16 @@ export class TvProjectPrompt extends HTMLElement {
 
   focus() {
     this.#description.focus();
+  }
+
+  /* Empties the screen for a new project, unless a draft is still being made
+     from what is there, which then carries on. */
+  clear() {
+    if (this.#description.disabled) {
+      return;
+    }
+    this.#description.value = "";
+    this.error = "";
   }
 
   set generating(value) {

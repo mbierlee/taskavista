@@ -1505,6 +1505,11 @@ const routes = [
     show: showNewProject,
     switcher: false,
   },
+  {
+    pattern: new URLPattern({ pathname: "/projects/new/quick" }),
+    show: showQuickCreateProject,
+    switcher: false,
+  },
   { pattern: new URLPattern({ pathname: "/projects/:slug" }), show: showProject },
   {
     pattern: new URLPattern({ pathname: "/projects/:slug/settings" }),
@@ -1576,6 +1581,7 @@ async function showRoot(params, signal) {
        could not be loaded is not known to be empty, so that gets the board. */
     if (store.state.projects.status === "ready") {
       topbarEl.toggleAttribute("no-switcher", true);
+      projectPromptEl.toggleAttribute("first-run", true);
       mainEl.replaceChildren(projectPromptEl);
       projectPromptEl.focus();
     } else {
@@ -1627,6 +1633,15 @@ function showNewProject() {
   mainEl.replaceChildren(newProjectEl);
   const draft = navigation.currentEntry.getState()?.draft ?? null;
   newProjectEl.create(draft?.lanes ?? startingLanes, draft);
+}
+
+/* The project prompt the first run has, here for a project alongside the
+   others. A fresh prompt each time, as the new project screen is. */
+function showQuickCreateProject() {
+  projectPromptEl.toggleAttribute("first-run", false);
+  projectPromptEl.clear();
+  mainEl.replaceChildren(projectPromptEl);
+  projectPromptEl.focus();
 }
 
 /* Before the project list is in, the screen shows on trust, so a fresh load
@@ -1838,7 +1853,11 @@ store.watch(
 store.watch(
   (state) => state.projects.list,
   (list) => {
-    if (projectPromptEl.isConnected && list.length > 0) {
+    if (
+      projectPromptEl.isConnected &&
+      projectPromptEl.hasAttribute("first-run") &&
+      list.length > 0
+    ) {
       redirect("/");
     }
   },

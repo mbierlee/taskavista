@@ -1,16 +1,27 @@
 <style>
-  /* As the first-run mockup draws it: one column in the middle of the
-     window, the prompt the whole of the screen. */
+  /* As the mockups draw it: one column in the middle of the window, the
+     prompt the whole of the screen. At first run there is no link back above
+     it, so the column starts lower down. */
   :host {
     display: flex;
-    justify-content: center;
-    padding: 96px 24px;
+    flex-direction: column;
+    gap: 40px;
+    padding: 22px 24px 96px;
+  }
+  :host([first-run]) {
+    padding-top: 96px;
+  }
+
+  .back {
+    align-self: flex-start;
+    font-size: 14px;
   }
 
   .column {
     display: flex;
     flex-direction: column;
     gap: 20px;
+    align-self: center;
     width: 100%;
     max-width: 560px;
   }
@@ -83,19 +94,20 @@
   }
 </style>
 
+<a class="link back" href="/">← Back to board</a>
 <div class="column">
   <header>
     <h1>What are you working on?</h1>
     <p class="intro">
-      Describe your first project. An agent suggests a name and lanes; you
-      review them before anything is created.
+      Describe the new project. An agent suggests a name and lanes; you review
+      them before anything is created.
     </p>
   </header>
   <div class="input">
     <textarea
       class="field"
       placeholder="e.g. Relaunching our marketing site by December: new pricing page, blog migration, faster load times…"
-      aria-label="Describe your first project"
+      aria-label="Describe the new project"
       aria-describedby="project-prompt-error"
     ></textarea>
     <p class="field-error" id="project-prompt-error" role="alert" hidden></p>

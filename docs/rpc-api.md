@@ -142,7 +142,7 @@ for one and a body for the other.
 
 ## Drafting a project
 
-`draftProject` is the project prompt's "Set up project" (`tv-project-prompt`, shown at first run). It works as `draftAgent` does, with
+`draftProject` is the project prompt's "Set up project" (`tv-project-prompt`, shown at first run and from the project switcher's "Quick-create project"). It works as `draftAgent` does, with
 `dashboard/prompts/quick-create-project.txt` (`ProjectDrafter` in `agent.d`): it creates nothing,
 and the UI opens the draft on the new project screen, so the person reviews it before the ordinary
 `createProject`. Its fields are what `createProject` takes, its lanes without ids.

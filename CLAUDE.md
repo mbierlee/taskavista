@@ -24,7 +24,8 @@ name, description, add-task rule and lanes are edited on its settings screen (`/
 and a project is created on the same screen in its new-project mode (`/projects/new`). With no
 projects yet, `/` shows the project prompt (`tv-project-prompt`) instead of a board, where an agent (Generic, or else a task scheduler)
 drafts the first project from a description, with `dashboard/prompts/quick-create-project.txt`, and opens the
-draft on the new-project screen to be reviewed before it is created.
+draft on the new-project screen to be reviewed before it is created; the same prompt is the project switcher's
+"Quick-create project" (`/projects/new/quick`) once there are projects.
 The Taskavista settings screen (`/settings`, the topbar's ⚙) lists the AI agents, and adds,
 edits and deletes them in a dialog, along with their labels; a new agent starts on the runtime, model and effort level in `defaults`, and each agent is run at its effort level. An agent can be disabled there, which keeps the task scheduler from giving it tasks (a disabled task scheduler schedules none) and stops what it is working on, handing those tasks back to the scheduler; it can still be chatted with. Its "Quick-create an agent" has an agent (Generic, or else a task scheduler) draft one from a description, with `dashboard/prompts/quick-create-agent.txt`, and opens the draft in that dialog to be reviewed before it is added.
 A project managed by AI agents shows a strip over its board saying whether the agents are at
