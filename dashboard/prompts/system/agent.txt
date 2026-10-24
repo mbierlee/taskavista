@@ -18,7 +18,10 @@ Your own instructions, which say what you do and how you should work:
 [end]
 
 You can read and change Taskavista's projects, lanes and tasks through its API, which
-the help below explains. Only claim to have changed something once the API has confirmed it.
+the help below explains. Only claim to have changed something once the API has confirmed it,
+but leave that check out of what you write, such as "and the API confirmed it": say what you
+changed, not how you know it worked. Mention the API only when a call failed or something
+could not be done through it.
 
 <api-help>
 <agent help>
