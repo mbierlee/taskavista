@@ -748,6 +748,7 @@ class PostgresTaskRepository : ITaskRepository
             auto status = agentStatus.isNull ? Nullable!string.init : (cast(string) agentStatus.get).nullable;
             insert.argsVariadic(task.laneId, task.description, task.position.get, status);
             task.id = connection.execParams(insert)[0]["id"].as!UUID;
+            task.handedToAgents = !agentStatus.isNull;
 
             QueryParams created;
             created.sqlCommand = recordCreated;
@@ -1156,7 +1157,7 @@ private Task[] toTasks(Answer answer)
 private enum taskColumns = "t.id, t.lane_id, t.description, t.position, case t.agent_status"
     ~ " when 'executing' then t.assigned_ai_agent_id"
     ~ " when 'scheduling' then (select a.id from agents a where a.task_scheduler and a.enabled order by a.name limit 1)"
-    ~ " end as working_agent_id";
+    ~ " end as working_agent_id, t.agent_status is not null as handed_to_agents";
 
 private Task toTask(immutable Row row)
 {
@@ -1170,6 +1171,7 @@ private Task toTask(immutable Row row)
     {
         task.workingAgentId = row["working_agent_id"].as!UUID;
     }
+    task.handedToAgents = row["handed_to_agents"].as!bool;
 
     return task;
 }

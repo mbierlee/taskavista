@@ -19,7 +19,7 @@ lane, and tasks added from a lane's "+ Add a task", both saved through the API. 
 tasks done has a "Clear" button that, once confirmed, deletes all of its tasks in one RPC call. A card an AI agent is at work on, the task scheduler included,
 has its lane's colour sweeping along its border and names the agent. Clicking a card
 opens the task details panel over the board, with the task's lane (which it can be moved out of),
-its description, which can be edited there, and its notes, and a button that deletes the task. A project's
+its description, which can be edited there, the agent working on it, and its notes, and a button that deletes the task, beside which, in a project managed by AI, a task added before the project was gets "Schedule for AI", which hands it to the agents. A project's
 name, description, add-task rule and lanes are edited on its settings screen (`/projects/:slug/settings`),
 and a project is created on the same screen in its new-project mode (`/projects/new`). With no
 projects yet, `/` shows the project prompt (`tv-project-prompt`) instead of a board, where an agent (Generic, or else a task scheduler)

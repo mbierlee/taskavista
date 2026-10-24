@@ -367,6 +367,32 @@ async function deleteTask(taskId) {
   }
 }
 
+/* On the server first, then on screen, since whether the task can be
+   scheduled is the server's to say. The board fetches the task again for
+   its event, which is all a card shows of it. */
+async function scheduleTask(taskId) {
+  const shown = board;
+  try {
+    await queueWrite(() =>
+      sendJson("POST", "/api/rpc/v1/rescheduleTask", { taskId }),
+    );
+  } catch (error) {
+    console.error(`Could not schedule the task ${taskId} for AI:`, error);
+    if (openTaskId === taskId) {
+      detailsEl.scheduleError = `Not scheduled: ${error.message.replace(/\.$/, "")}.`;
+    }
+    return;
+  }
+
+  const task = board === shown ? laneOf(taskId)?.tasks.find((t) => t.id === taskId) : undefined;
+  if (task) {
+    task.handedToAgents = true;
+  }
+  if (openTaskId === taskId) {
+    detailsEl.handedToAgents = true;
+  }
+}
+
 /* On the server first, then on screen, as a single delete would be. The
    cards are removed rather than the lane re-rendered, and fade out together. */
 async function clearLane(laneId) {
@@ -1377,7 +1403,15 @@ async function refreshLanes(shown) {
    about it. */
 function openTaskSnapshot() {
   const task = laneOf(openTaskId)?.tasks.find((t) => t.id === openTaskId);
-  return task ? { id: task.id, laneId: task.laneId, description: task.description } : null;
+  return task
+    ? {
+        id: task.id,
+        laneId: task.laneId,
+        description: task.description,
+        workingAgentId: task.workingAgentId,
+        handedToAgents: task.handedToAgents,
+      }
+    : null;
 }
 
 /* The panel follows the open task, and closes if it has gone. Its notes
@@ -1390,6 +1424,14 @@ function showOpenTask(open) {
   if (!task) {
     detailsEl.close();
     return;
+  }
+  /* Set only when changed, since setting handedToAgents enables the
+     schedule button while it may be waiting on the server. */
+  if (task.workingAgentId !== open.workingAgentId) {
+    detailsEl.workingAgentId = task.workingAgentId;
+  }
+  if (task.handedToAgents !== open.handedToAgents) {
+    detailsEl.handedToAgents = task.handedToAgents;
   }
   if (task.laneId === open.laneId && task.description === open.description) {
     return;
@@ -1736,6 +1778,10 @@ detailsEl.addEventListener("task-edit", (event) => {
 
 detailsEl.addEventListener("task-delete", (event) => {
   deleteTask(event.detail.taskId);
+});
+
+detailsEl.addEventListener("task-schedule", (event) => {
+  scheduleTask(event.detail.taskId);
 });
 
 detailsEl.addEventListener("task-close", (event) => {

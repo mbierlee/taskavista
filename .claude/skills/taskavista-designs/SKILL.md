@@ -115,7 +115,7 @@ borrows the quick-create tile's) and is also the **quick-create project** screen
 screen with its list of AI agents, the **add and edit agent** dialog, and the **quick-create an
 agent** tile, which has an agent draft one to open in the add dialog and shows a failure inside
 the tile, the **working agent** indicator on a card (the moving border and the "AI" chip naming the agent, shown for the task scheduler too), the **task details** panel, its description editable in place (the mockups have no
-editing state, so it borrows the lane composer's focus ring) and its "Delete task" button, and
+editing state, so it borrows the lane composer's focus ring), its "Agent" section, its "Delete task" button and the "Schedule for AI" button beside it, and
 the **agent chat** panel with its tabs, agent picker, and the topbar's chat button and unread
 badge. Chats are answered by the agents; the mockups' "is working…" line is drawn as
 "*agent* is answering" with animated dots. See the component table in `docs/webcomponents.md`

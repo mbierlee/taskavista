@@ -68,7 +68,10 @@ consecutive positions.
 ## Rescheduling a task
 
 `rescheduleTask` is a last resort for a task no agent is working on, meant for the agents in a
-chat: a person who finds a task stuck asks the agent to get it picked up. It sets the task's
+chat: a person who finds a task stuck asks the agent to get it picked up. It is also how a task
+added while its project was not managed by AI, which has no agent status and so stays out of the
+agents' hands (its `handedToAgents` is `false`), is handed to them: the task details panel's
+"Schedule for AI" button calls it. It sets the task's
 `agent_status` back to `to_be_scheduled` and clears its agent, and the `TaskScheduler` loop in `agent.d`
 takes it up on its next round as it does a new task. Clearing the agent is needed, as the loop
 only takes up tasks with none.

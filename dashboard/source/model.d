@@ -202,6 +202,11 @@ class Task
      * in a body.
      */
     @optional Nullable!UUID workingAgentId;
+    /**
+     * Whether the task was handed to the AI agents: false for one added while its project was
+     * not managed by AI, until it is rescheduled. Set by the server, and ignored in a body.
+     */
+    @optional bool handedToAgents;
 
     this() @safe
     {

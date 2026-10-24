@@ -157,6 +157,9 @@ paths:
         it moves to, which may differ from last time. That happens shortly after the call, not
         during it; the task's notes (`GET /api/rest/v1/tasks/{id}/notes`) say what came of it.
 
+        It also hands a task to the agents for the first time: one added while its project was not
+        managed by AI, whose `handedToAgents` is `false`, is otherwise never scheduled.
+
         Only a task of a project managed by AI agents can be rescheduled, and not one in a done
         lane, nor one the scheduler is choosing an agent for or an agent is working on at that
         moment. A task of a project

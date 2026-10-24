@@ -773,8 +773,8 @@ class TaskService
                 return taskFailure!Task(new LaneClosedToNewTasksError);
             }
 
-            // Only a project managed by AI hands its tasks to the agents, and one that is not when
-            // the task is added keeps it from them, even should it be managed by AI later.
+            // Only a project managed by AI hands its tasks to the agents. A task added while its
+            // project is not managed by AI stays out of their hands, even if the project is later.
             auto project = projects.find(projectId.get);
             auto agentStatus = project.get.managedByAi ? AgentStatus.toBeScheduled.nullable
                 : Nullable!AgentStatus.init;
@@ -996,6 +996,9 @@ class TaskService
                 return taskFailure(new TaskBeingScheduledError);
             }
 
+            // Reported as a change to the task too, since it is now handed to the agents.
+            const laneId = locked.value.lane.id;
+            events.task(Event.changed, id, project.id, laneId, laneId);
             events.note(id, project.id);
             return taskSuccess();
         });

@@ -895,6 +895,14 @@ components:
             agent works on it, and the task scheduler agent while it decides the task's next
             step. `null` while no agent is at work on it. Ignored in a body.
           examples: [66f76afd-f02f-4095-a9a1-e1a940402e93]
+        handedToAgents:
+          type: boolean
+          readOnly: true
+          description: |
+            Whether the task was handed to the AI agents. `false` for every task of a project not
+            managed by AI, and for one added while its project was not, which stays out of the
+            agents' hands until `rescheduleTask` hands it to them. Ignored in a body.
+          examples: [true]
 
     TaskNote:
       type: object
