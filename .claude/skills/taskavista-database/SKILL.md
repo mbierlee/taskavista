@@ -95,14 +95,17 @@ needed, ask the user to run it.
 ## The application side
 
 `dashboard/` talks to postgres through **`vibe-d-postgresql`** (pinned `~>3.2.0` in `dub.json`).
-There is no ORM and no migration runner: `source/model.d` holds the `Project` class and the other PODOs,
+There is no ORM and no migration runner: `source/model.d` holds the `Project` class and the other models, one per table with a field for every column,
 `source/repository/package.d` the repository interfaces and `source/repository/postgres.d` the
 postgres repositories that issue hand-written SQL, and `source/app.d` builds
 the connection string and the pool.
 
-A schema change therefore touches **three** places — `dashboard/sql/init.sql`, the PODO in
-`source/model.d` and the SQL in `source/repository/postgres.d` that read the changed columns, and the schema in `dashboard/public/rest-openapi.yaml` when a
-column is exposed over HTTP (the `taskavista-rest-api-docs` skill covers that file). A renamed or
+A schema change therefore touches **three** places — `dashboard/sql/init.sql`, the model in
+`source/model.d` (every column gets a field, exposed or not) and the SQL in `source/repository/postgres.d` that read the changed columns — and, when a
+column is exposed over HTTP, three more: the view model in `source/viewmodel.d`, its mapping in
+`source/service.d` (`toViewModel` / `toModel`), and the schema in `dashboard/public/rest-openapi.yaml`
+(the `taskavista-rest-api-docs` skill covers that file). See "Models and view models" in
+`docs/server-layers.md`. A renamed or
 dropped column still compiles, because the SQL is strings; it fails at runtime on the first
 query. Check the repository's statements against the new schema by hand.
 

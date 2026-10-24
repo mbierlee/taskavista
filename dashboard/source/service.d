@@ -15,6 +15,8 @@ import repository : ForeignKeyViolation, IAgentRepository, IDefaultRepository, I
     IRuntimeRepository, ITaskRepository, ITransactional, PositionConflict, UniqueViolation;
 import result : OperationResult, Result, failure, success;
 import servicemodel : ProjectWithLanes;
+import viewmodel : AgentViewModel, DefaultViewModel, EffortLevelViewModel, LaneViewModel, ModelViewModel,
+    ProjectViewModel, RuntimeViewModel, TaskNoteViewModel, TaskViewModel;
 import workingdir : IndexPages, ProjectWorkingDirs;
 
 /**
@@ -59,7 +61,13 @@ class ProjectService
      *   `ProjectNameUnusableError`, `SlugInvalidError`, `SlugReservedError`, `SlugTakenError`,
      *   `NameReservedError`, `NameTakenError` or `ProjectNotFoundError`.
      */
-    Result!(Project, IProjectError) save(Project project)
+    Result!(ProjectViewModel, IProjectError) save(ProjectViewModel project)
+    {
+        return store(toModel(project)).mapValue(&view);
+    }
+
+    /// Stores a project, for save.
+    private Result!(Project, IProjectError) store(Project project)
     {
         auto invalid = checkName(project);
         if (invalid !is null)
@@ -81,12 +89,12 @@ class ProjectService
                 repository.add(project);
                 workingDirs.createIfRootExists(project.slug);
                 events.project(Event.created, project.id);
-                return projectSuccess(withCanBeOpened(project));
+                return projectSuccess(project);
             }
 
             // Locked, so that the slug the working directory is renamed from is the one the update
             // replaces, whatever other save comes along meanwhile.
-            auto updated = transactionally(transactions, {
+            return transactionally(transactions, {
                 if (!repository.lock(project.id))
                 {
                     return projectFailure!Project(new ProjectNotFoundError);
@@ -102,8 +110,6 @@ class ProjectService
                 events.project(Event.changed, project.id);
                 return projectSuccess(project);
             });
-
-            return updated.isSuccessful ? projectSuccess(withCanBeOpened(updated.value)) : updated;
         }
         catch (UniqueViolation violation)
         {
@@ -130,11 +136,18 @@ class ProjectService
      */
     Result!(ProjectWithLanes, IProjectError) save(ProjectWithLanes projectWithLanes)
     {
-        auto project = projectWithLanes.project;
+        auto lanes = projectWithLanes.lanes.map!(lane => toModel(lane)).array;
+        return store(toModel(projectWithLanes.project), lanes).mapValue((Project project) =>
+                new ProjectWithLanes(view(project), lanes.map!(lane => toViewModel(lane)).array));
+    }
+
+    /// Stores a project and its lanes, for save, filling in the ids the lanes are given.
+    private Result!(Project, IProjectError) store(Project project, Lane[] lanes)
+    {
         auto invalid = checkName(project);
         if (invalid !is null)
         {
-            return projectFailure!ProjectWithLanes(invalid);
+            return projectFailure!Project(invalid);
         }
 
         const derived = project.slug.length == 0;
@@ -142,36 +155,29 @@ class ProjectService
         {
             if (project.id == UUID.init)
             {
-                auto invalidLane = checkLanes(projectWithLanes.lanes);
+                auto invalidLane = checkLanes(lanes);
                 if (invalidLane !is null)
                 {
-                    return projectFailure!ProjectWithLanes(invalidLane);
+                    return projectFailure!Project(invalidLane);
                 }
 
                 auto newSlug = checkSlug(project);
                 if (newSlug.isFailure)
                 {
-                    return projectFailure!ProjectWithLanes(newSlug.error);
+                    return projectFailure!Project(newSlug.error);
                 }
 
-                repository.addWithLanes(project, projectWithLanes.lanes);
+                repository.addWithLanes(project, lanes);
                 workingDirs.createIfRootExists(project.slug);
                 events.project(Event.created, project.id);
-                withCanBeOpened(project);
-                return projectSuccess(projectWithLanes);
+                return projectSuccess(project);
             }
 
-            auto replaced = transactionally(transactions, () => replace(projectWithLanes));
-            if (replaced.isSuccessful)
-            {
-                withCanBeOpened(project);
-            }
-
-            return replaced;
+            return transactionally(transactions, () => replace(project, lanes));
         }
         catch (UniqueViolation violation)
         {
-            return projectFailure!ProjectWithLanes(slugTaken(project, derived, violation));
+            return projectFailure!Project(slugTaken(project, derived, violation));
         }
     }
 
@@ -180,12 +186,11 @@ class ProjectService
      * The project is locked first, as by every write to a project's lanes, so that the lanes it
      * has stay the ones read here until the write is done.
      */
-    private Result!(ProjectWithLanes, IProjectError) replace(ProjectWithLanes projectWithLanes)
+    private Result!(Project, IProjectError) replace(Project project, Lane[] lanes)
     {
-        auto project = projectWithLanes.project;
         if (!repository.lock(project.id))
         {
-            return projectFailure!ProjectWithLanes(new ProjectNotFoundError);
+            return projectFailure!Project(new ProjectNotFoundError);
         }
 
         const oldSlug = repository.find(project.id).get.slug;
@@ -193,51 +198,51 @@ class ProjectService
         auto slug = checkSlug(project);
         if (slug.isFailure)
         {
-            return projectFailure!ProjectWithLanes(slug.error);
+            return projectFailure!Project(slug.error);
         }
 
-        auto invalidLane = checkLanes(projectWithLanes.lanes);
+        auto invalidLane = checkLanes(lanes);
         if (invalidLane !is null)
         {
-            return projectFailure!ProjectWithLanes(invalidLane);
+            return projectFailure!Project(invalidLane);
         }
 
-        auto existing = lanes.ofProject(project.id).map!(lane => lane.id).array;
+        auto existing = this.lanes.ofProject(project.id).map!(lane => lane.id).array;
         bool[UUID] kept;
-        foreach (id; projectWithLanes.lanes
+        foreach (id; lanes
             .map!(lane => lane.id)
             .filter!(id => id != UUID.init))
         {
             const own = existing.canFind(id);
-            if (!own && !lanes.find(id).isNull)
+            if (!own && !this.lanes.find(id).isNull)
             {
-                return projectFailure!ProjectWithLanes(new LaneOfOtherProjectError);
+                return projectFailure!Project(new LaneOfOtherProjectError);
             }
 
             if (!own)
             {
-                return projectFailure!ProjectWithLanes(new LaneNotFoundError);
+                return projectFailure!Project(new LaneNotFoundError);
             }
 
             if (id in kept)
             {
-                return projectFailure!ProjectWithLanes(new LaneListedTwiceError);
+                return projectFailure!Project(new LaneListedTwiceError);
             }
 
             kept[id] = true;
         }
 
         auto removed = existing.filter!(id => id !in kept).array;
-        if (!repository.replaceWithLanes(project, projectWithLanes.lanes, removed))
+        if (!repository.replaceWithLanes(project, lanes, removed))
         {
-            return projectFailure!ProjectWithLanes(new ProjectNotFoundError);
+            return projectFailure!Project(new ProjectNotFoundError);
         }
 
         transactions.afterCommit(() => workingDirs.rename(oldSlug, project.slug));
         // One event for the project and its lanes, which the UI reads as "its lanes may have
         // changed too", rather than one per lane.
         events.project(Event.changed, project.id);
-        return projectSuccess(projectWithLanes);
+        return projectSuccess(project);
     }
 
     /**
@@ -248,15 +253,15 @@ class ProjectService
      *
      * Returns: The project with that id, or a failure: `ProjectNotFoundError`.
      */
-    Result!(Project, IProjectError) get(UUID id)
+    Result!(ProjectViewModel, IProjectError) get(UUID id)
     {
         auto project = repository.find(id);
         if (project.isNull)
         {
-            return projectFailure!Project(new ProjectNotFoundError);
+            return projectFailure!ProjectViewModel(new ProjectNotFoundError);
         }
 
-        return projectSuccess(withCanBeOpened(project.get));
+        return projectSuccess(view(project.get));
     }
 
     /**
@@ -264,9 +269,9 @@ class ProjectService
      *
      * Returns: Every project, by name.
      */
-    Project[] getAll()
+    ProjectViewModel[] getAll()
     {
-        return repository.all().map!(project => withCanBeOpened(project)).array;
+        return repository.all().map!(project => view(project)).array;
     }
 
     /**
@@ -323,11 +328,11 @@ class ProjectService
         });
     }
 
-    /// Sets whether the project can be opened, by its working directory having an index.html, and returns it.
-    private Project withCanBeOpened(Project project)
+    /// The project as the APIs show it: whether it can be opened is its working directory having an index.html.
+    private ProjectViewModel view(Project project)
     {
-        project.canBeOpened = workingDirs.hasIndexPage(project.slug);
-        return project;
+        return new ProjectViewModel(project.id, project.name, project.slug, project.description,
+            project.taskAddRule, project.managedByAi, project.aiPaused, workingDirs.hasIndexPage(project.slug));
     }
 
     /// The first error among the lanes, or null when they are all fine.
@@ -428,14 +433,14 @@ class LaneService
      *
      * Returns: Every lane of the project, in board order, or a failure: `ProjectNotFoundError`.
      */
-    Result!(Lane[], ILaneError) getOfProject(UUID projectId)
+    Result!(LaneViewModel[], ILaneError) getOfProject(UUID projectId)
     {
         if (!repository.projectExists(projectId))
         {
-            return laneFailure!(Lane[])(new ProjectNotFoundError);
+            return laneFailure!(LaneViewModel[])(new ProjectNotFoundError);
         }
 
-        return laneSuccess(repository.ofProject(projectId));
+        return laneSuccess(repository.ofProject(projectId).map!(lane => toViewModel(lane)).array);
     }
 
     /**
@@ -446,15 +451,15 @@ class LaneService
      *
      * Returns: The lane with that id, or a failure: `LaneNotFoundError`.
      */
-    Result!(Lane, ILaneError) get(UUID id)
+    Result!(LaneViewModel, ILaneError) get(UUID id)
     {
         auto lane = repository.find(id);
         if (lane.isNull)
         {
-            return laneFailure!Lane(new LaneNotFoundError);
+            return laneFailure!LaneViewModel(new LaneNotFoundError);
         }
 
-        return laneSuccess(lane.get);
+        return laneSuccess(toViewModel(lane.get));
     }
 
     /**
@@ -471,15 +476,16 @@ class LaneService
      *   `LanePositionNegativeError`, `LaneColorInvalidError`, `ProjectNotFoundError`,
      *   `LaneNotFoundError` or `LanePositionTakenError`.
      */
-    Result!(Lane, ILaneError) save(Lane lane)
+    Result!(LaneViewModel, ILaneError) save(LaneViewModel lane)
     {
-        auto invalid = checkLane!ILaneError(lane);
+        auto stored = toModel(lane);
+        auto invalid = checkLane!ILaneError(stored);
         if (invalid !is null)
         {
-            return laneFailure!Lane(invalid);
+            return laneFailure!LaneViewModel(invalid);
         }
 
-        return transactionally(transactions, () => place(lane));
+        return transactionally(transactions, () => place(stored)).mapValue((Lane placed) => toViewModel(placed));
     }
 
     /**
@@ -582,16 +588,18 @@ class TaskService
     private ITaskRepository repository;
     private IProjectRepository projects;
     private ILaneRepository lanes;
+    private IAgentRepository agents;
     private IEventPublisher events;
     private IndexPages indexPages;
     private ITransactional transactions;
 
-    this(ITaskRepository repository, IProjectRepository projects, ILaneRepository lanes, IEventPublisher events,
-        IndexPages indexPages, ITransactional transactions)
+    this(ITaskRepository repository, IProjectRepository projects, ILaneRepository lanes, IAgentRepository agents,
+        IEventPublisher events, IndexPages indexPages, ITransactional transactions)
     {
         this.repository = repository;
         this.projects = projects;
         this.lanes = lanes;
+        this.agents = agents;
         this.events = events;
         this.indexPages = indexPages;
         this.transactions = transactions;
@@ -606,14 +614,14 @@ class TaskService
      * Returns: Every task of the project, lane by lane in board order, and in lane order within
      *   each lane, or a failure: `ProjectNotFoundError`.
      */
-    Result!(Task[], ITaskError) getOfProject(UUID projectId)
+    Result!(TaskViewModel[], ITaskError) getOfProject(UUID projectId)
     {
         if (!repository.projectExists(projectId))
         {
-            return taskFailure!(Task[])(new ProjectNotFoundError);
+            return taskFailure!(TaskViewModel[])(new ProjectNotFoundError);
         }
 
-        return taskSuccess(repository.ofProject(projectId));
+        return taskSuccess(views(repository.ofProject(projectId)));
     }
 
     /**
@@ -624,14 +632,14 @@ class TaskService
      *
      * Returns: Every task of the lane, in lane order, or a failure: `LaneNotFoundError`.
      */
-    Result!(Task[], ITaskError) getOfLane(UUID laneId)
+    Result!(TaskViewModel[], ITaskError) getOfLane(UUID laneId)
     {
         if (repository.projectOfLane(laneId).isNull)
         {
-            return taskFailure!(Task[])(new LaneNotFoundError);
+            return taskFailure!(TaskViewModel[])(new LaneNotFoundError);
         }
 
-        return taskSuccess(repository.ofLane(laneId));
+        return taskSuccess(views(repository.ofLane(laneId)));
     }
 
     /**
@@ -642,15 +650,15 @@ class TaskService
      *
      * Returns: The task with that id, or a failure: `TaskNotFoundError`.
      */
-    Result!(Task, ITaskError) get(UUID id)
+    Result!(TaskViewModel, ITaskError) get(UUID id)
     {
         auto task = repository.find(id);
         if (task.isNull)
         {
-            return taskFailure!Task(new TaskNotFoundError);
+            return taskFailure!TaskViewModel(new TaskNotFoundError);
         }
 
-        return taskSuccess(task.get);
+        return taskSuccess(view(task.get));
     }
 
     /**
@@ -661,14 +669,14 @@ class TaskService
      *
      * Returns: The task's notes, newest first, or a failure: `TaskNotFoundError`.
      */
-    Result!(TaskNote[], ITaskError) getNotes(UUID id)
+    Result!(TaskNoteViewModel[], ITaskError) getNotes(UUID id)
     {
         if (repository.find(id).isNull)
         {
-            return taskFailure!(TaskNote[])(new TaskNotFoundError);
+            return taskFailure!(TaskNoteViewModel[])(new TaskNotFoundError);
         }
 
-        return taskSuccess(repository.notes(id));
+        return taskSuccess(repository.notes(id).map!(note => toViewModel(note)).array);
     }
 
     /**
@@ -686,7 +694,13 @@ class TaskService
      *   `TaskPositionNegativeError`, `LaneNotFoundError`, `LaneClosedToNewTasksError`,
      *   `TaskNotFoundError`, `TaskLeavesProjectError` or `TaskPositionTakenError`.
      */
-    Result!(Task, ITaskError) save(Task task)
+    Result!(TaskViewModel, ITaskError) save(TaskViewModel task)
+    {
+        return store(toModel(task)).mapValue((Task stored) => view(stored));
+    }
+
+    /// Stores a task, for save, and returns it as it is stored.
+    private Result!(Task, ITaskError) store(Task task)
     {
         auto invalid = checkTask(task);
         if (invalid !is null)
@@ -750,7 +764,10 @@ class TaskService
             rescheduleMoved(task.id);
         }
 
-        return taskSuccess(task);
+        // Read back, for the columns the update leaves alone, such as how far the agents got with
+        // it. A task deleted meanwhile is answered as it was written.
+        auto written = repository.find(task.id);
+        return taskSuccess(written.isNull ? task : written.get);
     }
 
     /**
@@ -776,12 +793,12 @@ class TaskService
             // Only a project managed by AI hands its tasks to the agents. A task added while its
             // project is not managed by AI stays out of their hands, even if the project is later.
             auto project = projects.find(projectId.get);
-            auto agentStatus = project.get.managedByAi ? AgentStatus.toBeScheduled.nullable
+            task.agentStatus = project.get.managedByAi ? AgentStatus.toBeScheduled.nullable
                 : Nullable!AgentStatus.init;
 
             try
             {
-                repository.add(task, agentStatus);
+                repository.add(task);
             }
             catch (PositionConflict)
             {
@@ -806,41 +823,41 @@ class TaskService
      *   `TaskNotFoundError`, `LaneNotFoundError`, `TaskLeavesProjectError`,
      *   `TaskBeforeItselfError`, `BeforeTaskNotFoundError` or `BeforeTaskNotInLaneError`.
      */
-    Result!(Task[], ITaskError) move(UUID id, UUID laneId, Nullable!UUID before)
+    Result!(TaskViewModel[], ITaskError) move(UUID id, UUID laneId, Nullable!UUID before)
     {
         auto stored = repository.find(id);
         if (stored.isNull)
         {
-            return taskFailure!(Task[])(new TaskNotFoundError);
+            return taskFailure!(TaskViewModel[])(new TaskNotFoundError);
         }
 
         auto project = repository.projectOfLane(laneId);
         if (project.isNull)
         {
-            return taskFailure!(Task[])(new LaneNotFoundError);
+            return taskFailure!(TaskViewModel[])(new LaneNotFoundError);
         }
 
         if (project.get != repository.projectOfLane(stored.get.laneId).get)
         {
-            return taskFailure!(Task[])(new TaskLeavesProjectError);
+            return taskFailure!(TaskViewModel[])(new TaskLeavesProjectError);
         }
 
         if (!before.isNull)
         {
             if (before.get == id)
             {
-                return taskFailure!(Task[])(new TaskBeforeItselfError);
+                return taskFailure!(TaskViewModel[])(new TaskBeforeItselfError);
             }
 
             auto neighbour = repository.find(before.get);
             if (neighbour.isNull)
             {
-                return taskFailure!(Task[])(new BeforeTaskNotFoundError);
+                return taskFailure!(TaskViewModel[])(new BeforeTaskNotFoundError);
             }
 
             if (neighbour.get.laneId != laneId)
             {
-                return taskFailure!(Task[])(new BeforeTaskNotInLaneError);
+                return taskFailure!(TaskViewModel[])(new BeforeTaskNotInLaneError);
             }
         }
 
@@ -853,7 +870,7 @@ class TaskService
         catch (PositionConflict)
         {
             // The task to go above left the lane after the check above.
-            return taskFailure!(Task[])(new BeforeTaskNotInLaneError);
+            return taskFailure!(TaskViewModel[])(new BeforeTaskNotInLaneError);
         }
 
         events.task(Event.moved, id, project.get, fromLaneId, laneId);
@@ -863,7 +880,7 @@ class TaskService
             rescheduleMoved(id);
         }
 
-        return taskSuccess(repository.ofLane(laneId));
+        return taskSuccess(views(repository.ofLane(laneId)));
     }
 
     /**
@@ -1051,6 +1068,33 @@ class TaskService
         events.lane(Event.cleared, laneId, lane.get.projectId);
         return taskSuccess();
     }
+
+    /// The task as the APIs show it.
+    private TaskViewModel view(Task task)
+    {
+        return views([task])[0];
+    }
+
+    /**
+     * The tasks as the APIs show them. The task scheduler agent is looked up only when one of
+     * them is being scheduled, the only time it is at work on a task.
+     */
+    private TaskViewModel[] views(Task[] tasks)
+    {
+        Nullable!UUID scheduler;
+        if (tasks.canFind!(task => task.agentStatus == AgentStatus.scheduling))
+        {
+            // The first enabled one, in the order of IAgentRepository.all, as the task scheduler
+            // loop schedules with.
+            auto schedulers = agents.all().filter!(agent => agent.taskScheduler && agent.enabled);
+            if (!schedulers.empty)
+            {
+                scheduler = schedulers.front.id;
+            }
+        }
+
+        return tasks.map!(task => toViewModel(task, scheduler)).array;
+    }
 }
 
 /// Reads the runtimes and models, which are fixed data and cannot be written.
@@ -1068,9 +1112,9 @@ class RuntimeService
      *
      * Returns: Every runtime, by name.
      */
-    Runtime[] getAll()
+    RuntimeViewModel[] getAll()
     {
-        return repository.all();
+        return repository.all().map!(runtime => toViewModel(runtime)).array;
     }
 
     /**
@@ -1078,9 +1122,9 @@ class RuntimeService
      *
      * Returns: Every model, by runtime and then by name, with the effort levels it takes.
      */
-    Model[] getModels()
+    ModelViewModel[] getModels()
     {
-        return repository.models();
+        return repository.models().map!(model => toViewModel(model)).array;
     }
 }
 
@@ -1092,13 +1136,16 @@ class AgentService
 {
     private IAgentRepository repository;
     private IRuntimeRepository runtimes;
+    private IProjectRepository projects;
     private IEventPublisher events;
     private IAgentChat chats;
 
-    this(IAgentRepository repository, IRuntimeRepository runtimes, IEventPublisher events, IAgentChat chats)
+    this(IAgentRepository repository, IRuntimeRepository runtimes, IProjectRepository projects,
+        IEventPublisher events, IAgentChat chats)
     {
         this.repository = repository;
         this.runtimes = runtimes;
+        this.projects = projects;
         this.events = events;
         this.chats = chats;
     }
@@ -1108,9 +1155,9 @@ class AgentService
      *
      * Returns: Every agent, the task schedulers first, and by name within each group.
      */
-    Agent[] getAll()
+    AgentViewModel[] getAll()
     {
-        return repository.all();
+        return repository.all().map!(agent => toViewModel(agent)).array;
     }
 
     /**
@@ -1121,15 +1168,15 @@ class AgentService
      *
      * Returns: The agent with that id, or a failure: `AgentNotFoundError`.
      */
-    Result!(Agent, IAgentError) get(UUID id)
+    Result!(AgentViewModel, IAgentError) get(UUID id)
     {
         auto agent = repository.find(id);
         if (agent.isNull)
         {
-            return agentFailure!Agent(new AgentNotFoundError);
+            return agentFailure!AgentViewModel(new AgentNotFoundError);
         }
 
-        return agentSuccess(agent.get);
+        return agentSuccess(toViewModel(agent.get));
     }
 
     /**
@@ -1146,7 +1193,13 @@ class AgentService
      *   `LabelRepeatedError`, `RuntimeNotFoundError`, `ModelNotOfferedError`,
      *   `EffortNotTakenError`, `AgentNameTakenError` or `AgentNotFoundError`.
      */
-    Result!(Agent, IAgentError) save(Agent agent)
+    Result!(AgentViewModel, IAgentError) save(AgentViewModel agent)
+    {
+        return store(toModel(agent)).mapValue((Agent stored) => toViewModel(stored));
+    }
+
+    /// Stores an agent, for save.
+    private Result!(Agent, IAgentError) store(Agent agent)
     {
         auto invalid = checkAgent(agent);
         if (invalid !is null)
@@ -1204,6 +1257,55 @@ class AgentService
 
         events.agent(Event.changed, agent.id);
         return agentSuccess(agent);
+    }
+
+    /**
+     * Sends a person's chat message to an agent, in a chat that is going on or as the start of a
+     * new one, and waits for its answer (see `IAgentChat.send`).
+     *
+     * Params:
+     *   agentId = The agent to chat with.
+     *   projectId = The project the chat started in, or null when it started in none. A chat
+     *     going on whose project has since been deleted goes on without it.
+     *   message = What the person wrote.
+     *   sessionId = The chat's session, or null to start a new chat, whose session it is set to.
+     *
+     * Returns: The agent's answer, or a failure: `AgentNotFoundError`, or `ProjectNotFoundError`
+     *   for a new chat in a project that does not exist.
+     *
+     * Throws: What `IAgentChat.send` throws, when the agent fails to answer.
+     */
+    Result!(string, IAgentError) chat(UUID agentId, Nullable!UUID projectId, string message, ref string sessionId)
+    {
+        auto agent = repository.find(agentId);
+        if (agent.isNull)
+        {
+            return agentFailure!string(new AgentNotFoundError);
+        }
+
+        Nullable!Project project;
+        if (!projectId.isNull)
+        {
+            project = projects.find(projectId.get);
+            if (project.isNull && sessionId is null)
+            {
+                return agentFailure!string(new ProjectNotFoundError);
+            }
+        }
+
+        return agentSuccess(chats.send(agent.get, project, message, sessionId));
+    }
+
+    /**
+     * Ends a chat, which can then no longer be continued (see `IAgentChat.end`).
+     *
+     * Params:
+     *   agentId = The agent the chat is with, which may have been deleted.
+     *   sessionId = The chat's session.
+     */
+    void endChat(UUID agentId, UUID sessionId)
+    {
+        chats.end(agentId, sessionId);
     }
 
     /**
@@ -1282,9 +1384,9 @@ class DefaultService
      *
      * Returns: Every default, by key.
      */
-    Default[] getAll()
+    DefaultViewModel[] getAll()
     {
-        return repository.all();
+        return repository.all().map!(value => toViewModel(value)).array;
     }
 }
 
@@ -1299,7 +1401,7 @@ interface IProjectError
 }
 
 /// No project has the id given.
-class ProjectNotFoundError : IProjectError, ILaneError, ITaskError
+class ProjectNotFoundError : IProjectError, ILaneError, ITaskError, IAgentError
 {
 }
 
@@ -1659,6 +1761,124 @@ private IAgentError checkAgent(Agent agent)
     return null;
 }
 
+/// The lane as the APIs show it.
+private LaneViewModel toViewModel(Lane lane)
+{
+    auto view = new LaneViewModel;
+    view.id = lane.id;
+    view.projectId = lane.projectId;
+    view.name = lane.name;
+    view.position = lane.position;
+    view.color = lane.color;
+    view.marksDone = lane.marksDone;
+    return view;
+}
+
+/// The lane a client sent, to be written.
+private Lane toModel(LaneViewModel view)
+{
+    auto lane = new Lane;
+    lane.id = view.id;
+    lane.projectId = view.projectId;
+    lane.name = view.name;
+    lane.position = view.position;
+    lane.color = view.color;
+    lane.marksDone = view.marksDone;
+    return lane;
+}
+
+/// The project a client sent, to be written. Whether its agents are paused is not the client's to say.
+private Project toModel(ProjectViewModel view)
+{
+    return new Project(view.id, view.name, view.slug, view.description, view.taskAddRule, view.managedByAi);
+}
+
+/**
+ * The task as the APIs show it, with `scheduler` the task scheduler agent, which is at work on it
+ * while it is being scheduled.
+ */
+private TaskViewModel toViewModel(Task task, Nullable!UUID scheduler)
+{
+    auto view = new TaskViewModel;
+    view.id = task.id;
+    view.laneId = task.laneId;
+    view.description = task.description;
+    view.position = task.position;
+    view.handedToAgents = !task.agentStatus.isNull;
+    if (task.agentStatus == AgentStatus.executing)
+    {
+        view.workingAgentId = task.assignedAiAgentId;
+    }
+    else if (task.agentStatus == AgentStatus.scheduling)
+    {
+        view.workingAgentId = scheduler;
+    }
+
+    return view;
+}
+
+/**
+ * The task a client sent, to be written. Its agent and how far the agents got with it are not the
+ * client's to say.
+ */
+private Task toModel(TaskViewModel view)
+{
+    auto task = new Task;
+    task.id = view.id;
+    task.laneId = view.laneId;
+    task.description = view.description;
+    task.position = view.position;
+    return task;
+}
+
+/// The note as the APIs show it.
+private TaskNoteViewModel toViewModel(TaskNote note)
+{
+    return new TaskNoteViewModel(note.id, note.insertedAt, note.note, note.laneColor);
+}
+
+/// The runtime as the APIs show it.
+private RuntimeViewModel toViewModel(Runtime runtime)
+{
+    return new RuntimeViewModel(runtime.id, runtime.name);
+}
+
+/// The model as the APIs show it.
+private ModelViewModel toViewModel(Model model)
+{
+    return new ModelViewModel(model.id, model.name, model.runtime,
+        model.effortLevels.map!(level => new EffortLevelViewModel(level.id, level.name)).array);
+}
+
+/// The agent as the APIs show it.
+private AgentViewModel toViewModel(Agent agent)
+{
+    return new AgentViewModel(agent.id, agent.name, agent.runtime, agent.model, agent.effort, agent.taskScheduler,
+        agent.instructions, agent.labels, agent.maxParallelTasks, agent.enabled);
+}
+
+/**
+ * The agent a client sent, to be written. Whether it is enabled is not the client's to say: the
+ * repository reads it back.
+ */
+private Agent toModel(AgentViewModel view)
+{
+    return new Agent(view.id, view.name, view.runtime, view.model, view.effort, view.taskScheduler,
+        view.instructions, view.labels, view.maxParallelTasks);
+}
+
+/// The default as the APIs show it.
+private DefaultViewModel toViewModel(Default value)
+{
+    return new DefaultViewModel(value.key, value.value);
+}
+
+/// The result with its value mapped, or the same failure.
+private Result!(U, E) mapValue(U, T, E)(Result!(T, E) result, scope U delegate(T) map)
+{
+    return result.isSuccessful ? success!E(map(result.value)) : failure!U(result.error);
+}
+
 /**
  * Runs work in one transaction, which is committed when the result work returns is a success and
  * rolled back when it is a failure.
@@ -1877,7 +2097,10 @@ version (unittest)
         Project[] projects;
         Lane[] lanes;
         Task[] tasks;
-        /// The agent status each task was added with, which a Task does not carry.
+        /**
+         * The agent status of each task, kept apart from the tasks since an update of a task
+         * leaves its status alone, as the repository's does.
+         */
         Nullable!AgentStatus[UUID] agentStatuses;
         Agent[] agents;
         /// The lanes the last replaceWithLanes was told to delete.
@@ -2078,18 +2301,26 @@ version (unittest)
 
         Task[] ofLane(UUID laneId)
         {
-            return database.tasks.filter!(task => task.laneId == laneId).array;
+            return database.tasks.filter!(task => task.laneId == laneId).map!(task => withStatus(task)).array;
         }
 
         Task[] ofProject(UUID projectId)
         {
-            return database.tasks.filter!(task => projectOfLane(task.laneId) == projectId).array;
+            return database.tasks.filter!(task => projectOfLane(task.laneId) == projectId)
+                .map!(task => withStatus(task)).array;
         }
 
         Nullable!Task find(UUID id)
         {
             auto found = database.tasks.filter!(task => task.id == id);
-            return found.empty ? Nullable!Task.init : found.front.nullable;
+            return found.empty ? Nullable!Task.init : withStatus(found.front).nullable;
+        }
+
+        /// The task with the agent status it has now.
+        private Task withStatus(Task task)
+        {
+            task.agentStatus = database.agentStatuses.get(task.id, Nullable!AgentStatus.init);
+            return task;
         }
 
         bool lock(UUID id)
@@ -2141,12 +2372,12 @@ version (unittest)
                 other => other.projectId == lane.projectId && other.position.get < lane.position.get);
         }
 
-        Task add(Task task, Nullable!AgentStatus agentStatus)
+        Task add(Task task)
         {
             place(task);
             task.id = randomUUID;
             database.tasks ~= task;
-            database.agentStatuses[task.id] = agentStatus;
+            database.agentStatuses[task.id] = task.agentStatus;
             return task;
         }
 
@@ -2456,8 +2687,9 @@ version (unittest)
     private TaskService taskServiceOver(MockDatabase database, MockEventPublisher events = new MockEventPublisher)
     {
         auto projects = new MockProjectRepository(database);
-        return new TaskService(new MockTaskRepository(database), projects, new MockLaneRepository(database), events,
-            new IndexPages(noWorkingDirs(), projects, events), new MockTransactional);
+        return new TaskService(new MockTaskRepository(database), projects, new MockLaneRepository(database),
+            new MockAgentRepository(database), events, new IndexPages(noWorkingDirs(), projects, events),
+            new MockTransactional);
     }
 
     /**
@@ -2467,7 +2699,8 @@ version (unittest)
     private AgentService agentServiceOver(MockDatabase database, MockEventPublisher events = new MockEventPublisher,
         MockAgentChat chats = new MockAgentChat)
     {
-        return new AgentService(new MockAgentRepository(database), new MockRuntimeRepository, events, chats);
+        return new AgentService(new MockAgentRepository(database), new MockRuntimeRepository,
+            new MockProjectRepository(database), events, chats);
     }
 
     /// A task already in `database`, in the lane with id `laneId`.
@@ -2501,13 +2734,13 @@ unittest
     auto database = new MockDatabase;
     auto service = serviceOver(database);
 
-    auto created = service.save(new Project("Q3 finance", null));
+    auto created = service.save(new ProjectViewModel("Q3 finance", null));
     assert(created.isSuccessful);
     assert(created.value.id != UUID.init);
     assert(created.value.slug == "q3-finance");
     assert(database.projects.length == 1);
 
-    auto chosen = service.save(new Project("Website", "site"));
+    auto chosen = service.save(new ProjectViewModel("Website", "site"));
     assert(chosen.isSuccessful && chosen.value.slug == "site");
 
     created.value.description = "Numbers.";
@@ -2515,7 +2748,7 @@ unittest
     assert(updated.isSuccessful);
     assert(database.projects[0].description == "Numbers.");
 
-    auto missing = service.save(new Project(randomUUID, "Gone", "gone"));
+    auto missing = service.save(new ProjectViewModel(randomUUID, "Gone", "gone"));
     assert(cast(ProjectNotFoundError) missing.error);
 }
 
@@ -2526,17 +2759,17 @@ unittest
     auto service = serviceOver(database);
     auto finance = storedProject(database, "Q3 finance");
 
-    assert(cast(SlugInvalidError) service.save(new Project("Bad", "Not A Slug")).error);
-    assert(cast(SlugReservedError) service.save(new Project("Anything", "new")).error);
-    assert(cast(NameReservedError) service.save(new Project("New", null)).error);
-    assert(cast(SlugTakenError) service.save(new Project("Other", "q3-finance")).error);
+    assert(cast(SlugInvalidError) service.save(new ProjectViewModel("Bad", "Not A Slug")).error);
+    assert(cast(SlugReservedError) service.save(new ProjectViewModel("Anything", "new")).error);
+    assert(cast(NameReservedError) service.save(new ProjectViewModel("New", null)).error);
+    assert(cast(SlugTakenError) service.save(new ProjectViewModel("Other", "q3-finance")).error);
 
-    auto taken = cast(NameTakenError) service.save(new Project("Q3 Finance!", null)).error;
+    auto taken = cast(NameTakenError) service.save(new ProjectViewModel("Q3 Finance!", null)).error;
     assert(taken !is null);
     assert(taken.ownerName == "Q3 finance");
 
     // A project keeps its own slug on an update.
-    assert(service.save(new Project(finance.id, "Q3 finance", "q3-finance")).isSuccessful);
+    assert(service.save(new ProjectViewModel(finance.id, "Q3 finance", "q3-finance")).isSuccessful);
 
     // A failed check writes nothing.
     assert(database.projects.length == 1);
@@ -2550,7 +2783,7 @@ unittest
     auto finance = storedProject(database, "Q3 finance");
     storedProject(database, "Website");
 
-    assert(service.get(finance.id).value is finance);
+    assert(service.get(finance.id).value.id == finance.id);
     assert(cast(ProjectNotFoundError) service.get(randomUUID).error);
 
     assert(service.getAll().length == 2);
@@ -2568,9 +2801,9 @@ unittest
     auto database = new MockDatabase;
     auto service = serviceOver(database);
 
-    auto created = service.save(new ProjectWithLanes(new Project("Q3 finance", null), [
-        new Lane(UUID.init, UUID.init, "To do", 0, "#000000", false),
-        new Lane(UUID.init, UUID.init, "Done", 1, "#000000", true)
+    auto created = service.save(new ProjectWithLanes(new ProjectViewModel("Q3 finance", null), [
+        new LaneViewModel(UUID.init, UUID.init, "To do", 0, "#000000", false),
+        new LaneViewModel(UUID.init, UUID.init, "Done", 1, "#000000", true)
     ]));
     assert(created.isSuccessful);
     auto project = created.value.project;
@@ -2582,17 +2815,17 @@ unittest
     auto done = database.lanes[1];
     toDo.name = "Backlog";
     auto updated = service.save(new ProjectWithLanes(project, [
-        toDo,
-        new Lane(UUID.init, UUID.init, "Doing", 1, "#000000", false)
+        toViewModel(toDo),
+        new LaneViewModel(UUID.init, UUID.init, "Doing", 1, "#000000", false)
     ]));
     assert(updated.isSuccessful);
     assert(database.removedLanes == [done.id]);
     assert(database.lanes.map!(lane => lane.name).array == ["Backlog", "Doing"]);
 
-    auto missing = service.save(new ProjectWithLanes(new Project(randomUUID, "Gone", "gone"), []));
+    auto missing = service.save(new ProjectWithLanes(new ProjectViewModel(randomUUID, "Gone", "gone"), []));
     assert(cast(ProjectNotFoundError) missing.error);
 
-    auto renamed = new Project(project.id, "New", null);
+    auto renamed = new ProjectViewModel(project.id, "New", null);
     assert(cast(NameReservedError) service.save(new ProjectWithLanes(renamed, [])).error);
 }
 
@@ -2603,10 +2836,10 @@ unittest
     auto events = new MockEventPublisher;
     auto service = serviceOver(database, events);
 
-    auto created = service.save(new Project("Q3 finance", null)).value;
+    auto created = service.save(new ProjectViewModel("Q3 finance", null)).value;
     service.save(created);
-    service.save(new Project("Q3 finance", null));
-    service.save(new Project(randomUUID, "Gone", "gone"));
+    service.save(new ProjectViewModel("Q3 finance", null));
+    service.save(new ProjectViewModel(randomUUID, "Gone", "gone"));
     service.remove(created.id);
     service.remove(created.id);
     assert(events.projects == [
@@ -2616,9 +2849,9 @@ unittest
     ]);
 
     events.projects = null;
-    auto withLanes = service.save(new ProjectWithLanes(new Project("Website", null), [])).value.project;
+    auto withLanes = service.save(new ProjectWithLanes(new ProjectViewModel("Website", null), [])).value.project;
     service.save(new ProjectWithLanes(withLanes, []));
-    service.save(new ProjectWithLanes(new Project(randomUUID, "Gone", "gone"), []));
+    service.save(new ProjectWithLanes(new ProjectViewModel(randomUUID, "Gone", "gone"), []));
     assert(events.projects == [
         Published(Event.created, withLanes.id),
         Published(Event.changed, withLanes.id)
@@ -2637,7 +2870,8 @@ unittest
 
     auto save(Lane[] lanes)
     {
-        return service.save(new ProjectWithLanes(new Project(finance.id, "Q3 finance", "q3-finance"), lanes));
+        return service.save(new ProjectWithLanes(new ProjectViewModel(finance.id, "Q3 finance", "q3-finance"),
+            lanes.map!(lane => toViewModel(lane)).array));
     }
 
     assert(cast(LaneOfOtherProjectError) save([toDo, elsewhere]).error);
@@ -2658,12 +2892,12 @@ unittest
     auto finance = storedProject(database, "Q3 finance");
     auto toDo = storedLane(database, finance.id, "To do", 0);
 
-    assert(service.getOfProject(finance.id).value == [toDo]);
+    assert(service.getOfProject(finance.id).value.map!(lane => lane.id).array == [toDo.id]);
     assert(cast(ProjectNotFoundError) service.getOfProject(randomUUID).error);
-    assert(service.get(toDo.id).value is toDo);
+    assert(service.get(toDo.id).value.id == toDo.id);
     assert(cast(LaneNotFoundError) service.get(randomUUID).error);
 
-    auto done = new Lane;
+    auto done = new LaneViewModel;
     done.projectId = finance.id;
     done.name = "Done";
     done.color = "#000000";
@@ -2671,25 +2905,25 @@ unittest
     assert(created.isSuccessful);
     assert(created.value.id != UUID.init && created.value.position.get == 1);
 
-    auto taken = new Lane(UUID.init, finance.id, "Doing", 0, "#000000", false);
+    auto taken = new LaneViewModel(UUID.init, finance.id, "Doing", 0, "#000000", false);
     assert(cast(LanePositionTakenError) service.save(taken).error);
-    auto lost = new Lane(UUID.init, randomUUID, "Lost", 0, "#000000", false);
+    auto lost = new LaneViewModel(UUID.init, randomUUID, "Lost", 0, "#000000", false);
     assert(cast(ProjectNotFoundError) service.save(lost).error);
 
     // An update keeps the lane in its project, and may keep its own position.
-    auto renamed = new Lane(toDo.id, randomUUID, "Backlog", 0, "#000000", false);
-    assert(service.save(renamed).isSuccessful);
-    assert(renamed.projectId == finance.id);
-    auto gone = new Lane(randomUUID, finance.id, "Gone", 5, "#000000", false);
+    auto renamed = service.save(new LaneViewModel(toDo.id, randomUUID, "Backlog", 0, "#000000", false));
+    assert(renamed.isSuccessful);
+    assert(renamed.value.projectId == finance.id);
+    auto gone = new LaneViewModel(randomUUID, finance.id, "Gone", 5, "#000000", false);
     assert(cast(LaneNotFoundError) service.save(gone).error);
 
-    assert(service.remove(done.id).isSuccessful);
-    assert(cast(LaneNotFoundError) service.remove(done.id).error);
+    assert(service.remove(created.value.id).isSuccessful);
+    assert(cast(LaneNotFoundError) service.remove(created.value.id).error);
 
     assert(events.lanes == [
-        Published(Event.created, done.id),
+        Published(Event.created, created.value.id),
         Published(Event.changed, toDo.id),
-        Published(Event.deleted, done.id)
+        Published(Event.deleted, created.value.id)
     ]);
 }
 
@@ -2706,44 +2940,47 @@ unittest
     auto ideas = storedLane(database, website.id, "Ideas", 0);
     auto report = storedTask(database, toDo.id, "Write the report", 0);
 
-    assert(service.getOfProject(finance.id).value == [report]);
+    assert(service.getOfProject(finance.id).value.map!(task => task.id).array == [report.id]);
     assert(cast(ProjectNotFoundError) service.getOfProject(randomUUID).error);
-    assert(service.getOfLane(toDo.id).value == [report]);
+    assert(service.getOfLane(toDo.id).value.map!(task => task.id).array == [report.id]);
     assert(cast(LaneNotFoundError) service.getOfLane(randomUUID).error);
-    assert(service.get(report.id).value is report);
+    assert(service.get(report.id).value.id == report.id);
     assert(cast(TaskNotFoundError) service.get(randomUUID).error);
     assert(service.getNotes(report.id).isSuccessful);
     assert(cast(TaskNotFoundError) service.getNotes(randomUUID).error);
 
-    auto check = new Task;
+    auto check = new TaskViewModel;
     check.laneId = toDo.id;
     check.description = "Check the numbers";
     auto created = service.save(check);
     assert(created.isSuccessful);
-    assert(check.id != UUID.init && check.position.get == 1);
+    assert(created.value.id != UUID.init && created.value.position.get == 1);
+    check = created.value;
 
-    assert(cast(LaneNotFoundError) service.save(new Task(UUID.init, randomUUID, "Lost", 0)).error);
-    assert(cast(LaneClosedToNewTasksError) service.save(new Task(UUID.init, done.id, "Late", 0)).error);
-    assert(cast(TaskPositionTakenError) service.save(new Task(UUID.init, toDo.id, "Clash", 0)).error);
+    assert(cast(LaneNotFoundError) service.save(new TaskViewModel(UUID.init, randomUUID, "Lost", 0)).error);
+    assert(cast(LaneClosedToNewTasksError) service.save(new TaskViewModel(UUID.init, done.id, "Late", 0)).error);
+    assert(cast(TaskPositionTakenError) service.save(new TaskViewModel(UUID.init, toDo.id, "Clash", 0)).error);
 
     // An update may move the task within its project, and keeps its lane when it names none.
-    auto moved = new Task(report.id, done.id, "Write the report", 0);
+    auto moved = new TaskViewModel(report.id, done.id, "Write the report", 0);
     assert(service.save(moved).isSuccessful);
-    auto kept = new Task(report.id, UUID.init, "Write the full report", 0);
-    assert(service.save(kept).isSuccessful && kept.laneId == done.id);
-    assert(cast(TaskLeavesProjectError) service.save(new Task(report.id, ideas.id, "Away", 0)).error);
-    assert(cast(LaneNotFoundError) service.save(new Task(report.id, randomUUID, "Lost", 0)).error);
-    assert(cast(TaskNotFoundError) service.save(new Task(randomUUID, toDo.id, "Gone", 5)).error);
+    auto kept = new TaskViewModel(report.id, UUID.init, "Write the full report", 0);
+    auto keptSaved = service.save(kept);
+    assert(keptSaved.isSuccessful && keptSaved.value.laneId == done.id);
+    assert(cast(TaskLeavesProjectError) service.save(new TaskViewModel(report.id, ideas.id, "Away", 0)).error);
+    assert(cast(LaneNotFoundError) service.save(new TaskViewModel(report.id, randomUUID, "Lost", 0)).error);
+    assert(cast(TaskNotFoundError) service.save(new TaskViewModel(randomUUID, toDo.id, "Gone", 5)).error);
 
     assert(service.remove(check.id).isSuccessful);
     assert(cast(TaskNotFoundError) service.remove(check.id).error);
 
     // Only a task of a project managed by AI is to be scheduled; any other gets no status.
     assert(database.agentStatuses[check.id].isNull);
+    assert(!check.handedToAgents);
     website.managedByAi = true;
-    auto draft = new Task(UUID.init, ideas.id, "Draft the copy", 0);
-    assert(service.save(draft).isSuccessful);
+    auto draft = service.save(new TaskViewModel(UUID.init, ideas.id, "Draft the copy", 0)).value;
     assert(database.agentStatuses[draft.id] == AgentStatus.toBeScheduled);
+    assert(draft.handedToAgents);
 
     assert(events.tasks == [
         Published(Event.created, check.id),
@@ -2753,6 +2990,39 @@ unittest
         Published(Event.created, draft.id)
     ]);
 
+}
+
+// TaskService: the agent at work on a task, and whether it was handed to the agents.
+unittest
+{
+    auto database = new MockDatabase;
+    auto service = taskServiceOver(database);
+    auto project = storedProject(database, "AI test");
+    auto toDo = storedLane(database, project.id, "To do", 0);
+    auto writer = new Agent(randomUUID, "Writer", "claude-code", "sonnet", "default", false);
+    auto resting = new Agent(randomUUID, "Resting", "claude-code", "sonnet", "default", true);
+    resting.enabled = false;
+    auto scheduler = new Agent(randomUUID, "Scheduler", "claude-code", "sonnet", "default", true);
+    database.agents = [resting, scheduler, writer];
+
+    auto task = storedTask(database, toDo.id, "Write the poem", 0);
+    task.assignedAiAgentId = writer.id;
+
+    auto shown(Nullable!AgentStatus status)
+    {
+        database.agentStatuses[task.id] = status;
+        return service.get(task.id).value;
+    }
+
+    auto unhanded = shown(Nullable!AgentStatus.init);
+    assert(!unhanded.handedToAgents && unhanded.workingAgentId.isNull);
+    auto executing = shown(AgentStatus.executing.nullable);
+    assert(executing.handedToAgents && executing.workingAgentId == writer.id);
+    // The first enabled task scheduler, as the task scheduler loop schedules with.
+    auto scheduling = shown(AgentStatus.scheduling.nullable);
+    assert(scheduling.handedToAgents && scheduling.workingAgentId == scheduler.id);
+    auto scheduled = shown(AgentStatus.scheduled.nullable);
+    assert(scheduled.handedToAgents && scheduled.workingAgentId.isNull);
 }
 
 // TaskService: handing a task back to the task scheduler.
@@ -2840,7 +3110,7 @@ unittest
     assert(service.move(poem.id, doing.id, Nullable!UUID.init).isSuccessful);
     assert(database.agentStatuses[poem.id] == AgentStatus.toBeScheduled);
     database.agentStatuses[poem.id] = AgentStatus.declined.nullable;
-    assert(service.save(new Task(poem.id, toDo.id, "Write the poem", 5)).isSuccessful);
+    assert(service.save(new TaskViewModel(poem.id, toDo.id, "Write the poem", 5)).isSuccessful);
     assert(database.agentStatuses[poem.id] == AgentStatus.toBeScheduled);
     assert(events.notes == [poem.id, poem.id]);
 
@@ -2861,32 +3131,32 @@ unittest
     auto chats = new MockAgentChat;
     auto service = agentServiceOver(database, events, chats);
 
-    auto writer = new Agent(UUID.init, "Writer", "claude-code", "sonnet", "default", false);
-    auto created = service.save(writer);
-    assert(created.isSuccessful && writer.id != UUID.init);
-    assert(service.getAll() == [writer]);
-    assert(service.get(writer.id).value is writer);
+    auto created = service.save(new AgentViewModel(UUID.init, "Writer", "claude-code", "sonnet", "default", false));
+    assert(created.isSuccessful && created.value.id != UUID.init);
+    auto writer = created.value;
+    assert(service.getAll().map!(agent => agent.id).array == [writer.id]);
+    assert(service.get(writer.id).value.id == writer.id);
     assert(cast(AgentNotFoundError) service.get(randomUUID).error);
 
-    assert(cast(RuntimeNotFoundError) service.save(new Agent(UUID.init, "A", "other", "sonnet", "default", false))
+    assert(cast(RuntimeNotFoundError) service.save(new AgentViewModel(UUID.init, "A", "other", "sonnet", "default", false))
             .error);
     auto notOffered = cast(ModelNotOfferedError) service.save(
-        new Agent(UUID.init, "A", "claude-code", "other", "default", false)).error;
+        new AgentViewModel(UUID.init, "A", "claude-code", "other", "default", false)).error;
     assert(notOffered !is null && notOffered.runtimeName == "Claude Code");
-    assert(cast(EffortNotTakenError) service.save(new Agent(UUID.init, "A", "claude-code", "sonnet", "max", false))
+    assert(cast(EffortNotTakenError) service.save(new AgentViewModel(UUID.init, "A", "claude-code", "sonnet", "max", false))
             .error);
     assert(cast(AgentNameTakenError) service.save(
-        new Agent(UUID.init, "Writer", "claude-code", "sonnet", "default", false)).error);
+        new AgentViewModel(UUID.init, "Writer", "claude-code", "sonnet", "default", false)).error);
 
     // An agent keeps its own name on an update.
-    assert(service.save(new Agent(writer.id, "Writer", "claude-code", "sonnet", "default", true)).isSuccessful);
+    assert(service.save(new AgentViewModel(writer.id, "Writer", "claude-code", "sonnet", "default", true)).isSuccessful);
     assert(cast(AgentNotFoundError) service.save(
-        new Agent(randomUUID, "Gone", "claude-code", "sonnet", "default", false)).error);
+        new AgentViewModel(randomUUID, "Gone", "claude-code", "sonnet", "default", false)).error);
 
     assert(service.setEnabled(writer.id, false).isSuccessful && !service.get(writer.id).value.enabled);
     // Only setEnabled enables an agent: a save keeps what it was.
-    auto saved = new Agent(writer.id, "Writer", "claude-code", "sonnet", "default", true);
-    assert(service.save(saved).isSuccessful && !saved.enabled && !service.get(writer.id).value.enabled);
+    auto saved = service.save(new AgentViewModel(writer.id, "Writer", "claude-code", "sonnet", "default", true));
+    assert(saved.isSuccessful && !saved.value.enabled && !service.get(writer.id).value.enabled);
     assert(service.setEnabled(writer.id, true).isSuccessful && service.get(writer.id).value.enabled);
     assert(cast(AgentNotFoundError) service.setEnabled(randomUUID, false).error);
 
@@ -2911,17 +3181,23 @@ unittest
     auto events = new MockEventPublisher;
     auto service = agentServiceOver(database, events);
 
-    auto writer = new Agent(UUID.init, "Writer", "claude-code", "sonnet", "default", false);
-    auto reviewer = new Agent(UUID.init, "Reviewer", "claude-code", "sonnet", "default", false);
-    assert(service.save(writer).isSuccessful && service.save(reviewer).isSuccessful);
+    auto writer = service.save(new AgentViewModel(UUID.init, "Writer", "claude-code", "sonnet", "default", false))
+        .value;
+    auto reviewer = service.save(new AgentViewModel(UUID.init, "Reviewer", "claude-code", "sonnet", "default", false))
+        .value;
     assert(service.setEnabled(reviewer.id, false).isSuccessful);
     events.agents = null;
 
+    bool enabled(AgentViewModel agent)
+    {
+        return service.get(agent.id).value.enabled;
+    }
+
     // Only the agents that change are changed, and reported.
-    assert(service.setAllEnabled(false) == [writer.id] && !writer.enabled && !reviewer.enabled);
+    assert(service.setAllEnabled(false) == [writer.id] && !enabled(writer) && !enabled(reviewer));
     assert(events.agents == [Published(Event.changed, writer.id)]);
     assert(service.setAllEnabled(false).length == 0);
-    assert(service.setAllEnabled(true) == [writer.id, reviewer.id] && writer.enabled && reviewer.enabled);
+    assert(service.setAllEnabled(true) == [writer.id, reviewer.id] && enabled(writer) && enabled(reviewer));
 }
 
 // The field checks every save makes before it writes.
@@ -2935,25 +3211,25 @@ unittest
     auto finance = storedProject(database, "Q3 finance");
     auto toDo = storedLane(database, finance.id, "To do", 0);
 
-    assert(cast(ProjectNameMissingError) projects.save(new Project(" ", null)).error);
-    assert(cast(ProjectNameUnusableError) projects.save(new Project("!!!", null)).error);
-    auto badLane = new Lane(UUID.init, UUID.init, "Doing", 0, "red", false);
-    assert(cast(LaneColorInvalidError) projects.save(new ProjectWithLanes(new Project("Website", null), [badLane]))
+    assert(cast(ProjectNameMissingError) projects.save(new ProjectViewModel(" ", null)).error);
+    assert(cast(ProjectNameUnusableError) projects.save(new ProjectViewModel("!!!", null)).error);
+    auto badLane = new LaneViewModel(UUID.init, UUID.init, "Doing", 0, "red", false);
+    assert(cast(LaneColorInvalidError) projects.save(new ProjectWithLanes(new ProjectViewModel("Website", null), [badLane]))
             .error);
 
-    assert(cast(LaneNameMissingError) lanes.save(new Lane(UUID.init, finance.id, "", 1, "#000000", false)).error);
-    assert(cast(LanePositionNegativeError) lanes.save(new Lane(UUID.init, finance.id, "A", -1, "#000000", false))
+    assert(cast(LaneNameMissingError) lanes.save(new LaneViewModel(UUID.init, finance.id, "", 1, "#000000", false)).error);
+    assert(cast(LanePositionNegativeError) lanes.save(new LaneViewModel(UUID.init, finance.id, "A", -1, "#000000", false))
             .error);
-    assert(cast(LaneColorInvalidError) lanes.save(new Lane(UUID.init, finance.id, "A", 1, "#00000g", false)).error);
-    auto shouted = new Lane(UUID.init, finance.id, "Done", 1, "#8FA6FF", false);
-    assert(lanes.save(shouted).isSuccessful && shouted.color == "#8fa6ff");
+    assert(cast(LaneColorInvalidError) lanes.save(new LaneViewModel(UUID.init, finance.id, "A", 1, "#00000g", false)).error);
+    auto shouted = lanes.save(new LaneViewModel(UUID.init, finance.id, "Done", 1, "#8FA6FF", false));
+    assert(shouted.isSuccessful && shouted.value.color == "#8fa6ff");
 
-    assert(cast(TaskDescriptionMissingError) tasks.save(new Task(UUID.init, toDo.id, " ", 0)).error);
-    assert(cast(TaskPositionNegativeError) tasks.save(new Task(UUID.init, toDo.id, "A", -1)).error);
+    assert(cast(TaskDescriptionMissingError) tasks.save(new TaskViewModel(UUID.init, toDo.id, " ", 0)).error);
+    assert(cast(TaskPositionNegativeError) tasks.save(new TaskViewModel(UUID.init, toDo.id, "A", -1)).error);
 
-    Agent draft(string name, string runtime, string model, string[] labels = null)
+    AgentViewModel draft(string name, string runtime, string model, string[] labels = null)
     {
-        return new Agent(UUID.init, name, runtime, model, "default", false, null, labels);
+        return new AgentViewModel(UUID.init, name, runtime, model, "default", false, null, labels);
     }
 
     assert(cast(AgentNameMissingError) agents.save(draft("", "claude-code", "sonnet")).error);
@@ -2988,7 +3264,7 @@ unittest
     auto check = storedTask(database, toDo.id, "Check the numbers", 1);
     auto copy = storedTask(database, ideas.id, "Write the copy", 0);
 
-    UUID[] order(Task[] tasks)
+    UUID[] order(TaskViewModel[] tasks)
     {
         return tasks.sort!((a, b) => a.position.get < b.position.get).map!(task => task.id).array;
     }
@@ -3059,8 +3335,8 @@ unittest
     }
 
     auto events = new MockEventPublisher;
-    assert(cast(SlugTakenError) racedOver(new MockDatabase, events).save(new Project("Other", "q3-finance")).error);
-    auto taken = cast(NameTakenError) racedOver(new MockDatabase, events).save(new Project("Q3 Finance!", null)).error;
+    assert(cast(SlugTakenError) racedOver(new MockDatabase, events).save(new ProjectViewModel("Other", "q3-finance")).error);
+    auto taken = cast(NameTakenError) racedOver(new MockDatabase, events).save(new ProjectViewModel("Q3 Finance!", null)).error;
     assert(taken !is null && taken.ownerName == "Q3 finance");
     assert(events.projects.length == 0);
 
@@ -3078,8 +3354,9 @@ unittest
             throw new UniqueViolation(constraint, "Taken.");
         }
     };
-    auto service = new AgentService(agents, new MockRuntimeRepository, events, new MockAgentChat);
-    auto writer = new Agent(UUID.init, "Writer", "claude-code", "sonnet", "default", false);
+    auto service = new AgentService(agents, new MockRuntimeRepository, new MockProjectRepository(database), events,
+        new MockAgentChat);
+    auto writer = new AgentViewModel(UUID.init, "Writer", "claude-code", "sonnet", "default", false);
     assert(cast(AgentNameTakenError) service.save(writer).error);
     constraint = "some_other_key";
     assertThrown!UniqueViolation(service.save(writer));

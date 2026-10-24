@@ -6,7 +6,7 @@ description: Add or change CRUD REST endpoints in the Taskavista dashboard. Use 
 # Adding CRUD REST endpoints to Taskavista
 
 The projects resource is the **canonical implementation**: `Project` in
-`dashboard/source/model.d`, `IProjectRepository` in `repository/package.d` and
+`dashboard/source/model.d`, `ProjectViewModel` in `viewmodel.d`, `IProjectRepository` in `repository/package.d` and
 `PostgresProjectRepository` in `repository/postgres.d`, `ProjectService` in `service.d`, and
 `ProjectApi` and `ProjectController` in `api/rest.d`. Everything below is derived from making it
 work. Read it before writing a new one, and copy its shape rather than inventing a second style.
@@ -27,19 +27,21 @@ pass, not afterwards.
 Why the server is layered as it is, and what belongs in each layer, is in
 `docs/server-layers.md`; this section is the where.
 
-A resource's parts are split by layer rather than by resource: every PODO is in `model.d`,
-every repository interface in `repository/package.d` and its postgres implementation in
+A resource's parts are split by layer rather than by resource: every model is in `model.d`,
+every view model in `viewmodel.d`, every repository interface in `repository/package.d` and its postgres implementation in
 `repository/postgres.d`, every service in `service.d`, and every REST interface and controller
 in `api/rest.d`. Within each module, a resource's parts sit together, in the order projects,
 lanes, tasks.
 
 | Part | Role | Module | For projects |
 |---|---|---|---|
-| PODO | one row of the table, plus any enum and its converter | `model.d` | `Project`, `TaskAddRule`, `toTaskAddRule` |
-| Service model | several PODOs written or read together | `servicemodel.d` | `ProjectWithLanes` |
+| Model | one row of the table, every column of it, exposed or not, plus any enum and its converter; what the repositories read and write, never sent over the wire | `model.d` | `Project`, `TaskAddRule`, `toTaskAddRule` |
+| View model | the resource as the APIs send and receive it: only what the web UI and the agents need, which may be worked out from several columns or from outside the database (`canBeOpened`, `workingAgentId`); never reaches a repository | `viewmodel.d` | `ProjectViewModel` |
+| Service model | several view models written or read together | `servicemodel.d` | `ProjectWithLanes` |
 | Repository interface | what can be read and written, documented in Ddoc; everything but `app.d` knows only this | `repository/package.d` | `IProjectRepository` |
 | Postgres repository | hand-written SQL against the pool, plus the private row converter | `repository/postgres.d` | `PostgresProjectRepository`, `toProject` |
-| Service | the rules a write must keep, such as the slug check, over the repository interfaces; reports failures as error classes, never as HTTP, and successful writes to the event stream | `service.d` | `ProjectService`, `IProjectError`, `NameTakenError` |
+| Service | the rules a write must keep, such as the slug check, over the repository interfaces; maps view models to models and back; reports failures as error classes, never as HTTP, and successful writes to the event stream | `service.d` | `ProjectService`, `IProjectError`, `NameTakenError` |
+| Mapping | a view model from a model, and a model from a view model sent in a body | `service.d` | `toViewModel`, `toModel`, `ProjectService.view` |
 | REST interface | the wire contract vibe generates routes from, plus any body type of its own | `api/rest.d` | `ProjectApi` |
 | Controller | implements the interface over the service, and turns its errors into HTTP ones | `api/rest.d` | `ProjectController` |
 | Error answers | the status and message for each error class, shared by the REST and RPC controllers | `api/errors.d` | `toHTTPError` |
@@ -52,10 +54,11 @@ id where it must not.
 `Result` and `OperationResult`, in `result.d`, are what a service method returns.
 
 The dependencies run one way: `api/rest.d` and `api/rpc.d` import `api/errors.d`, `service.d`
-and `model.d`, never each other and never a repository; `api/errors.d` imports `service.d` and
-`model.d`; `service.d` imports the repository interfaces,
-`result.d`, `servicemodel.d`, `helpers.d` and `model.d`; `repository/postgres.d` imports the
-interfaces and `model.d`; and `model.d` imports none of them. Only `app.d` imports
+and `viewmodel.d` (and `model.d` only for an enum, such as `TaskAddRule`), never each other and
+never a repository; `api/errors.d` imports `service.d` and `viewmodel.d`; `service.d` imports the
+repository interfaces, `result.d`, `servicemodel.d`, `helpers.d`, `viewmodel.d` and `model.d`;
+`repository/postgres.d` imports the interfaces and `model.d`; `viewmodel.d` imports `model.d`
+only for its enums and defaults; and `model.d` imports none of them. Only `app.d` imports
 `repository.postgres`, to register each implementation under its interface. A check that both
 APIs need goes in the service, and an error answer both need in `api/errors.d`, never in one API
 module for the other to import.
@@ -83,10 +86,16 @@ There is **no ORM and no migration runner**. SQL is written out by hand in the r
 
 ## Steps
 
-1. **PODO.** A `class` (not a struct — vibe needs to `new` it, and Poodinis resolves classes).
-   Public fields matching the columns, camelCased. A default constructor plus convenience ones,
-   all `@safe`.
-2. **Repository.** An interface `ILaneRepository` in `repository/package.d`, one method per
+1. **Model.** A `class` in `model.d` with a public field for every column of the table,
+   camelCased, whether the API exposes it or not, and nothing that is not a column (or rows of a
+   table the repository reads with it, such as `Agent.labels`). No `@optional` and no wire docs:
+   a model never goes over the wire. A default constructor plus convenience ones, all `@safe`.
+2. **View model.** A `class` (not a struct — vibe needs to `new` it) in `viewmodel.d` with
+   exactly what the API sends and takes, `@optional` where a client may leave it out. It does
+   not inherit the model: a field may be left out, renamed, or worked out from several columns,
+   from other tables (a pre-joined array) or from outside the database (`canBeOpened`). A field
+   the server sets is read-only on the wire and documented as ignored in a body.
+3. **Repository.** An interface `ILaneRepository` in `repository/package.d`, one method per
    operation, each with its Ddoc comment there; and its implementation
    `PostgresLaneRepository : ILaneRepository` in `repository/postgres.d`, whose methods carry no
    doc comments of their own. The implementation's constructor takes `PostgresConnections`,
@@ -94,8 +103,13 @@ There is **no ORM and no migration runner**. SQL is written out by hand in the r
    `QueryParams` + `execParams` in `connections.use`, or in `connections.transaction` for a write
    of several statements. Leave these `@system` — do not chase `@safe` down here. An exception a caller is meant to catch, such as `PositionConflict`, is part of the
    interface and goes in `package.d`.
-3. **Service.** A class in `service.d` whose constructor takes the repository interfaces it
-   needs. Its methods return a `Result!(T, ILaneError)`, or an `OperationResult!ILaneError` when
+4. **Service.** A class in `service.d` whose constructor takes the repository interfaces it
+   needs. Its public methods take and return view models, never models, and map between the two:
+   a `toModel` for what a body may set, and a `toViewModel`, or a method of the service's own
+   when the mapping needs a repository or the working directories (`ProjectService.view`). A write
+   maps the body to a model, works on the model, and answers with the row as stored mapped back,
+   never the body, so a field the server sets always shows what is stored. Its methods return a
+   `Result!(T, ILaneError)`, or an `OperationResult!ILaneError` when
    there is no value, rather than throwing. Each kind of failure is a class implementing the
    resource's error interface (`TaskNotFoundError : ITaskError`), with fields only for what the
    controller cannot know itself, such as `NameTakenError.ownerName`. A kind of failure several
@@ -110,17 +124,17 @@ There is **no ORM and no migration runner**. SQL is written out by hand in the r
    `events.project(Event.created, project.id)`. A failed write reports nothing. A new kind of
    resource gets a method of its own on `IEventPublisher`, and a case in `applyChange` in `app.js`.
    See `docs/event-stream.md`.
-4. **REST interface.** `@path("/api/rest/v1")` on the interface, explicit `@method` and `@path` on every
+5. **REST interface.** `@path("/api/rest/v1")` on the interface, explicit `@method` and `@path` on every
    method, every method `@safe`. Spelling out `@method` and `@path` keeps vibe from inferring
    them from the method name (`getProjects` → `GET projects`), so renaming a method cannot
    silently move its endpoint — and the names are free to be `listProjects`, `readProject`.
-5. **Controller.** Constructor takes the service. Every override `@trusted`. A failed result
+6. **Controller.** Constructor takes the service. Every override `@trusted`. A failed result
    goes through the resource's `toHTTPError`, which picks the status and message by the error's
    class; give every error class a branch there, as nothing checks that one is missing, and an
    error without one comes back as a 500. The `toHTTPError` overloads are in `api/errors.d`, so
    that the RPC answers a service's errors as REST does. A controller reports no events; the
    service does.
-6. **Register in `dashboard/source/app.d`**, inside `DashboardContext.registerDependencies`:
+7. **Register in `dashboard/source/app.d`**, inside `DashboardContext.registerDependencies`:
 
    ```d
    container.register!(ILaneRepository, PostgresLaneRepository);
@@ -140,7 +154,7 @@ There is **no ORM and no migration runner**. SQL is written out by hand in the r
    takes a repository asks for the interface; registered this way, the postgres class cannot be
    resolved by its own name.
 
-7. **Document it in `dashboard/public/rest-openapi.yaml`** before calling the work done — a new
+8. **Document it in `dashboard/public/rest-openapi.yaml`** before calling the work done — a new
    tag, paths and schema, with real captured responses as examples. Follow the `taskavista-rest-api-docs` skill. An endpoint
    that ships undocumented is not finished.
 
@@ -191,7 +205,7 @@ These all cost time on the projects resource. None of them produce an obvious er
   reach the database. **Draw the boundary at the controller: interface methods `@safe`, controller
   overrides `@trusted`.** `@trusted` satisfies the requirement and is covariant with the
   interface. Marking the repository `@safe` does not work — do not try.
-- **PODO constructors must be `@safe`** or deserialization fails inside `@safe` vibe code.
+- **View model constructors must be `@safe`** or deserialization fails inside `@safe` vibe code.
   Attribute inference does not apply to ordinary (non-template) functions, so write it out.
 - **Every wire field a client may omit needs `@optional`** (`vibe.data.serialization`). Without
   it a `POST {"name":"x"}` is rejected with *"Missing non-optional field 'id'"*. `id` is always

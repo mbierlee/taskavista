@@ -397,17 +397,18 @@ interface ITaskRepository
     /**
      * Inserts a task, with its creation in its notes.
      *
-     * Fills in the id the database assigned it, and its position when it carries none.
+     * Fills in the id and timestamps the database assigned it, and its position when it carries
+     * none. Its agent status is written with it; it gets no agent, which only the task scheduler
+     * assigns.
      *
      * Params:
      *   task = The task to insert.
-     *   agentStatus = How far the agents got with it, or null when they are not to work on it.
      *
      * Returns: The same instance, so it can be used as an expression.
      *
      * Throws: `PositionConflict` when another task of the lane is at its position.
      */
-    Task add(Task task, Nullable!AgentStatus agentStatus);
+    Task add(Task task);
 
     /**
      * Writes a task back over the row with its id, lane included.

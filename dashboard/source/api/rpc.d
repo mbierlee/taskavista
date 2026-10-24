@@ -14,11 +14,13 @@ import std.string : strip;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
-import agent : AgentDrafter, IAgentChat, ProjectDrafter;
+import agent : AgentDrafter, ProjectDrafter;
 import api.errors : toHTTPError;
-import model : Lane, Project, TaskAddRule;
-import service : AgentService, ProjectService, TaskService;
+import model : TaskAddRule;
+import result : Result;
+import service : AgentService, IAgentError, ProjectService, TaskService;
 import servicemodel : ProjectWithLanes;
+import viewmodel : LaneViewModel, ProjectViewModel;
 
 /**
  * The outcome of a move: the destination lane's order afterwards, which is
@@ -200,17 +202,15 @@ class RpcController : RpcApi
     private ProjectService projects;
     private TaskService tasks;
     private AgentService agents;
-    private IAgentChat chat;
     private AgentDrafter drafter;
     private ProjectDrafter projectDrafter;
 
-    this(ProjectService projects, TaskService tasks, AgentService agents, IAgentChat chat, AgentDrafter drafter,
+    this(ProjectService projects, TaskService tasks, AgentService agents, AgentDrafter drafter,
         ProjectDrafter projectDrafter)
     {
         this.projects = projects;
         this.tasks = tasks;
         this.agents = agents;
-        this.chat = chat;
         this.drafter = drafter;
         this.projectDrafter = projectDrafter;
     }
@@ -254,14 +254,14 @@ class RpcController : RpcApi
         enforceHTTP(lanes.filter!(lane => !lane.id.isNull).empty, HTTPStatus.badRequest,
             "A new project's lanes have no ids yet.");
 
-        auto project = new Project(name, null, description, taskAddRule, managedByAi);
+        auto project = new ProjectViewModel(name, null, description, taskAddRule, managedByAi);
         auto created = projects.save(new ProjectWithLanes(project, toLanes(lanes)));
         if (created.isFailure)
         {
             throw toHTTPError(created.error, project);
         }
 
-        return CreateProjectResult(project.slug);
+        return CreateProjectResult(created.value.project.slug);
     }
 
     override SaveProjectSettingsResult saveProjectSettings(UUID projectId, string name,
@@ -281,7 +281,7 @@ class RpcController : RpcApi
         // The slug is made again only on a rename, so a save that leaves the
         // name alone never moves the project to a new URL.
         const renamed = name != stored.value.name;
-        auto project = new Project(projectId, name, renamed ? null : stored.value.slug, description,
+        auto project = new ProjectViewModel(projectId, name, renamed ? null : stored.value.slug, description,
             taskAddRule, managedByAi);
         auto saved = projects.save(new ProjectWithLanes(project, toLanes(lanes)));
         if (saved.isFailure)
@@ -289,7 +289,7 @@ class RpcController : RpcApi
             throw toHTTPError(saved.error, project);
         }
 
-        return SaveProjectSettingsResult(project.slug);
+        return SaveProjectSettingsResult(saved.value.project.slug);
     }
 
     override SetAiPausedResult setAiPaused(UUID projectId, bool paused) @trusted
@@ -324,47 +324,31 @@ class RpcController : RpcApi
     {
         enforceHTTP(message.strip.length > 0, HTTPStatus.badRequest, "A message cannot be blank.");
 
-        auto agent = agents.get(agentId);
-        if (agent.isFailure)
-        {
-            throw toHTTPError(agent.error, null);
-        }
-
-        // A chat whose project has since been deleted goes on without it.
-        Nullable!Project project;
-        if (!projectId.isNull)
-        {
-            auto found = projects.get(projectId.get);
-            if (found.isFailure && sessionId.isNull)
-            {
-                throw toHTTPError(found.error, null);
-            }
-
-            if (!found.isFailure)
-            {
-                project = found.value;
-            }
-        }
-
-        // What is left is the agent failing to answer. A session the agent does
-        // not have is among it, since only its runtime knows what sessions it has.
+        // What throws is the agent failing to answer. A session the agent does not have is among
+        // it, since only its runtime knows what sessions it has.
+        string session = sessionId.isNull ? null : sessionId.get;
+        Result!(string, IAgentError) reply;
         try
         {
-            string session = sessionId.isNull ? null : sessionId.get;
-            auto reply = chat.send(agent.value, project, message, session);
-
-            return SendChatMessageResult(reply, session);
+            reply = agents.chat(agentId, projectId, message, session);
         }
         catch (Exception exception)
         {
             throw new HTTPStatusException(HTTPStatus.badGateway,
                 "The agent could not answer: " ~ exception.msg);
         }
+
+        if (reply.isFailure)
+        {
+            throw toHTTPError(reply.error, null);
+        }
+
+        return SendChatMessageResult(reply.value, session);
     }
 
     override EndChatResult endChat(UUID agentId, UUID sessionId) @trusted
     {
-        chat.end(agentId, sessionId);
+        agents.endChat(agentId, sessionId);
 
         return EndChatResult();
     }
@@ -388,12 +372,12 @@ class RpcController : RpcApi
  * The drafts as lanes, each at the position of its place in the list. The service checks them as
  * it checks any lane.
  */
-private Lane[] toLanes(LaneDraft[] drafts)
+private LaneViewModel[] toLanes(LaneDraft[] drafts)
 {
-    Lane[] lanes;
+    LaneViewModel[] lanes;
     foreach (index, draft; drafts.enumerate)
     {
-        lanes ~= new Lane(draft.id.isNull ? UUID.init : draft.id.get, UUID.init, draft.name,
+        lanes ~= new LaneViewModel(draft.id.isNull ? UUID.init : draft.id.get, UUID.init, draft.name,
             cast(int) index, draft.color, draft.marksDone);
     }
 

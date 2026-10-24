@@ -1,7 +1,5 @@
 module model;
 
-import vibe.data.serialization : optional;
-
 import std.conv : text;
 import std.datetime.systime : SysTime;
 import std.traits : EnumMembers;
@@ -73,39 +71,22 @@ AgentStatus toAgentStatus(string value) @safe
 /// A row of the projects table.
 class Project
 {
-    /**
-     * Assigned by the database on insert, so UUID.init until the project is
-     * stored. Optional on the wire: a client creating a project has no id yet.
-     */
-    @optional UUID id;
+    /// Assigned by the database on insert, so UUID.init until the project is stored.
+    UUID id;
     string name;
-    /**
-     * The project's name in its URL. Optional on the wire: the service derives
-     * one from the name when a client leaves it out.
-     */
-    @optional string slug;
-    /**
-     * What the project is about, and directions for its AI agents. Empty for
-     * none.
-     */
-    @optional string description;
-    @optional TaskAddRule taskAddRule = TaskAddRule.firstLane;
+    /// The project's name in its URL.
+    string slug;
+    /// What the project is about, and directions for its AI agents. Empty for none.
+    string description;
+    TaskAddRule taskAddRule = TaskAddRule.firstLane;
     /// Whether AI agents may add, edit and move the project's tasks.
-    @optional bool managedByAi;
+    bool managedByAi;
     /**
-     * Whether the project's AI agents are paused: always, for a project not
-     * managed by AI. Read-only on the REST API, which ignores it in a body: it
-     * follows managedByAi when that changes, and the setAiPaused RPC call
-     * changes it otherwise.
+     * Whether the project's AI agents are paused: always, for a project not managed by AI. It
+     * follows managedByAi when that changes, and is otherwise written only by
+     * `IProjectRepository.setAiPaused`.
      */
-    @optional bool aiPaused;
-    /**
-     * Whether the project has something the web UI can open, in a tab of its
-     * own: for now, an index.html in its working directory, served under
-     * /working-dirs/. Not a column but looked up on a read of the project.
-     * Read-only on the REST API, which ignores it in a body.
-     */
-    @optional bool canBeOpened;
+    bool aiPaused;
 
     this() @safe
     {
@@ -138,29 +119,19 @@ class Project
 /// A row of the lanes table.
 class Lane
 {
-    /**
-     * Assigned by the database on insert, so UUID.init until the lane is
-     * stored. Optional on the wire: a client creating a lane has no id yet.
-     */
-    @optional UUID id;
-    /**
-     * Optional on the wire: the path says which project a lane is created in,
-     * and a lane never moves to another project.
-     */
-    @optional UUID projectId;
+    /// Assigned by the database on insert, so UUID.init until the lane is stored.
+    UUID id;
+    UUID projectId;
     string name;
     /**
-     * Where the lane sits on its board, counted from 0. Optional on the wire:
-     * the service puts a lane that has none after the project's last lane.
+     * Where the lane sits on its board, counted from 0. Null for a lane to be placed after the
+     * project's last lane, which the service does before it is written.
      */
-    @optional Nullable!int position;
+    Nullable!int position;
     /// A web colour, "#" and six hex digits.
     string color;
-    /**
-     * Whether the tasks in this lane count as done. Optional on the wire, and
-     * false when left out.
-     */
-    @optional bool marksDone;
+    /// Whether the tasks in this lane count as done.
+    bool marksDone;
 
     this() @safe
     {
@@ -180,33 +151,27 @@ class Lane
 /// A row of the tasks table.
 class Task
 {
-    /**
-     * Assigned by the database on insert, so UUID.init until the task is
-     * stored. Optional on the wire: a client creating a task has no id yet.
-     */
-    @optional UUID id;
-    /**
-     * Optional on the wire: the path says which lane a task is created in, and
-     * a task sent without one to replace it stays in the lane it is in.
-     */
-    @optional UUID laneId;
+    /// Assigned by the database on insert, so UUID.init until the task is stored.
+    UUID id;
+    UUID laneId;
     string description;
     /**
-     * Where the task sits in its lane, counted from 0. Optional on the wire:
-     * the service puts a task that has none after the lane's last task.
+     * Where the task sits in its lane, counted from 0. Null for a task to be placed at the
+     * bottom of its lane, which the repository does as it writes it.
      */
-    @optional Nullable!int position;
+    Nullable!int position;
+    /// Assigned by the database on insert, like the id.
+    SysTime createdAt;
+    /// Set by the repository on every write to the task's row, but for a shift to make room.
+    SysTime updatedAt;
+    /// The agent the task scheduler assigned the task to, or null when it has none.
+    Nullable!UUID assignedAiAgentId;
     /**
-     * The AI agent at work on the task now: its own agent while it works on it, and the task
-     * scheduler agent while it schedules it. Null when none is. Set by the server, and ignored
-     * in a body.
+     * How far the agents got with the task, or null for one they are not to work on: one added
+     * while its project was not managed by AI. Written on insert, and afterwards only through
+     * the repository's agent status methods.
      */
-    @optional Nullable!UUID workingAgentId;
-    /**
-     * Whether the task was handed to the AI agents: false for one added while its project was
-     * not managed by AI, until it is rescheduled. Set by the server, and ignored in a body.
-     */
-    @optional bool handedToAgents;
+    Nullable!AgentStatus agentStatus;
 
     this() @safe
     {
@@ -219,12 +184,23 @@ class Task
         this.description = description;
         this.position = position;
     }
+
+    this(UUID id, UUID laneId, string description, int position, SysTime createdAt, SysTime updatedAt,
+        Nullable!UUID assignedAiAgentId, Nullable!AgentStatus agentStatus) @safe
+    {
+        this(id, laneId, description, position);
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+        this.assignedAiAgentId = assignedAiAgentId;
+        this.agentStatus = agentStatus;
+    }
 }
 
 /// A row of the task_notes table: a note on something that happened to a task.
 class TaskNote
 {
     UUID id;
+    UUID taskId;
     SysTime insertedAt;
     /**
      * What happened, in words, with the names of the lanes and agents involved
@@ -241,9 +217,10 @@ class TaskNote
     {
     }
 
-    this(UUID id, SysTime insertedAt, string note, Nullable!string laneColor) @safe
+    this(UUID id, UUID taskId, SysTime insertedAt, string note, Nullable!string laneColor) @safe
     {
         this.id = id;
+        this.taskId = taskId;
         this.insertedAt = insertedAt;
         this.note = note;
         this.laneColor = laneColor;
@@ -330,40 +307,34 @@ class Model
     }
 }
 
-/// A row of the agents table.
+/// A row of the agents table, with its rows in agent_labels.
 class Agent
 {
-    /**
-     * Assigned by the database on insert, so UUID.init until the agent is
-     * stored. Optional on the wire: a client creating an agent has no id yet.
-     */
-    @optional UUID id;
+    /// Assigned by the database on insert, so UUID.init until the agent is stored.
+    UUID id;
     string name;
     /// The id of the runtime the agent runs in.
     string runtime;
     /// The id of the model the agent uses, one its runtime offers.
     string model;
     /// The id of the effort level the agent works at, one its model takes.
-    @optional string effort = defaultEffort;
+    string effort = defaultEffort;
     /// Whether the agent plans and assigns tasks to the other agents.
-    @optional bool taskScheduler;
+    bool taskScheduler;
     /**
      * Whether the agent can be given tasks, and, for a task scheduler, whether it schedules them.
-     * Written only by `IAgentRepository.setEnabled`: an add or an update reads it back instead,
-     * so a client saving an agent cannot change it.
+     * Written only by `IAgentRepository.setEnabled`: an add or an update reads it back instead.
      */
-    @optional bool enabled = true;
+    bool enabled = true;
     /// The agent's own instructions, added to its system prompt. Empty for none.
-    @optional string instructions;
+    string instructions;
     /**
      * How many tasks the agent works on at once, or, for a task scheduler, how many tasks it
-     * schedules at once. Null for no limit; above 0 otherwise. Not optional on the wire, since
-     * vibe takes a null for an optional field as left out, which would leave no way to send
-     * "no limit".
+     * schedules at once. Null for no limit; above 0 otherwise.
      */
     Nullable!int maxParallelTasks = defaultMaxParallelTasks;
     /// The agent's rows in agent_labels, lowercase, in alphabetical order when read.
-    @optional string[] labels;
+    string[] labels;
 
     this() @safe
     {

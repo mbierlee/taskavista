@@ -6,25 +6,26 @@ import vibe.http.status : HTTPStatus;
 
 import std.uuid : UUID;
 
-import model : Agent, Default, Lane, Model, Project, Runtime, Task, TaskNote;
 import api.errors : toHTTPError;
 import service : AgentService, DefaultService, LaneService, ProjectService, RuntimeService, TaskService;
+import viewmodel : AgentViewModel, DefaultViewModel, LaneViewModel, ModelViewModel, ProjectViewModel, RuntimeViewModel,
+    TaskNoteViewModel, TaskViewModel;
 
 /// The projects REST API.
 @path("/api/rest/v1")
 interface ProjectApi
 {
     @method(HTTPMethod.GET) @path("projects")
-    Project[] listProjects() @safe;
+    ProjectViewModel[] listProjects() @safe;
 
     @method(HTTPMethod.GET) @path("projects/:id")
-    Project readProject(UUID _id) @safe;
+    ProjectViewModel readProject(UUID _id) @safe;
 
     @method(HTTPMethod.POST) @path("projects")
-    Project createProject(@viaBody() Project project)@safe;
+    ProjectViewModel createProject(@viaBody() ProjectViewModel project)@safe;
 
     @method(HTTPMethod.PUT) @path("projects/:id")
-    Project replaceProject(UUID _id, @viaBody() Project project)@safe;
+    ProjectViewModel replaceProject(UUID _id, @viaBody() ProjectViewModel project)@safe;
 
     @method(HTTPMethod.DELETE) @path("projects/:id")
     void deleteProject(UUID _id) @safe;
@@ -40,12 +41,12 @@ class ProjectController : ProjectApi
         this.service = service;
     }
 
-    override Project[] listProjects() @trusted
+    override ProjectViewModel[] listProjects() @trusted
     {
         return service.getAll();
     }
 
-    override Project readProject(UUID _id) @trusted
+    override ProjectViewModel readProject(UUID _id) @trusted
     {
         auto project = service.get(_id);
         enforceHTTP(project.isSuccessful, HTTPStatus.notFound, "No project has that id.");
@@ -53,7 +54,7 @@ class ProjectController : ProjectApi
         return project.value;
     }
 
-    override Project createProject(Project project) @trusted
+    override ProjectViewModel createProject(ProjectViewModel project) @trusted
     {
         enforceBody(project);
         // A client cannot pick the id; one in the body is ignored, or the save would be an update.
@@ -68,7 +69,7 @@ class ProjectController : ProjectApi
         return created.value;
     }
 
-    override Project replaceProject(UUID _id, Project project) @trusted
+    override ProjectViewModel replaceProject(UUID _id, ProjectViewModel project) @trusted
     {
         // The service would read the nil UUID as a new project to create.
         enforceHTTP(_id != UUID.init, HTTPStatus.notFound, "A project id is required.");
@@ -106,16 +107,16 @@ private void enforceBody(T)(T received)
 interface LaneApi
 {
     @method(HTTPMethod.GET) @path("projects/:projectId/lanes")
-    Lane[] listLanes(UUID _projectId) @safe;
+    LaneViewModel[] listLanes(UUID _projectId) @safe;
 
     @method(HTTPMethod.GET) @path("lanes/:id")
-    Lane readLane(UUID _id) @safe;
+    LaneViewModel readLane(UUID _id) @safe;
 
     @method(HTTPMethod.POST) @path("projects/:projectId/lanes")
-    Lane createLane(UUID _projectId, @viaBody() Lane lane)@safe;
+    LaneViewModel createLane(UUID _projectId, @viaBody() LaneViewModel lane)@safe;
 
     @method(HTTPMethod.PUT) @path("lanes/:id")
-    Lane replaceLane(UUID _id, @viaBody() Lane lane)@safe;
+    LaneViewModel replaceLane(UUID _id, @viaBody() LaneViewModel lane)@safe;
 
     @method(HTTPMethod.DELETE) @path("lanes/:id")
     void deleteLane(UUID _id) @safe;
@@ -131,7 +132,7 @@ class LaneController : LaneApi
         this.service = service;
     }
 
-    override Lane[] listLanes(UUID _projectId) @trusted
+    override LaneViewModel[] listLanes(UUID _projectId) @trusted
     {
         auto lanes = service.getOfProject(_projectId);
         if (lanes.isFailure)
@@ -142,7 +143,7 @@ class LaneController : LaneApi
         return lanes.value;
     }
 
-    override Lane readLane(UUID _id) @trusted
+    override LaneViewModel readLane(UUID _id) @trusted
     {
         auto lane = service.get(_id);
         if (lane.isFailure)
@@ -153,7 +154,7 @@ class LaneController : LaneApi
         return lane.value;
     }
 
-    override Lane createLane(UUID _projectId, Lane lane) @trusted
+    override LaneViewModel createLane(UUID _projectId, LaneViewModel lane) @trusted
     {
         enforceBody(lane);
         // The path is what says which project the lane goes in. A client cannot pick the id; one
@@ -170,7 +171,7 @@ class LaneController : LaneApi
         return created.value;
     }
 
-    override Lane replaceLane(UUID _id, Lane lane) @trusted
+    override LaneViewModel replaceLane(UUID _id, LaneViewModel lane) @trusted
     {
         // The service would read the nil UUID as a new lane to create.
         enforceHTTP(_id != UUID.init, HTTPStatus.notFound, "A lane id is required.");
@@ -207,22 +208,22 @@ class LaneController : LaneApi
 interface TaskApi
 {
     @method(HTTPMethod.GET) @path("projects/:projectId/tasks")
-    Task[] listProjectTasks(UUID _projectId) @safe;
+    TaskViewModel[] listProjectTasks(UUID _projectId) @safe;
 
     @method(HTTPMethod.GET) @path("lanes/:laneId/tasks")
-    Task[] listLaneTasks(UUID _laneId) @safe;
+    TaskViewModel[] listLaneTasks(UUID _laneId) @safe;
 
     @method(HTTPMethod.GET) @path("tasks/:id")
-    Task readTask(UUID _id) @safe;
+    TaskViewModel readTask(UUID _id) @safe;
 
     @method(HTTPMethod.GET) @path("tasks/:id/notes")
-    TaskNote[] listTaskNotes(UUID _id) @safe;
+    TaskNoteViewModel[] listTaskNotes(UUID _id) @safe;
 
     @method(HTTPMethod.POST) @path("lanes/:laneId/tasks")
-    Task createTask(UUID _laneId, @viaBody() Task task)@safe;
+    TaskViewModel createTask(UUID _laneId, @viaBody() TaskViewModel task)@safe;
 
     @method(HTTPMethod.PUT) @path("tasks/:id")
-    Task replaceTask(UUID _id, @viaBody() Task task)@safe;
+    TaskViewModel replaceTask(UUID _id, @viaBody() TaskViewModel task)@safe;
 
     @method(HTTPMethod.DELETE) @path("tasks/:id")
     void deleteTask(UUID _id) @safe;
@@ -238,7 +239,7 @@ class TaskController : TaskApi
         this.service = service;
     }
 
-    override Task[] listProjectTasks(UUID _projectId) @trusted
+    override TaskViewModel[] listProjectTasks(UUID _projectId) @trusted
     {
         auto tasks = service.getOfProject(_projectId);
         if (tasks.isFailure)
@@ -249,7 +250,7 @@ class TaskController : TaskApi
         return tasks.value;
     }
 
-    override Task[] listLaneTasks(UUID _laneId) @trusted
+    override TaskViewModel[] listLaneTasks(UUID _laneId) @trusted
     {
         auto tasks = service.getOfLane(_laneId);
         if (tasks.isFailure)
@@ -260,7 +261,7 @@ class TaskController : TaskApi
         return tasks.value;
     }
 
-    override Task readTask(UUID _id) @trusted
+    override TaskViewModel readTask(UUID _id) @trusted
     {
         auto task = service.get(_id);
         if (task.isFailure)
@@ -271,7 +272,7 @@ class TaskController : TaskApi
         return task.value;
     }
 
-    override TaskNote[] listTaskNotes(UUID _id) @trusted
+    override TaskNoteViewModel[] listTaskNotes(UUID _id) @trusted
     {
         auto notes = service.getNotes(_id);
         if (notes.isFailure)
@@ -282,7 +283,7 @@ class TaskController : TaskApi
         return notes.value;
     }
 
-    override Task createTask(UUID _laneId, Task task) @trusted
+    override TaskViewModel createTask(UUID _laneId, TaskViewModel task) @trusted
     {
         enforceBody(task);
         // The path is what says which lane the task goes in. A client cannot pick the id; one in
@@ -299,7 +300,7 @@ class TaskController : TaskApi
         return created.value;
     }
 
-    override Task replaceTask(UUID _id, Task task) @trusted
+    override TaskViewModel replaceTask(UUID _id, TaskViewModel task) @trusted
     {
         // The service would read the nil UUID as a new task to create.
         enforceHTTP(_id != UUID.init, HTTPStatus.notFound, "A task id is required.");
@@ -334,10 +335,10 @@ class TaskController : TaskApi
 interface RuntimeApi
 {
     @method(HTTPMethod.GET) @path("runtimes")
-    Runtime[] listRuntimes() @safe;
+    RuntimeViewModel[] listRuntimes() @safe;
 
     @method(HTTPMethod.GET) @path("models")
-    Model[] listModels() @safe;
+    ModelViewModel[] listModels() @safe;
 }
 
 /// Serves the runtimes and models API out of the service.
@@ -350,12 +351,12 @@ class RuntimeController : RuntimeApi
         this.service = service;
     }
 
-    override Runtime[] listRuntimes() @trusted
+    override RuntimeViewModel[] listRuntimes() @trusted
     {
         return service.getAll();
     }
 
-    override Model[] listModels() @trusted
+    override ModelViewModel[] listModels() @trusted
     {
         return service.getModels();
     }
@@ -366,16 +367,16 @@ class RuntimeController : RuntimeApi
 interface AgentApi
 {
     @method(HTTPMethod.GET) @path("agents")
-    Agent[] listAgents() @safe;
+    AgentViewModel[] listAgents() @safe;
 
     @method(HTTPMethod.GET) @path("agents/:id")
-    Agent readAgent(UUID _id) @safe;
+    AgentViewModel readAgent(UUID _id) @safe;
 
     @method(HTTPMethod.POST) @path("agents")
-    Agent createAgent(@viaBody() Agent agent)@safe;
+    AgentViewModel createAgent(@viaBody() AgentViewModel agent)@safe;
 
     @method(HTTPMethod.PUT) @path("agents/:id")
-    Agent replaceAgent(UUID _id, @viaBody() Agent agent)@safe;
+    AgentViewModel replaceAgent(UUID _id, @viaBody() AgentViewModel agent)@safe;
 
     @method(HTTPMethod.DELETE) @path("agents/:id")
     void deleteAgent(UUID _id) @safe;
@@ -391,12 +392,12 @@ class AgentController : AgentApi
         this.service = service;
     }
 
-    override Agent[] listAgents() @trusted
+    override AgentViewModel[] listAgents() @trusted
     {
         return service.getAll();
     }
 
-    override Agent readAgent(UUID _id) @trusted
+    override AgentViewModel readAgent(UUID _id) @trusted
     {
         auto agent = service.get(_id);
         if (agent.isFailure)
@@ -407,7 +408,7 @@ class AgentController : AgentApi
         return agent.value;
     }
 
-    override Agent createAgent(Agent agent) @trusted
+    override AgentViewModel createAgent(AgentViewModel agent) @trusted
     {
         enforceBody(agent);
         // A client cannot pick the id; one in the body is ignored, or the save would be an update.
@@ -422,7 +423,7 @@ class AgentController : AgentApi
         return created.value;
     }
 
-    override Agent replaceAgent(UUID _id, Agent agent) @trusted
+    override AgentViewModel replaceAgent(UUID _id, AgentViewModel agent) @trusted
     {
         // The service would read the nil UUID as a new agent to create.
         enforceHTTP(_id != UUID.init, HTTPStatus.notFound, "An agent id is required.");
@@ -458,7 +459,7 @@ class AgentController : AgentApi
 interface DefaultApi
 {
     @method(HTTPMethod.GET) @path("defaults")
-    Default[] listDefaults() @safe;
+    DefaultViewModel[] listDefaults() @safe;
 }
 
 /// Serves the defaults API out of the service.
@@ -471,7 +472,7 @@ class DefaultController : DefaultApi
         this.service = service;
     }
 
-    override Default[] listDefaults() @trusted
+    override DefaultViewModel[] listDefaults() @trusted
     {
         return service.getAll();
     }

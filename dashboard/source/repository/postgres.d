@@ -670,7 +670,7 @@ class PostgresTaskRepository : ITaskRepository
     TaskNote[] notes(UUID taskId)
     {
         QueryParams query;
-        query.sqlCommand = "select id, inserted_at, note, lane_color from task_notes"
+        query.sqlCommand = "select id, task_id, inserted_at, note, lane_color from task_notes"
             ~ " where task_id = $1 order by inserted_at desc";
         query.argsVariadic(taskId);
 
@@ -686,6 +686,7 @@ class PostgresTaskRepository : ITaskRepository
                 auto color = row["lane_color"];
                 entries ~= new TaskNote(
                     row["id"].as!UUID,
+                    row["task_id"].as!UUID,
                     row["inserted_at"].as!SysTime,
                     row["note"].as!string,
                     color.isNull ? Nullable!string.init : color.as!string.nullable
@@ -736,7 +737,7 @@ class PostgresTaskRepository : ITaskRepository
         });
     }
 
-    Task add(Task task, Nullable!AgentStatus agentStatus)
+    Task add(Task task)
     {
         connections.transaction((scope connection) {
             connection.lockLane(task.laneId);
@@ -744,11 +745,15 @@ class PostgresTaskRepository : ITaskRepository
 
             QueryParams insert;
             insert.sqlCommand = "insert into tasks (lane_id, description, position, agent_status)"
-                ~ " values ($1, $2, $3, $4) returning id";
-            auto status = agentStatus.isNull ? Nullable!string.init : (cast(string) agentStatus.get).nullable;
+                ~ " values ($1, $2, $3, $4) returning id, created_at, updated_at";
+            auto status = task.agentStatus.isNull ? Nullable!string.init : (cast(string) task.agentStatus.get)
+                .nullable;
             insert.argsVariadic(task.laneId, task.description, task.position.get, status);
-            task.id = connection.execParams(insert)[0]["id"].as!UUID;
-            task.handedToAgents = !agentStatus.isNull;
+            auto row = connection.execParams(insert)[0];
+            task.id = row["id"].as!UUID;
+            task.createdAt = row["created_at"].as!SysTime;
+            task.updatedAt = row["updated_at"].as!SysTime;
+            task.assignedAiAgentId = Nullable!UUID.init;
 
             QueryParams created;
             created.sqlCommand = recordCreated;
@@ -1149,31 +1154,24 @@ private Task[] toTasks(Answer answer)
     return tasks;
 }
 
-/**
- * The columns a task is read from, as `t`, with the agent at work on it: its own agent while it
- * is executing, and while it is being scheduled the first enabled task scheduler agent in the
- * order of `IAgentRepository.all`, as the scheduler uses.
- */
-private enum taskColumns = "t.id, t.lane_id, t.description, t.position, case t.agent_status"
-    ~ " when 'executing' then t.assigned_ai_agent_id"
-    ~ " when 'scheduling' then (select a.id from agents a where a.task_scheduler and a.enabled order by a.name limit 1)"
-    ~ " end as working_agent_id, t.agent_status is not null as handed_to_agents";
+/// The columns a task is read from, as `t`.
+private enum taskColumns = "t.id, t.lane_id, t.description, t.position, t.created_at, t.updated_at,"
+    ~ " t.assigned_ai_agent_id, t.agent_status";
 
 private Task toTask(immutable Row row)
 {
-    auto task = new Task(
+    auto agentId = row["assigned_ai_agent_id"];
+    auto status = row["agent_status"];
+    return new Task(
         row["id"].as!UUID,
         row["lane_id"].as!UUID,
         row["description"].as!string,
-        row["position"].as!int
+        row["position"].as!int,
+        row["created_at"].as!SysTime,
+        row["updated_at"].as!SysTime,
+        agentId.isNull ? Nullable!UUID.init : agentId.as!UUID.nullable,
+        status.isNull ? Nullable!AgentStatus.init : status.as!string.toAgentStatus.nullable
     );
-    if (!row["working_agent_id"].isNull)
-    {
-        task.workingAgentId = row["working_agent_id"].as!UUID;
-    }
-    task.handedToAgents = row["handed_to_agents"].as!bool;
-
-    return task;
 }
 
 /// IRuntimeRepository over postgres.

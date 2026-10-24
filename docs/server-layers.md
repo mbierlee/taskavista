@@ -121,11 +121,29 @@ Each service has a pair of private helpers, such as `taskSuccess` and `taskFailu
 a result of the service's error interface. `failure(new TaskNotFoundError)` on its own would make a
 result of the error's own class, which does not convert to the interface the method returns.
 
+### Models and view models
+
+A repository reads and writes **models**, in `model.d`: a model is a row of its table, with every
+column of it, whether the APIs expose it or not, and nothing else. The controllers send and take
+**view models**, in `viewmodel.d`: a view model is a resource as the web UI and the agents need
+it, which may leave out a column (`Task.createdAt`), work a field out from several columns
+(`TaskViewModel.workingAgentId`, from the task's agent status and agent and the task scheduler),
+or from outside the database (`ProjectViewModel.canBeOpened`, from the working directory). The two
+do not inherit from each other, and a field both have is declared in both.
+
+The services map between them, so a controller never sees a model and a repository never sees a
+view model. Their public methods take and return view models; inside, they work on models. The
+mappings are `toViewModel` and `toModel` in `service.d`, or a method of the service when the
+mapping needs a repository or the working directories, as `TaskService.views` and
+`ProjectService.view` do. `toModel` copies only what a client may set, and a write answers with
+the row as stored, mapped back, never with the body it was sent: a field the server sets, such as
+`aiPaused` or `handedToAgents`, always shows what is stored.
+
 ### Service models
 
 A service may read or write several resources together. The types for that are in
 `servicemodel.d`, such as `ProjectWithLanes`, which `ProjectService.save` writes in one
-transaction.
+transaction. They are made of view models, since they come from a controller.
 
 ## Repositories
 

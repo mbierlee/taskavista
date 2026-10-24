@@ -11,9 +11,9 @@ import std.array : join, split;
 import std.conv : to;
 import std.format : format;
 import std.string : strip, stripRight;
+import std.typecons : Nullable;
 import std.uuid : UUIDParsingException;
 
-import model : Agent, Lane, Project, Task;
 import repository : Deadlock, ForeignKeyViolation, UniqueViolation;
 import service : AgentModelMissingError, AgentNameMissingError, AgentNameTakenError, AgentNotFoundError,
     AgentRuntimeMissingError, BeforeTaskNotFoundError, BeforeTaskNotInLaneError, EffortNotTakenError,
@@ -25,6 +25,7 @@ import service : AgentModelMissingError, AgentNameMissingError, AgentNameTakenEr
     SlugInvalidError, SlugReservedError, SlugTakenError, TaskBeforeItselfError, TaskBeingScheduledError,
     TaskBeingWorkedOnError, TaskDescriptionMissingError, TaskDoneError, TaskKeptMovingError, TaskLeavesProjectError,
     TaskNotFoundError, TaskPositionNegativeError, TaskPositionTakenError;
+import viewmodel : AgentViewModel, LaneViewModel, ProjectViewModel, TaskViewModel;
 
 /**
  * Answers a request under `/api/rest/v1` that no endpoint took, with a 404
@@ -216,7 +217,7 @@ private string between(string text, string open, string close) @safe
  * The HTTP error a project error is answered with. A clash of a slug the client never chose
  * is reported against the name, since the name is all a person in the UI can change.
  */
-HTTPStatusException toHTTPError(IProjectError error, Project project)
+HTTPStatusException toHTTPError(IProjectError error, ProjectViewModel project)
 {
     if (cast(ProjectNotManagedByAiError) error)
     {
@@ -319,6 +320,15 @@ private HTTPStatusException laneCheckError(Object error)
     return null;
 }
 
+/**
+ * The position sent, in words, or "its position" for none sent, when the service chose the one
+ * that was taken.
+ */
+private string positionOf(Nullable!int position)
+{
+    return position.isNull ? "its position" : format("position %s", position.get);
+}
+
 /// The 500 for an error a service added without an answer in its toHTTPError.
 private HTTPStatusException unanswered(E)(E error)
 {
@@ -333,7 +343,7 @@ private HTTPStatusException unanswered(E)(E error)
  *   error = The error.
  *   lane = The lane that was being written, or null for none.
  */
-HTTPStatusException toHTTPError(ILaneError error, Lane lane)
+HTTPStatusException toHTTPError(ILaneError error, LaneViewModel lane)
 {
     if (auto laneCheck = laneCheckError(cast(Object) error))
     {
@@ -353,7 +363,7 @@ HTTPStatusException toHTTPError(ILaneError error, Lane lane)
     if (cast(LanePositionTakenError) error)
     {
         return new HTTPStatusException(HTTPStatus.conflict,
-            format("Another lane of the project is already at position %s.", lane.position.get));
+            format("Another lane of the project is already at %s.", positionOf(lane.position)));
     }
 
     return unanswered(error);
@@ -366,7 +376,7 @@ HTTPStatusException toHTTPError(ILaneError error, Lane lane)
  *   error = The error.
  *   task = The task that was being written, or null for none.
  */
-HTTPStatusException toHTTPError(ITaskError error, Task task)
+HTTPStatusException toHTTPError(ITaskError error, TaskViewModel task)
 {
     if (cast(TaskDescriptionMissingError) error)
     {
@@ -421,7 +431,7 @@ HTTPStatusException toHTTPError(ITaskError error, Task task)
     if (cast(TaskPositionTakenError) error)
     {
         return new HTTPStatusException(HTTPStatus.conflict,
-            format("Another task of the lane is already at position %s.", task.position.get));
+            format("Another task of the lane is already at %s.", positionOf(task.position)));
     }
 
     if (cast(ProjectNotManagedByAiError) error)
@@ -463,7 +473,7 @@ HTTPStatusException toHTTPError(ITaskError error, Task task)
  *   error = The error.
  *   agent = The agent that was being written, or null for none.
  */
-HTTPStatusException toHTTPError(IAgentError error, Agent agent)
+HTTPStatusException toHTTPError(IAgentError error, AgentViewModel agent)
 {
     if (cast(AgentNameMissingError) error)
     {
@@ -495,6 +505,11 @@ HTTPStatusException toHTTPError(IAgentError error, Agent agent)
     {
         return new HTTPStatusException(HTTPStatus.badRequest,
             format("The label “%s” is given twice.", repeated.label));
+    }
+
+    if (cast(ProjectNotFoundError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.notFound, "No project has that id.");
     }
 
     if (cast(AgentNotFoundError) error)

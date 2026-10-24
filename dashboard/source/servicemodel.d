@@ -1,19 +1,19 @@
 module servicemodel;
 
-import model : Lane, Project;
+import viewmodel : LaneViewModel, ProjectViewModel;
 
 /// A project together with its lanes.
 class ProjectWithLanes
 {
-    Project project;
+    ProjectViewModel project;
     /// The project's lanes, in board order.
-    Lane[] lanes;
+    LaneViewModel[] lanes;
 
     this() @safe
     {
     }
 
-    this(Project project, Lane[] lanes) @safe
+    this(ProjectViewModel project, LaneViewModel[] lanes) @safe
     {
         this.project = project;
         this.lanes = lanes;
