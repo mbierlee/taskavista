@@ -1,6 +1,6 @@
 {
   "name": "taskavista-dashboard",
-  "description": "Taskavista Dashboard",
+  "description": "An agentic task board",
   "license": "MIT",
   "authors": ["Mike Bierlee"],
   "copyright": "Copyright © 2026, Mike Bierlee",
