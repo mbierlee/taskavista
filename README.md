@@ -1,6 +1,6 @@
 # Taskavista
 
-A project management system where tasks are worked on by AI agents.
+An agentic task board, where the tasks are worked on by AI agents.
 
 Version 0.1.0 (WIP)  
 Copyright 2026 Mike Bierlee  
