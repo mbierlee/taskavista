@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The values a tv-chip-list suggests for what is typed in it.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-chip-suggestions></tv-chip-suggestions>
 
    The values a tv-chip-list offers for what is being typed in it, each with

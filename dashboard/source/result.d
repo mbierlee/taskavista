@@ -1,3 +1,16 @@
+/**
+ * Taskavista
+ *
+ * A value or the error that stood in its way, returned where failing is expected.
+ *
+ * Authors:
+ *  Mike Bierlee, m.bierlee@lostmoment.com
+ * Copyright: 2026 Mike Bierlee
+ * License:
+ *  This software is licensed under the terms of the MIT license.
+ *  The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 module result;
 
 /**

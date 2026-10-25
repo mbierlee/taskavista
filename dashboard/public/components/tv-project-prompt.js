@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The screen where an agent drafts a project from a description.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-project-prompt first-run></tv-project-prompt>
 
    The screen where a person describes a project for an agent to suggest one.

@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The topbar's chip naming the current project, and its menu of projects.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-project-switcher></tv-project-switcher>
 
    The chip naming the current project, and the menu it opens. It takes no

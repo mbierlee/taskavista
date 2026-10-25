@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The styles every component shares.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* The styles every component shares, adopted into each shadow root by
    attachTemplate() in template.js: the reset, buttons, text fields, labels
    and the like. A component's markup uses these classes, and its own

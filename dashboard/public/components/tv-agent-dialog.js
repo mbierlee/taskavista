@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The dialog an AI agent is added or edited in.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-agent-dialog></tv-agent-dialog>
 
    The modal dialog an AI agent is added or edited in: its name, runtime,

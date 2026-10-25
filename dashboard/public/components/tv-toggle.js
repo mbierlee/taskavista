@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * An on/off switch.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-toggle checked>Label</tv-toggle>
 
    An on/off switch, labelled by its own content. `checked` is the state, as

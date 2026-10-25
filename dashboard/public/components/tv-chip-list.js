@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * A field holding a list of short texts, such as an agent's labels.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-chip-list label="Labels" placeholder="Add label…" lowercase></tv-chip-list>
 
    A field holding a list of short texts, each a tv-chip with a ✕ to remove

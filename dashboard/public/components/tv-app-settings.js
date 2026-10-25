@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The Taskavista settings screen, which lists the AI agents.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-app-settings></tv-app-settings>
 
    The Taskavista settings screen, for what belongs to the whole app rather

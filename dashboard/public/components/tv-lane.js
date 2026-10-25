@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * A lane on the board, with its cards and its "+ Add a task".
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-lane lane-id="todo" name="To do" color="#8fa6ff" can-add marks-done> ...cards... </tv-lane>
 
    A lane owns everything that is not board data: its heading, the task count,

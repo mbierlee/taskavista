@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The board, which holds the lanes and moves cards between them.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-board name="Website relaunch"> ...lanes... </tv-board>
 
    The board owns the one piece of behaviour no single lane can: dragging a

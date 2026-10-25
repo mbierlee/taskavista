@@ -1,9 +1,17 @@
 /**
- * The resources as the APIs send and receive them. A view model is what the web UI and the
- * agents need of a resource, which may differ from its rows: a field may be worked out from
- * several columns, or from something outside the database, and a column only the server needs is
- * left out. The services map between these and the models in `model.d`, which are the rows.
+ * Taskavista
+ *
+ * The resources as the APIs send and receive them, which may differ from their rows in
+ * `model.d`. The services map between the two.
+ *
+ * Authors:
+ *  Mike Bierlee, m.bierlee@lostmoment.com
+ * Copyright: 2026 Mike Bierlee
+ * License:
+ *  This software is licensed under the terms of the MIT license.
+ *  The full terms of the license can be found in the LICENSE.txt file.
  */
+
 module viewmodel;
 
 import vibe.data.serialization : optional;

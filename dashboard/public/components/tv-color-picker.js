@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The popover a lane's colour is chosen in.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-color-picker></tv-color-picker>
 
    The popover a lane's colour is chosen in. Custom colours keep to a fixed saturation and a

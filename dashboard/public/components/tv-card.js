@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * A task's card on the board.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-card task-id="t1" done selected working-agent-id="a1">Write the onboarding email</tv-card>
 
    The description is the element's own text content, so a card reads the same

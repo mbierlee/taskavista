@@ -1,3 +1,16 @@
+/**
+ * Taskavista
+ *
+ * Small checks and conversions shared by the other modules, such as making slugs.
+ *
+ * Authors:
+ *  Mike Bierlee, m.bierlee@lostmoment.com
+ * Copyright: 2026 Mike Bierlee
+ * License:
+ *  This software is licensed under the terms of the MIT license.
+ *  The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 module helpers;
 
 import std.algorithm : all, any, canFind, splitter;

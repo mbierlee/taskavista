@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * A text box that grows with its text and commits on Enter.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-text-box label="Description" placeholder="…"></tv-text-box>
 
    A text box that grows with its text, where Enter commits what was written

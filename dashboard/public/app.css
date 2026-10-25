@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The colour tokens and page styles.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 @import url("https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&display=swap");
 
 /* Tokens lifted from the "Taskavista Board Mockup" style tile (screen 5d).

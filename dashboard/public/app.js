@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The web UI's data and router, and the only writer to the store.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* Taskavista board prototype.
 
    The screen is assembled from custom elements (see components/), which own all

@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The screen for a URL no route matches.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-not-found path="/bla"></tv-not-found>
 
    The screen for a URL that no route matches. It raises no events: the link is an ordinary

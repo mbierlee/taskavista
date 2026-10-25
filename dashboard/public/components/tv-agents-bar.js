@@ -1,3 +1,13 @@
+/**
+ * Taskavista
+ *
+ * The strip over the board saying whether a project's AI agents are at work.
+ *
+ * Author: Mike Bierlee <m.bierlee@lostmoment.com>
+ * Copyright: 2026 Mike Bierlee
+ * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
+ */
+
 /* <tv-agents-bar></tv-agents-bar>
 
    The strip over the board of a project managed by AI agents, saying whether
