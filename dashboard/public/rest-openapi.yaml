@@ -29,9 +29,9 @@ info:
 
     | Status | When |
     |---|---|
-    | 400 | A body that is not a JSON object, blank or missing `name`, a project `name` with no letter or digit, a malformed `slug`, an unknown `taskAddRule`, a lane `position` below 0, a malformed `color` or a non-boolean `marksDone`, a missing lane field, a blank or missing task `description` or a task `position` below 0, a task moved to a lane of another project, a blank agent `name`, `runtime` or `model`, an unknown runtime or a model the runtime does not offer, a field of the wrong type, a malformed UUID |
+    | 400 | A body that is not a JSON object, blank or missing `name`, a project `name` with no letter or digit, a malformed `slug`, a lane `position` below 0, a malformed `color` or a non-boolean `marksDone`, `acceptsNewTasks` or `agentsPickUp`, a missing lane field, a blank or missing task `description` or a task `position` below 0, a task moved to a lane of another project, a blank agent `name`, `runtime` or `model`, an unknown runtime or a model the runtime does not offer, a field of the wrong type, a malformed UUID |
     | 404 | Nothing has that id — including the project or lane something is listed or created under, and the lane a task is moved to — or a path or method that is not a route |
-    | 409 | Another project already has that `slug`, or it is a reserved one, another lane of the project or task of the lane is at that `position`, a task created outside the first lane of a `"first_lane"` project, or another agent already has that `name` |
+    | 409 | Another project already has that `slug`, or it is a reserved one, another lane of the project or task of the lane is at that `position`, a task created in a lane without `acceptsNewTasks`, or another agent already has that `name` |
     | 503 | The request clashed with another one made at the same time; send it again after the `Retry-After` seconds |
     | 500 | An unexpected server error |
 
@@ -42,13 +42,13 @@ servers:
 tags:
   - name: Projects
     description: |
-      A project is the board itself: a name, a slug that identifies it readably, the rule that
-      decides where a new task lands, whether AI agents manage it, and whether those agents are
-      paused.
+      A project is the board itself: a name, a slug that identifies it readably, whether AI
+      agents manage it, which its lanes decide, and whether those agents are paused.
   - name: Lanes
     description: |
-      A lane is one column of a project's board: a name, where it sits, its colour, and whether
-      the tasks in it are done. Every lane belongs to exactly one project, and stays in it.
+      A lane is one column of a project's board: a name, where it sits, its colour, whether the
+      tasks in it are done, whether new tasks can be created in it, and whether the AI agents
+      work on its tasks. Every lane belongs to exactly one project, and stays in it.
 
       Gaps between positions are allowed — `1, 2, 5` is a good board — so a lane can be moved
       into a free position between two others with a single `PUT`. Two lanes cannot share a
@@ -66,10 +66,8 @@ tags:
       number, and makes room itself. No request here changes the position of a task it was not
       sent for.
 
-      **The project's `taskAddRule` decides which lanes a task can be created in.** With
-      `"first_lane"` only the project's first lane — the one with the lowest position — takes new
-      tasks; with `"any_lane"` every lane does. The rule is about creating tasks only: an existing
-      task can be moved to any lane of its project either way.
+      **A task can only be created in a lane with `acceptsNewTasks` set.** The flag is about
+      creating tasks only: an existing task can be moved to any lane of its project either way.
   - name: Runtimes and models
     description: |
       A runtime is what an AI agent runs in, such as Claude Code, and a model is one a runtime
@@ -104,18 +102,17 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Project" }
               example:
-                - { id: a63cf7e5-f494-4473-bea3-060505655da7, name: AI test, slug: ai-test, description: "A playground for the AI agents. Keep task descriptions short, and leave tasks in \"Done\" alone.", taskAddRule: first_lane, managedByAi: true, aiPaused: false, canBeOpened: false }
-                - { id: 382e9cfb-6543-4928-a3b9-0ef2f26b9e40, name: Q3 finance, slug: q3-finance, description: "", taskAddRule: any_lane, managedByAi: false, aiPaused: true, canBeOpened: false }
-                - { id: 6ed1b87c-bbf5-432f-b8a4-c5f72240486b, name: Локализация сайта, slug: локализация-сайта, description: Перевод сайта на русский, японский, арабский и греческий., taskAddRule: any_lane, managedByAi: false, aiPaused: true, canBeOpened: false }
+                - { id: 534980ce-e65b-4044-9d5a-1e5b769650c3, name: Office Cats Management Game, slug: office-cats-management-game, description: A video game about managing cats who work in an office., managedByAi: true, aiPaused: false, canBeOpened: false }
+                - { id: a7850cce-6484-4853-b6c2-0937bd69993b, name: Test, slug: test, description: "", managedByAi: false, aiPaused: true, canBeOpened: false }
         "500": { $ref: "#/components/responses/ServerError" }
     post:
       tags: [Projects]
       operationId: createProject
       summary: Create a project
       description: |
-        The body is a project without an id. `slug`, `description`, `taskAddRule` and
-        `managedByAi` may be left out. Whatever `aiPaused` the body has, the project's agents start running if it is
-        managed by AI, and paused otherwise. An `id` sent in the body is ignored.
+        The body is a project without an id. `slug` and `description` may be left out. A new
+        project has no lanes, so it is not managed by AI and its agents are paused, whatever
+        `managedByAi` and `aiPaused` the body has. An `id` sent in the body is ignored.
 
         A slug that was sent is named in a 409's message; when the slug was derived from the
         name, the message refers to the name instead, and names the project that already has it.
@@ -137,7 +134,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: 74013685-d221-4ca7-8176-4705fcd5eb19, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., taskAddRule: first_lane, managedByAi: false, aiPaused: true, canBeOpened: false }
+              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., managedByAi: false, aiPaused: true, canBeOpened: false }
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
@@ -173,7 +170,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: 382e9cfb-6543-4928-a3b9-0ef2f26b9e40, name: Q3 finance, slug: q3-finance, description: "", taskAddRule: any_lane, managedByAi: false, aiPaused: true, canBeOpened: false }
+              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., managedByAi: true, aiPaused: false, canBeOpened: false }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -186,9 +183,8 @@ paths:
         so **renaming a project without sending its slug changes its URL**; send the slug to keep
         it. Likewise a `description` left out empties the description.
 
-        `aiPaused` is never taken from the body. A `PUT` that turns `managedByAi` on starts the
-        project's agents, one that turns it off pauses them, and one that leaves it as it was
-        leaves them as they were. The response gives the value stored.
+        `managedByAi` and `aiPaused` are never taken from the body: a `PUT` leaves both as they
+        were. The response gives the values stored.
 
         The same 400s and 409 as `POST` apply, except that a project keeping its own slug is not
         a conflict.
@@ -197,14 +193,14 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/Project" }
-            example: { name: Kite launch v2, slug: kite, description: Launch the kite range in the spring catalogue., taskAddRule: first_lane, managedByAi: true, aiPaused: true }
+            example: { name: Zebra migration v2, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter. }
       responses:
         "200":
           description: The stored project.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: 54aab93b-6c56-4a62-8499-b841a70f0555, name: Kite launch v2, slug: kite, description: Launch the kite range in the spring catalogue., taskAddRule: first_lane, managedByAi: true, aiPaused: false, canBeOpened: false }
+              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration v2, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., managedByAi: true, aiPaused: false, canBeOpened: false }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
@@ -243,9 +239,9 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Lane" }
               example:
-                - { id: bda1077e-20ea-4e62-a50e-abc48b002aba, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: To do, position: 0, color: "#8fa6ff", marksDone: false }
-                - { id: 13733f13-827d-47e1-8551-0f8d6b965542, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: In progress, position: 1, color: "#e8b154", marksDone: false }
-                - { id: d16c8467-ed1e-4a20-8812-282debdcb5f3, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: Done, position: 3, color: "#5fd6ab", marksDone: true }
+                - { id: d72f1311-a716-44a3-a9f4-79498c2080b9, projectId: e9f156dd-9015-45b5-9451-0a9517c53e33, name: To do, position: 0, color: "#8fa6ff", marksDone: false, acceptsNewTasks: true, agentsPickUp: false }
+                - { id: 8ed9df54-c731-4aea-be54-50f74689bc54, projectId: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Feeding, position: 1, color: "#e8b154", marksDone: false, acceptsNewTasks: false, agentsPickUp: true }
+                - { id: b98da8a4-7aa2-4cc5-a4e8-54a156c9c261, projectId: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Moved, position: 2, color: "#5fd6ab", marksDone: true, acceptsNewTasks: false, agentsPickUp: false }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -256,13 +252,14 @@ paths:
       description: |
         The body is a lane without an id or project; the URL says which project it goes in. With
         no `position` the lane goes after the project's last lane; send one to put it somewhere
-        specific.
+        specific. A lane with `agentsPickUp` set makes a project that had none managed by AI, and
+        starts its agents.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/Lane" }
-            example: { name: Blocked, color: "#e06c75" }
+            example: { name: Feeding, color: "#e8b154", agentsPickUp: true }
       responses:
         "200":
           description: |
@@ -271,9 +268,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Lane" }
-              example: { id: 29e870d6-5371-4062-baee-7ec40a312d28, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: Blocked, position: 4, color: "#e06c75", marksDone: false }
+              example: { id: 8ed9df54-c731-4aea-be54-50f74689bc54, projectId: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Feeding, position: 1, color: "#e8b154", marksDone: false, acceptsNewTasks: false, agentsPickUp: true }
         "400":
-          description: A blank name, a negative position, a malformed colour, or a `marksDone` that is not a boolean.
+          description: |
+            A blank name, a negative position, a malformed colour, or a `marksDone`,
+            `acceptsNewTasks` or `agentsPickUp` that is not a boolean.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -295,7 +294,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Lane" }
-              example: { id: bda1077e-20ea-4e62-a50e-abc48b002aba, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: To do, position: 0, color: "#8fa6ff", marksDone: false }
+              example: { id: d72f1311-a716-44a3-a9f4-79498c2080b9, projectId: e9f156dd-9015-45b5-9451-0a9517c53e33, name: To do, position: 0, color: "#8fa6ff", marksDone: false, acceptsNewTasks: true, agentsPickUp: false }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -304,10 +303,15 @@ paths:
       operationId: replaceLane
       summary: Replace a lane
       description: |
-        A full replacement, not a patch — send `name`, `color`, `position` and `marksDone` every
-        time. **A `PUT` that leaves out `position` moves the lane to the end** (after every
-        *other* lane) rather than keeping it where it is, and **one that leaves out `marksDone`
-        sets it back to `false`**; send their current values to keep them.
+        A full replacement, not a patch — send `name`, `color`, `position`, `marksDone`,
+        `acceptsNewTasks` and `agentsPickUp` every time. **A `PUT` that leaves out `position`
+        moves the lane to the end** (after every *other* lane) rather than keeping it where it is,
+        and **one that leaves out a flag sets it back to `false`**; send their current values to
+        keep them.
+
+        A `PUT` that takes `agentsPickUp` off the project's last lane that had it leaves the
+        project no longer managed by AI, and pauses its agents; one that sets it on a project that
+        had none starts them. Deleting that last lane does the same.
 
         An `id` or `projectId` in the body is ignored, so a lane cannot be moved to another
         project. The same 400s and 409 as `POST` apply, except that a lane keeping its own
@@ -317,14 +321,14 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/Lane" }
-            example: { name: Blocked on vendor, position: 5, color: "#e06c75", marksDone: true }
+            example: { name: Moved in, position: 2, color: "#5fd6ab", marksDone: true, acceptsNewTasks: false, agentsPickUp: false }
       responses:
         "200":
           description: The stored lane.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Lane" }
-              example: { id: 29e870d6-5371-4062-baee-7ec40a312d28, projectId: 1d588d7f-d54e-49cb-8357-93147d9fbe5b, name: Blocked on vendor, position: 5, color: "#e06c75", marksDone: true }
+              example: { id: b98da8a4-7aa2-4cc5-a4e8-54a156c9c261, projectId: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Moved in, position: 2, color: "#5fd6ab", marksDone: true, acceptsNewTasks: false, agentsPickUp: false }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/LanePositionTaken" }
@@ -334,7 +338,9 @@ paths:
       tags: [Lanes]
       operationId: deleteLane
       summary: Delete a lane
-      description: Deleting a lane deletes its tasks with it.
+      description: |
+        Deleting a lane deletes its tasks with it. Deleting the project's last lane with
+        `agentsPickUp` leaves the project no longer managed by AI, and pauses its agents.
       responses:
         "200": { $ref: "#/components/responses/Deleted" }
         "400": { $ref: "#/components/responses/MalformedId" }
@@ -400,8 +406,8 @@ paths:
         `laneId` in the body is ignored. With no `position` the task goes after the lane's last
         task; send one to put it somewhere specific.
 
-        The project's `taskAddRule` applies: in a `"first_lane"` project only its first lane
-        takes new tasks.
+        Only a lane with `acceptsNewTasks` set takes new tasks. A task created in a lane with
+        `agentsPickUp` set is handed to the AI agents.
       requestBody:
         required: true
         content:
@@ -423,14 +429,14 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
-            The project's `taskAddRule` is `"first_lane"` and this is not its first lane, or
-            another task of the lane is already at that position.
+            The lane does not have `acceptsNewTasks` set, or another task of the lane is already at
+            that position.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               examples:
-                notFirstLane:
-                  value: { statusMessage: The project only takes new tasks in its first lane. }
+                closedToNewTasks:
+                  value: { statusMessage: The lane does not take new tasks. }
                 positionTaken:
                   value: { statusMessage: Another task of the lane is already at position 0. }
         "503": { $ref: "#/components/responses/Clash" }
@@ -464,12 +470,12 @@ paths:
         the task stays in its lane.
 
         Moving a task to another lane is a `PUT` with the new `laneId` and `position` — though
-        the RPC API's `moveTask` is usually the better way. The project's `taskAddRule` does not
+        the RPC API's `moveTask` is usually the better way. A lane's `acceptsNewTasks` does not
         apply to a move.
 
-        A task of a project managed by AI agents that no agent is at, because the task scheduler found
-        no agent for it or its agent has finished or failed, is handed back to the scheduler when
-        it moves to another lane that is not a done one, as `rescheduleTask` would; its notes then
+        A task that no agent is at, because the task scheduler found no agent for it or its agent
+        has finished or failed, is handed back to the scheduler when it moves to another lane
+        with `agentsPickUp` that is not a done one, as `rescheduleTask` would; its notes then
         say "Handed back to the task scheduler".
       requestBody:
         required: true
@@ -798,26 +804,21 @@ components:
             What the project is about, and directions for the AI agents that work on it. Free
             text, over as many lines as needed; empty for none.
           examples: [Move the zebras to the new enclosure before the winter.]
-        taskAddRule:
-          type: string
-          enum: [first_lane, any_lane]
-          default: first_lane
-          description: |
-            Which lanes a task can be created in: only the first lane (lowest position), or any
-            lane. It applies to creating tasks only, not to moving them.
         managedByAi:
           type: boolean
-          default: false
-          description: Whether AI agents may add, edit and move the project's tasks.
+          readOnly: true
+          description: |
+            Ignored in a `POST` or `PUT` body. Whether AI agents may add, edit and move the
+            project's tasks: whether any of its lanes has `agentsPickUp` set.
         aiPaused:
           type: boolean
           readOnly: true
           description: |
             Ignored in a `POST` or `PUT` body. Whether the project's AI agents are paused, which
             they always are for a project with `managedByAi` false. It follows `managedByAi`: a
-            new project starts running if it is managed by AI and paused otherwise, and a project
-            starts running when `managedByAi` is turned on and is paused when it is turned off.
-            The `setAiPaused` RPC call pauses and resumes it in between.
+            project's agents start running when it comes to have a lane with `agentsPickUp`, and
+            are paused when it has none any more. The `setAiPaused` RPC call pauses and resumes
+            them in between.
         canBeOpened:
           type: boolean
           readOnly: true
@@ -860,6 +861,18 @@ components:
           description: |
             Whether the tasks in this lane count as done. A task is done exactly when it is in a
             lane that marks it so. Any number of a project's lanes may set it, including none.
+        acceptsNewTasks:
+          type: boolean
+          default: false
+          description: |
+            Whether a task can be created in this lane. Any number of a project's lanes may set
+            it, including none. It does not apply to moving a task.
+        agentsPickUp:
+          type: boolean
+          default: false
+          description: |
+            Whether the AI agents work on the tasks in this lane, other than in a lane that marks
+            them done. A project with any lane that sets it is managed by AI (`managedByAi`).
 
     Task:
       type: object
@@ -899,9 +912,9 @@ components:
           type: boolean
           readOnly: true
           description: |
-            Whether the task was handed to the AI agents. `false` for every task of a project not
-            managed by AI, and for one added while its project was not, which stays out of the
-            agents' hands until `rescheduleTask` hands it to them. Ignored in a body.
+            Whether the task was handed to the AI agents. `false` for a task created in a lane
+            without `agentsPickUp`, which stays out of the agents' hands until `rescheduleTask`
+            hands it to them. Ignored in a body.
           examples: [true]
 
     TaskNote:

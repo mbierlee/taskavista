@@ -41,7 +41,7 @@ import std.uuid : UUID, randomUUID;
 
 import eventing : Event, IEventPublisher;
 import config : Config, apiUrl;
-import model : Agent, AgentLogEntry, AgentStatus, EffortLevel, Lane, Model, Project, Runtime, Task, TaskAddRule,
+import model : Agent, AgentLogEntry, AgentStatus, EffortLevel, Lane, Model, Project, Runtime, Task,
     TaskNote, defaultEffort;
 import prompt : PromptParser;
 import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
@@ -1021,7 +1021,7 @@ private string stopNote(TaskRun run)
 private enum schedulerInterval = 5.seconds;
 
 /**
- * Decides the next step of the tasks of the projects managed by AI agents, from a loop that
+ * Decides the next step of the tasks in the lanes the AI agents pick up, from a loop that
  * keeps running in the background: each task to be scheduled, with no agent and outside a done
  * lane, whether new or just worked on, is moved on to the lane the task scheduler agent chooses
  * for it and assigned the agent it chooses, closed in a done lane when the scheduler finds it
@@ -1352,7 +1352,7 @@ private enum executorInterval = 5.seconds;
 
 /**
  * Has the agents work on the tasks assigned to them, from a loop that keeps running in the
- * background: each scheduled task outside a done lane, of a project managed by AI, is worked on
+ * background: each scheduled task outside a done lane, in a lane the agents pick up, is worked on
  * by its agent, with the agent's result in its notes. A task its agent has answered is handed
  * back to the task scheduler, which decides its next step from that result, and one whose agent
  * could not answer is failed.
@@ -1734,11 +1734,14 @@ private void endStoppedRun(ITaskRepository tasks, IEventPublisher events, UUID t
     }
 }
 
-/// A lane per line, with "done" after the lanes whose tasks count as done.
+/**
+ * A lane per line, with "done" after the lanes whose tasks count as done and "no agents" after
+ * those the agents do not pick up.
+ */
 private string laneList(Lane[] board)
 {
-    return board.map!(lane => format("- ID %s: %s%s", lane.id, lane.name, lane.marksDone ? " (done)"
-            : ""))
+    return board.map!(lane => format("- ID %s: %s%s%s", lane.id, lane.name, lane.marksDone ? " (done)" : "",
+            lane.agentsPickUp ? "" : " (no agents)"))
         .join("\n");
 }
 
@@ -1815,9 +1818,9 @@ private struct Schedule
  *   board = The lanes of the task's project, the only ones it can move to.
  *
  * Returns: The schedule, or an empty Nullable when the answer names an agent
- *   or a lane that cannot be chosen, pairs an agent with a done lane or with no
- *   lane, closes the task in a lane that is not done, or is not such an object
- *   at all.
+ *   or a lane that cannot be chosen, pairs an agent with a done lane, a lane the
+ *   agents do not pick up or no lane, closes the task in a lane that is not done,
+ *   or is not such an object at all.
  */
 private Nullable!Schedule readSchedule(string answer, Agent[] all, Lane[] board)
 {
@@ -1852,8 +1855,8 @@ private Nullable!Schedule readSchedule(string answer, Agent[] all, Lane[] board)
         return Nullable!Schedule.init;
     }
 
-    // An agent is only started on a task outside a done lane, so a done lane closes the task
-    // and is the only one it can be moved to without an agent.
+    // An agent is only started on a task outside a done lane, in a lane the agents pick up, so a
+    // done lane closes the task and is the only one it can be moved to without an agent.
     if (agentId.type == Json.Type.null_)
     {
         return lanes[0].marksDone ? Schedule(Nullable!UUID.init, lanes[0].id.nullable).nullable
@@ -1863,7 +1866,7 @@ private Nullable!Schedule readSchedule(string answer, Agent[] all, Lane[] board)
     auto agents = all.find!(agent => isAssignable(agent) && agent.id.toString == agentId
             .get!string.strip
             .toLower);
-    if (agents.length == 0 || lanes[0].marksDone)
+    if (agents.length == 0 || lanes[0].marksDone || !lanes[0].agentsPickUp)
     {
         return Nullable!Schedule.init;
     }
@@ -1881,10 +1884,11 @@ unittest
         ]);
     auto resting = new Agent(randomUUID, "Resting", "claude-code", "sonnet", "default", false, "", [
         ], Nullable!int.init, false);
-    auto doing = new Lane(randomUUID, randomUUID, "Doing", 1, "#000000", false);
-    auto done = new Lane(randomUUID, randomUUID, "Done", 2, "#000000", true);
+    auto doing = new Lane(randomUUID, randomUUID, "Doing", 1, "#000000", false, false, true);
+    auto done = new Lane(randomUUID, randomUUID, "Done", 2, "#000000", true, false, true);
+    auto manual = new Lane(randomUUID, randomUUID, "Manual", 3, "#000000", false);
     auto all = [writer, scheduler, resting];
-    auto board = [doing, done];
+    auto board = [doing, done, manual];
 
     auto chosen = readSchedule(format("```json\n{\"agent-id\": \"%s\", \"next-lane-id\": \" %s \"}\n```",
             writer.id.toString.toUpper, doing.id), all, board);
@@ -1901,6 +1905,9 @@ unittest
     assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": "%s"}`, writer.id, done.id), all, board)
             .isNull);
     assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": null}`, writer.id), all, board).isNull);
+    assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": "%s"}`, writer.id, manual.id), all, board)
+            .isNull);
+    assert(laneList(board).canFind("Manual (no agents)") && !laneList(board).canFind("Doing (no agents)"));
 
     assert(readSchedule(format(`{"agent-id": "%s", "next-lane-id": "%s"}`, scheduler.id, doing.id), all, board)
             .isNull);
@@ -2388,7 +2395,8 @@ private Nullable!Json readProjectDraft(string answer)
     auto draft = Json.emptyObject;
     draft["name"] = text(json, "name");
     draft["description"] = text(json, "description");
-    draft["taskAddRule"] = rule == TaskAddRule.anyLane ? TaskAddRule.anyLane : TaskAddRule.firstLane;
+    // The settings screen's add-task rule, which it applies to the lanes itself.
+    draft["taskAddRule"] = rule == "any_lane" ? "any_lane" : "first_lane";
     draft["managedByAi"] = flag(json, "managedByAi");
     draft["lanes"] = Json(lanes);
 

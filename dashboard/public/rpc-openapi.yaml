@@ -64,12 +64,12 @@ paths:
         past the highest position in the lane.
 
         The move and the shift happen together or not at all. Positions may be left with gaps, so
-        rely on the order of tasks, not on their numbers. The project's `taskAddRule` does not
+        rely on the order of tasks, not on their numbers. A lane's `acceptsNewTasks` does not
         apply: it governs creating tasks, not moving them.
 
-        A task of a project managed by AI agents that no agent is at, because the task scheduler found
-        no agent for it or its agent has finished or failed, is handed back to the scheduler when
-        it moves to another lane that is not a done one, as `rescheduleTask` would; its notes then
+        A task that no agent is at, because the task scheduler found no agent for it or its agent
+        has finished or failed, is handed back to the scheduler when it moves to another lane
+        with `agentsPickUp` that is not a done one, as `rescheduleTask` would; its notes then
         say "Handed back to the task scheduler".
 
         The result is the lane's order; read the tasks themselves from the REST API.
@@ -157,13 +157,13 @@ paths:
         it moves to, which may differ from last time. That happens shortly after the call, not
         during it; the task's notes (`GET /api/rest/v1/tasks/{id}/notes`) say what came of it.
 
-        It also hands a task to the agents for the first time: one added while its project was not
-        managed by AI, whose `handedToAgents` is `false`, is otherwise never scheduled.
+        It also hands a task to the agents for the first time: one created in a lane without
+        `agentsPickUp`, whose `handedToAgents` is `false`, is otherwise never scheduled.
 
         Only a task of a project managed by AI agents can be rescheduled, and not one in a done
-        lane, nor one the scheduler is choosing an agent for or an agent is working on at that
-        moment. A task of a project
-        whose agents are paused waits until they are resumed. Rescheduling a task that is
+        lane or a lane without `agentsPickUp`, nor one the scheduler is choosing an agent for or
+        an agent is working on at that moment. A task of a project whose agents are paused waits
+        until they are resumed. Rescheduling a task that is
         already waiting for the scheduler is not an error.
 
         The result is an empty object.
@@ -201,14 +201,17 @@ paths:
               example: { statusMessage: No task has that id. }
         "409":
           description: |
-            The task's project is not managed by AI agents, the task is in a done lane, or the task
-            scheduler is choosing an agent for it or an agent is working on it now.
+            The task's project is not managed by AI agents, the task is in a done lane or one
+            without `agentsPickUp`, or the task scheduler is choosing an agent for it or an
+            agent is working on it now.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               examples:
                 notManaged:
                   value: { statusMessage: "The task's project is not managed by AI agents, so no agent works on its tasks." }
+                notPickedUp:
+                  value: { statusMessage: "The task's lane is not one the AI agents pick up tasks from." }
                 done:
                   value: { statusMessage: "The task is in a done lane, so it is done." }
                 beingScheduled:
@@ -283,9 +286,10 @@ paths:
       summary: Create a project together with its lanes
       description: |
         Creates a project and its lanes: either all of it is stored or none of it. The slug is
-        made from the name, as the REST API makes it when no slug is sent. Whether the project's
-        agents are paused is not sent either: a project managed by AI starts with its agents
-        running, and any other with them paused.
+        made from the name, as the REST API makes it when no slug is sent. Whether the project is
+        managed by AI, and paused, is not sent either: a project with a lane that has
+        `agentsPickUp` is managed by AI and starts with its agents running, and any other is not,
+        with them paused.
 
         The new project's id is not returned; find the project by its slug in the REST API's
         list.
@@ -301,19 +305,12 @@ paths:
                 description:
                   $ref: "#/components/schemas/ProjectDescription"
                   default: ""
-                taskAddRule:
-                  $ref: "#/components/schemas/TaskAddRule"
-                  default: first_lane
-                managedByAi:
-                  type: boolean
-                  default: false
-                  description: Whether AI agents may add, edit and move the project's tasks.
                 lanes:
                   type: array
                   default: []
                   items: { $ref: "#/components/schemas/NewLane" }
                   description: The lanes in board order; each one's position is its place in the list.
-            example: { name: Kite launch, description: Launch the kite range in the spring catalogue., taskAddRule: any_lane, lanes: [{ name: To do, color: "#8FA6FF" }, { name: Done, color: "#5fd6ab", marksDone: true }] }
+            example: { name: Kite launch, description: Launch the kite range in the spring catalogue., lanes: [{ name: To do, color: "#8FA6FF", acceptsNewTasks: true, agentsPickUp: true }, { name: Done, color: "#5fd6ab", marksDone: true, agentsPickUp: true }] }
       responses:
         "200":
           description: The slug made from the name.
@@ -344,18 +341,19 @@ paths:
     post:
       tags: [Projects]
       operationId: saveProjectSettings
-      summary: Change a project's name, description and add-task rule, and replace its lanes
+      summary: Change a project's name and description, and replace its lanes
       description: |
-        Gives a project a name, a description, an add-task rule, its AI setting and exactly the
-        lanes sent, in their order. Either the whole of it is saved or nothing is, and that includes a lane
+        Gives a project a name, a description and exactly the lanes sent, in their order. Either the whole of it is saved or nothing is, and that includes a lane
         deleted together with its tasks.
 
         **A lane of the project that is not in the list is deleted, along with its tasks**, so an
         empty list deletes them all. Lanes may trade places freely: the positions only have to be
         unique once the whole save is done.
 
-        Whether the project's agents are paused is not sent: turning `managedByAi` off pauses
-        them, turning it on starts them, and leaving it as it was leaves them as they were.
+        Whether the project is managed by AI, and paused, is not sent: the lanes decide it. A save
+        that leaves the project no lane with `agentsPickUp`, when it had one, pauses its agents,
+        one that gives it such a lane, when it had none, starts them, and any other save leaves
+        them as they were.
 
         The slug is the server's to decide, and this call takes none. When the name changes, a
         new slug is made from it, so the project's URL changes. When the name stays the same, the
@@ -366,26 +364,20 @@ paths:
           application/json:
             schema:
               type: object
-              required: [projectId, name, description, taskAddRule, managedByAi, lanes]
+              required: [projectId, name, description, lanes]
               properties:
                 projectId:
                   $ref: "#/components/schemas/Uuid"
                   description: The project to change.
                 name: { $ref: "#/components/schemas/ProjectName" }
                 description: { $ref: "#/components/schemas/ProjectDescription" }
-                taskAddRule: { $ref: "#/components/schemas/TaskAddRule" }
-                managedByAi:
-                  type: boolean
-                  description: |
-                    Whether AI agents may add, edit and move the project's tasks. Changing it
-                    pauses or starts the agents.
                 lanes:
                   type: array
                   items: { $ref: "#/components/schemas/SavedLane" }
                   description: |
                     The project's lanes in board order; each one's position is its place in the
                     list. A lane of the project left out is deleted, with its tasks.
-            example: { projectId: d83af3a0-e609-4305-98d4-9bfdc28d2648, name: Kite launch v2, description: "Launch the kite range in the spring catalogue, and the kite bags with it.", taskAddRule: any_lane, managedByAi: true, lanes: [{ id: b775c8b5-04e0-4e27-88da-046ce1c1bb99, name: To do, color: "#8fa6ff" }, { id: null, name: Backlog, color: "#e8b154" }] }
+            example: { projectId: 08463b1c-e98c-49e8-9d6c-78115d96863b, name: Kite launch v2, description: "Launch the kite range in the spring catalogue, and the kite bags with it.", lanes: [{ id: 27a3b98c-d241-4a63-a180-58f2cc417d14, name: To do, color: "#8fa6ff", acceptsNewTasks: true }, { id: null, name: Backlog, color: "#e8b154", acceptsNewTasks: true }] }
       responses:
         "200":
           description: The project's slug after the save. It differs from the old one only after a rename.
@@ -395,7 +387,7 @@ paths:
               example: { slug: kite-launch-v2 }
         "400":
           description: |
-            `projectId`, `name`, `description`, `taskAddRule`, `managedByAi` or `lanes` missing;
+            `projectId`, `name`, `description` or `lanes` missing;
             `name` blank or without a letter or digit; a lane with a blank name or a malformed
             colour; a lane id listed twice; a lane of another project.
           content:
@@ -427,8 +419,9 @@ paths:
       description: |
         Pauses a project's AI agents, or resumes them, and changes nothing else about the
         project. The REST API serves the project's `aiPaused` read-only; besides this call, only a
-        change to `managedByAi` changes it. Only a project managed by AI can be resumed: one that
-        is not is always paused. Asking for the state the project is already in is not an error.
+        change to `managedByAi`, which the project's lanes decide, changes it. Only a project
+        managed by AI can be resumed: one that is not is always paused. Asking for the state the
+        project is already in is not an error.
       requestBody:
         required: true
         content:
@@ -969,8 +962,8 @@ components:
       type: string
       enum: [first_lane, any_lane]
       description: |
-        Which lanes a task can be created in: only the first lane (lowest position), or any lane.
-        It applies to creating tasks only, not to moving them.
+        Which lanes a task could be created in: only the first lane, or any lane. Not stored as
+        such: a lane takes new tasks by its own `acceptsNewTasks`.
 
     NewLane:
       description: A lane of a new project, with the same rules as a lane in the REST API.
@@ -990,6 +983,16 @@ components:
           type: boolean
           default: false
           description: Whether the tasks in this lane count as done.
+        acceptsNewTasks:
+          type: boolean
+          default: false
+          description: Whether a task can be created in this lane.
+        agentsPickUp:
+          type: boolean
+          default: false
+          description: |
+            Whether the AI agents work on the tasks in this lane. A project with any lane that
+            sets it is managed by AI.
 
     SavedLane:
       description: A lane of the project being saved, with the same rules as a lane in the REST API.
@@ -1012,6 +1015,16 @@ components:
           type: boolean
           default: false
           description: Whether the tasks in this lane count as done.
+        acceptsNewTasks:
+          type: boolean
+          default: false
+          description: Whether a task can be created in this lane.
+        agentsPickUp:
+          type: boolean
+          default: false
+          description: |
+            Whether the AI agents work on the tasks in this lane. A project with any lane that
+            sets it is managed by AI.
 
     SlugResult:
       type: object

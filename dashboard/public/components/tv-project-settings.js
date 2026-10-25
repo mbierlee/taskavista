@@ -14,25 +14,24 @@
    draft and writes nothing itself: saving reports the whole draft and the
    caller works out what to write.
 
-   The closing rule is not stored anywhere: each lane's marksDone carries it,
-   so "last lane" is read back as exactly the last lane marking its tasks
-   done.
+   Each lane has three checkboxes: Intake (acceptsNewTasks), Closing
+   (marksDone) and Agents (agentsPickUp). The project has no AI setting of
+   its own: it is managed by AI when any lane has Agents ticked.
 
    Events (bubbling and composed):
-     settings-save   detail { name, description, taskAddRule, managedByAi,
-                     lanes }
+     settings-save   detail { name, description, lanes }
                      `lanes` is every lane in the new order, as { id, name,
-                     color, marksDone }; id is null for a lane added here, and
-                     a lane left out was removed.
-     project-create  detail { name, description, taskAddRule, managedByAi,
-                     lanes }  the same, with every id null.
+                     color, marksDone, acceptsNewTasks, agentsPickUp }; id is
+                     null for a lane added here, and a lane left out was
+                     removed.
+     project-create  detail { name, description, lanes }  the same, with
+                     every id null.
      project-delete  detail { id } */
 
 import { attachTemplate, loadTemplate } from "./template.js";
 import { store } from "../store.js";
 import "./tv-color-picker.js";
 import "./tv-lane-row.js";
-import "./tv-toggle.js";
 
 const template = await loadTemplate("tv-project-settings.html");
 
@@ -82,6 +81,13 @@ const examplePlaceholders = [
 
 let nextPlaceholder = Math.floor(Math.random() * examplePlaceholders.length);
 
+/* The lane field behind each of a lane row's checkboxes. */
+const laneFlags = {
+  intake: "acceptsNewTasks",
+  closing: "marksDone",
+  agents: "agentsPickUp",
+};
+
 /* Two names clash when they make the same slug, the project's name in its
    URL. Mirrors slugify in helpers.d. */
 function slugify(name) {
@@ -123,12 +129,6 @@ export class TvProjectSettings extends HTMLElement {
   #name;
   #nameError;
   #description;
-  #rules;
-  #firstLane;
-  #closeRules;
-  #lastLane;
-  #closingLanes;
-  #managed;
   #delete;
   #list;
   #addLane;
@@ -149,12 +149,6 @@ export class TvProjectSettings extends HTMLElement {
     this.#name = root.querySelector(".project-name");
     this.#nameError = root.querySelector(".name-error");
     this.#description = root.querySelector(".project-description");
-    this.#rules = [...root.querySelectorAll('input[name="rule"]')];
-    this.#firstLane = root.querySelector(".first-lane");
-    this.#closeRules = [...root.querySelectorAll('input[name="close"]')];
-    this.#lastLane = root.querySelector(".last-lane");
-    this.#closingLanes = root.querySelector(".closing-lanes");
-    this.#managed = root.querySelector(".managed");
     this.#delete = root.querySelector(".delete");
     this.#list = root.querySelector(".lanes");
     this.#addLane = root.querySelector(".add-lane");
@@ -164,12 +158,6 @@ export class TvProjectSettings extends HTMLElement {
     this.#save = root.querySelector(".save");
 
     this.#form.addEventListener("submit", (event) => this.#onSubmit(event));
-    for (const option of this.#closeRules) {
-      option.addEventListener("change", () => this.#renderLanes());
-    }
-    this.#closingLanes.addEventListener("change", (event) => {
-      this.#laneOf(event.target).marksDone = event.target.checked;
-    });
     this.#name.addEventListener("input", () => {
       clearTimeout(this.#nameCheck);
       this.#nameCheck = setTimeout(() => this.#checkName(), nameCheckDelayMs);
@@ -187,7 +175,11 @@ export class TvProjectSettings extends HTMLElement {
     /* Typing does not re-render: the row already shows what was typed. */
     this.#list.addEventListener("lane-rename", (event) => {
       this.#laneOf(event.target).name = event.detail.name;
-      this.#renderClosing();
+    });
+    /* Nor does ticking a box, which the row already shows. */
+    this.#list.addEventListener("lane-flag", (event) => {
+      const { flag, checked } = event.detail;
+      this.#laneOf(event.target)[laneFlags[flag]] = checked;
     });
     this.#list.addEventListener("lane-recolor", (event) => {
       this.#onSwatch(this.#laneOf(event.target));
@@ -232,7 +224,8 @@ export class TvProjectSettings extends HTMLElement {
   }
 
   /* Starts a fresh draft of `project`, whose lanes, in board order, are
-     `lanes`: { id, name, color, marksDone, taskCount }. */
+     `lanes`: { id, name, color, marksDone, acceptsNewTasks, agentsPickUp,
+     taskCount }. */
   edit(project, lanes) {
     this.#start(
       project,
@@ -241,14 +234,26 @@ export class TvProjectSettings extends HTMLElement {
     );
   }
 
-  /* `lanes` are { name, color, marksDone }, and `draft`, when an agent
-     suggested the project, has its { name, description, taskAddRule,
-     managedByAi } to start from. The name takes the focus, so the screen
-     must be on the page by then. "/" goes back to the last project shown. */
+  /* `lanes` are { name, color, marksDone }, with acceptsNewTasks and
+     agentsPickUp when they are known, and `draft`, when an agent suggested
+     the project, has its { name, description, taskAddRule, managedByAi } to
+     start from. A lane without the flags takes them from the draft: new
+     tasks in the first lane only, unless taskAddRule is "any_lane", and
+     agents in every lane that does not close tasks when it is managed by AI.
+     The name takes the focus, so the screen must be on the page by then. "/"
+     goes back to the last project shown. */
   create(lanes, draft = null) {
+    const anyLane = draft?.taskAddRule === "any_lane";
+    const managed = draft?.managedByAi ?? false;
     this.#start(
       null,
-      lanes.map((lane) => ({ ...lane, id: null, taskCount: 0 })),
+      lanes.map((lane, index) => ({
+        ...lane,
+        acceptsNewTasks: lane.acceptsNewTasks ?? (anyLane || index === 0),
+        agentsPickUp: lane.agentsPickUp ?? (managed && !lane.marksDone),
+        id: null,
+        taskCount: 0,
+      })),
       "/",
       draft,
     );
@@ -278,20 +283,6 @@ export class TvProjectSettings extends HTMLElement {
       nextPlaceholder = (nextPlaceholder + 1) % examplePlaceholders.length;
     }
     this.#description.value = fields?.description ?? "";
-    const rule = fields?.taskAddRule ?? "first_lane";
-    for (const option of this.#rules) {
-      option.checked = option.value === rule;
-    }
-    const last = this.#lanes.length - 1;
-    const closeRule =
-      last >= 0 &&
-      this.#lanes.every((lane, index) => lane.marksDone === (index === last))
-        ? "last_lane"
-        : "chosen_lanes";
-    for (const option of this.#closeRules) {
-      option.checked = option.value === closeRule;
-    }
-    this.#managed.checked = fields?.managedByAi ?? false;
     this.#checkName();
 
     this.#status.hidden = true;
@@ -354,14 +345,16 @@ export class TvProjectSettings extends HTMLElement {
         detail: {
           name: this.#name.value.trim(),
           description: this.#description.value.trim(),
-          taskAddRule: this.#rules.find((rule) => rule.checked).value,
-          managedByAi: this.#managed.checked,
-          lanes: this.#lanes.map(({ id, name, color, marksDone }) => ({
-            id,
-            name: name.trim(),
-            color,
-            marksDone,
-          })),
+          lanes: this.#lanes.map(
+            ({ id, name, color, marksDone, acceptsNewTasks, agentsPickUp }) => ({
+              id,
+              name: name.trim(),
+              color,
+              marksDone,
+              acceptsNewTasks,
+              agentsPickUp,
+            }),
+          ),
         },
       }),
     );
@@ -419,7 +412,7 @@ export class TvProjectSettings extends HTMLElement {
   /* ---------- lanes ---------- */
 
   #laneOf(el) {
-    const key = Number(el.closest("tv-lane-row, .closing-lane")?.dataset.key);
+    const key = Number(el.closest("tv-lane-row")?.dataset.key);
     return this.#lanes.find((lane) => lane.key === key);
   }
 
@@ -433,6 +426,8 @@ export class TvProjectSettings extends HTMLElement {
         this.#offeredColors.find((color) => !used.has(color)) ??
         this.#offeredColors[0],
       marksDone: false,
+      acceptsNewTasks: false,
+      agentsPickUp: false,
       taskCount: 0,
     };
     this.#lanes = [...this.#lanes, lane];
@@ -644,7 +639,6 @@ export class TvProjectSettings extends HTMLElement {
     this.#list.replaceChildren(
       ...this.#lanes.map((lane) => this.#renderLane(lane)),
     );
-    this.#renderClosing();
   }
 
   #renderLane(lane) {
@@ -652,54 +646,15 @@ export class TvProjectSettings extends HTMLElement {
     row.dataset.key = lane.key;
     row.setAttribute("name", lane.name);
     row.setAttribute("color", lane.color);
+    for (const [flag, field] of Object.entries(laneFlags)) {
+      row.toggleAttribute(flag, lane[field]);
+    }
     /* A new project has no tasks to count, and a lane added here none yet. */
-    if (!this.hasAttribute("new")) {
-      row.setAttribute(
-        "count",
-        lane.id === null ? "" : taskCount(lane.taskCount),
-      );
-    }
+    row.setAttribute(
+      "count",
+      lane.id === null ? "" : taskCount(lane.taskCount),
+    );
     return row;
-  }
-
-  /* Also brings the lanes' marksDone into line with the closing rule: it runs
-     after every change to the lanes, so under "last lane" it follows each
-     reorder, add and remove. */
-  #renderClosing() {
-    const byLast =
-      this.#closeRules.find((r) => r.checked)?.value === "last_lane";
-    if (byLast) {
-      this.#lanes.forEach((lane, index) => {
-        lane.marksDone = index === this.#lanes.length - 1;
-      });
-    }
-
-    const first = this.#lanes[0]?.name.trim();
-    this.#firstLane.textContent = first
-      ? ` — every task starts in “${first}”`
-      : "";
-    const last = this.#lanes.at(-1)?.name.trim();
-    this.#lastLane.textContent = last ? ` — tasks in “${last}” are closed` : "";
-
-    this.#closingLanes.hidden = byLast;
-    if (!byLast) {
-      this.#closingLanes.replaceChildren(
-        ...this.#lanes.map((lane) => this.#renderClosingLane(lane)),
-      );
-    }
-  }
-
-  #renderClosingLane(lane) {
-    const item = document.createElement("label");
-    item.className = "closing-lane";
-    item.dataset.key = lane.key;
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.checked = lane.marksDone;
-    const name = lane.name.trim();
-    item.classList.toggle("unnamed", !name);
-    item.append(box, name || "New lane");
-    return item;
   }
 
   #rowOf(key) {

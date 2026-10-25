@@ -9,7 +9,7 @@
 -->
 <style>
   /* The mockup is drawn 1000px wide; a form stretched across a wide window
-     only puts its two columns further apart, so it stops there, centred. */
+     only makes its fields and lane rows longer, so it stops there, centred. */
   :host {
     display: block;
     width: 100%;
@@ -40,6 +40,15 @@
     color: var(--muted);
   }
 
+  /* --lane-columns and --lane-gap are the columns of the swimlanes' head and
+     of every tv-lane-row, which inherits them: handle, name, colour, the
+     three checkboxes, task count, remove. Set here rather than on the host,
+     which is the container the narrower ones below are queried against. */
+  .form {
+    --lane-columns: 16px minmax(0, 1fr) 64px 92px 92px 92px 56px 16px;
+    --lane-gap: 12px;
+  }
+
   /* A disabled fieldset disables every control in it, which is how the form
      is locked while it saves. */
   .body {
@@ -49,34 +58,21 @@
     min-width: 0;
   }
 
-  .grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 32px;
-    align-items: start;
-  }
-  .col {
+  .fields {
     display: flex;
     flex-direction: column;
     gap: 26px;
-  }
-  .col.lanes-col {
-    gap: 10px;
+    margin-bottom: 30px;
   }
 
-  /* The labels over the two columns share a line height (see .label in
-     shared.css), and the gap under them, so the name field and the first
-     lane start level. */
   .name-field,
   .description-field {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
   }
-  /* As tall as a lane, so it ends level with the first one too. */
   .project-name {
     width: 100%;
-    height: 44px;
     background: var(--surface-2);
     padding: 11px 13px;
     font-size: 15px;
@@ -94,118 +90,14 @@
     resize: vertical;
   }
 
-  .rule {
+  .lanes-section {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    margin: 0;
-    padding: 0;
-    border: 0;
-  }
-  /* A legend will not take part in flex layout, so the gap under it is
-     its own margin. */
-  .rule legend {
-    padding: 0;
-    margin-bottom: 12px;
-  }
-  .option {
-    display: flex;
-    align-items: flex-start;
-    gap: 11px;
-    font-size: 15px;
-    line-height: 1.45;
-    color: var(--text-2);
-    cursor: pointer;
-  }
-  .option input {
-    appearance: none;
-    flex: none;
-    width: 16px;
-    height: 16px;
-    margin: 2px 0 0;
-    border: 1px solid var(--muted-2);
-    border-radius: 50%;
-    cursor: pointer;
-  }
-  .option input:checked {
-    border: 5px solid var(--accent);
-    background: var(--bg);
-  }
-  .hint {
-    color: var(--muted);
-  }
-  /* The ellipsis says that choosing the option opens more of them. */
-  .option input:checked + span .more {
-    display: none;
-  }
-
-  /* Indented to line up with the options' text. */
-  .closing-lanes {
-    display: flex;
-    flex-direction: column;
-    gap: 9px;
-    padding-left: 27px;
-  }
-  .closing-lane {
-    display: flex;
-    align-items: center;
     gap: 10px;
-    font-size: 15px;
-    color: var(--text-2);
-    cursor: pointer;
-  }
-  .closing-lane.unnamed {
-    color: var(--text-dim);
-  }
-  .closing-lane input {
-    appearance: none;
-    flex: none;
-    display: grid;
-    place-content: center;
-    width: 16px;
-    height: 16px;
-    margin: 0;
-    border: 1px solid var(--muted-2);
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  .closing-lane input:checked {
-    border-color: var(--accent);
-    background: var(--accent);
-  }
-  .closing-lane input:checked::before {
-    content: "✓";
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 14px;
-    color: var(--accent-ink);
-  }
-
-  .agents {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .managed {
-    font-size: 15px;
-    line-height: 1.45;
-    color: var(--text-2);
-  }
-
-  /* Flex, so the button keeps its own width rather than the column's. */
-  .danger-zone {
-    display: flex;
-    border-top: 1px solid var(--border-soft);
-    padding-top: 18px;
-  }
-
-  /* A new project has nothing to delete yet. */
-  :host([new]) .danger-zone {
-    display: none;
   }
 
   /* Centred rather than on the baseline, which would make the row taller
-     than the label over the name, the two texts being of different sizes. */
+     than the label, the two texts being of different sizes. */
   .lanes-head {
     display: flex;
     justify-content: space-between;
@@ -215,6 +107,66 @@
     line-height: 14px;
     font-size: 12px;
     color: var(--text-dim);
+  }
+
+  /* Lined up with the rows' columns: their padding, plus their border. */
+  .columns {
+    display: grid;
+    grid-template-columns: var(--lane-columns);
+    gap: var(--lane-gap);
+    padding: 4px 13px 2px;
+  }
+  .column {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+  }
+
+  .info {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--text-dim);
+    border-radius: 50%;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 12px;
+    text-align: center;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--lane-label);
+    cursor: help;
+  }
+  .info:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  /* Shown while the pointer is over the "i", or it has the focus, which a
+     click gives it too. Under it, ending at the column's right, so the last column's
+     stays on the screen. */
+  .tooltip {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: -8px;
+    z-index: 2;
+    display: none;
+    background: var(--surface-hover);
+    border: 1px solid var(--border-dashed);
+    box-shadow: var(--shadow-lifted);
+    border-radius: 7px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--text-2);
+  }
+  .info:hover + .tooltip,
+  .info:focus + .tooltip {
+    display: block;
   }
 
   .lanes {
@@ -236,11 +188,19 @@
 
   .actions {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
     gap: 12px;
     border-top: 1px solid var(--border-soft);
     margin-top: 28px;
     padding-top: 18px;
+  }
+  .delete {
+    margin-right: auto;
+  }
+  /* A new project has nothing to delete yet. */
+  :host([new]) .delete {
+    display: none;
   }
   /* While it saves, the button keeps its colour rather than looking as it
      does when the draft cannot be saved. */
@@ -254,10 +214,25 @@
 
   /* By the screen's own width rather than the window's, since the agent chat
      can take part of the window beside it: a 720px window, inside the
-     padding. */
+     padding. The checkbox columns narrow as far as their headings allow,
+     and in a narrower list still, the task counts make way for the names,
+     and each heading stands over its "i" rather than beside it. */
   @container (max-width: 672px) {
-    .grid {
-      grid-template-columns: minmax(0, 1fr);
+    .form {
+      --lane-columns: 16px minmax(0, 1fr) 40px 80px 84px 80px 48px 16px;
+    }
+  }
+  @container (max-width: 520px) {
+    .form {
+      --lane-columns: 16px minmax(0, 1fr) 24px 56px 60px 56px 0 16px;
+      --lane-gap: 8px;
+    }
+    .column {
+      flex-direction: column;
+      gap: 4px;
+    }
+    .column .label {
+      letter-spacing: 0.4px;
     }
   }
 </style>
@@ -271,106 +246,81 @@
 
 <form class="form" novalidate hidden>
   <fieldset class="body">
-    <div class="grid">
-      <div class="col">
-        <div class="name-field">
-          <label class="label" for="project-name">Name</label>
-          <input
-            id="project-name"
-            class="field project-name"
-            type="text"
-            autocomplete="off"
-            required
-            pattern=".*\S.*"
-            aria-describedby="name-error"
-          />
-          <p class="field-error name-error" id="name-error" hidden></p>
-        </div>
-
-        <div class="description-field">
-          <label class="label" for="project-description">Description</label>
-          <textarea
-            id="project-description"
-            class="field project-description"
-            placeholder="Describe the project, or give the AI agents instructions and directives to follow…"
-          ></textarea>
-        </div>
-
-        <fieldset class="rule">
-          <legend class="label">Adding tasks</legend>
-          <label class="option">
-            <input type="radio" name="rule" value="first_lane" />
-            <span
-              >Only in the first lane<span class="hint first-lane"></span
-            ></span>
-          </label>
-          <label class="option">
-            <input type="radio" name="rule" value="any_lane" />
-            <span>In any lane</span>
-          </label>
-        </fieldset>
-
-        <fieldset class="rule">
-          <legend class="label">Closing tasks</legend>
-          <label class="option">
-            <input type="radio" name="close" value="last_lane" />
-            <span
-              >Only in the last lane<span class="hint last-lane"></span
-            ></span>
-          </label>
-          <label class="option">
-            <input type="radio" name="close" value="chosen_lanes" />
-            <span
-              >In any of these lanes<span class="more" aria-hidden="true"
-                >…</span
-              ></span
-            >
-          </label>
-          <div class="closing-lanes" hidden></div>
-        </fieldset>
-
-        <div class="agents">
-          <span class="label">AI agents</span>
-          <tv-toggle class="managed"
-            >Managed by AI agents<span class="hint">
-              — agents schedule and work on its tasks</span
-            ></tv-toggle
-          >
-        </div>
-
-        <div class="danger-zone">
-          <button class="btn danger-subtle delete" type="button">
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
-          </svg>
-            Delete project
-          </button>
-        </div>
+    <div class="fields">
+      <div class="name-field">
+        <label class="label" for="project-name">Name</label>
+        <input
+          id="project-name"
+          class="field project-name"
+          type="text"
+          autocomplete="off"
+          required
+          pattern=".*\S.*"
+          aria-describedby="name-error"
+        />
+        <p class="field-error name-error" id="name-error" hidden></p>
       </div>
 
-      <div class="col lanes-col">
-        <div class="lanes-head">
-          <span class="label" id="lanes-label">Swimlanes</span>
-          <span class="tip">drag to reorder · click a swatch to recolor</span>
-        </div>
-        <div class="lanes" role="list" aria-labelledby="lanes-label"></div>
-        <button class="btn quiet add-lane" type="button">+ Add a lane</button>
+      <div class="description-field">
+        <label class="label" for="project-description">Description</label>
+        <textarea
+          id="project-description"
+          class="field project-description"
+          placeholder="Describe the project, or give the AI agents instructions and directives to follow…"
+        ></textarea>
       </div>
+    </div>
+
+    <div class="lanes-section">
+      <div class="lanes-head">
+        <span class="label" id="lanes-label">Swimlanes</span>
+        <span class="tip">drag to reorder · click a swatch to recolor</span>
+      </div>
+      <div class="columns">
+        <span></span>
+        <span></span>
+        <span class="column"><span class="label">Color</span></span>
+        <span class="column">
+          <span class="label">Intake</span>
+          <span class="info" tabindex="0" role="note" aria-label="New tasks can be created in this lane">i</span>
+          <span class="tooltip" aria-hidden="true">New tasks can be created in this lane</span>
+        </span>
+        <span class="column">
+          <span class="label">Closing</span>
+          <span class="info" tabindex="0" role="note" aria-label="Tasks in this lane count as done">i</span>
+          <span class="tooltip" aria-hidden="true">Tasks in this lane count as done</span>
+        </span>
+        <span class="column">
+          <span class="label">Agents</span>
+          <span class="info" tabindex="0" role="note" aria-label="Agents pick up tasks in this lane">i</span>
+          <span class="tooltip" aria-hidden="true">Agents pick up tasks in this lane</span>
+        </span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="lanes" role="list" aria-labelledby="lanes-label"></div>
+      <button class="btn quiet add-lane" type="button">+ Add a lane</button>
     </div>
 
     <p class="error" role="alert" hidden></p>
 
     <div class="actions">
+      <button class="btn danger-subtle delete" type="button">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+        </svg>
+        Delete project
+      </button>
       <a class="btn secondary cancel" href="/">Cancel</a>
       <button class="btn primary save" type="submit">Save changes</button>
     </div>

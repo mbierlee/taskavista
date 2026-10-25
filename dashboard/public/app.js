@@ -101,7 +101,7 @@ async function showBoard(project) {
     const tasksByLane = Map.groupBy(tasks, (task) => task.laneId);
     board = {
       project,
-      lanes: renderLanes(project, lanes, (id) => tasksByLane.get(id) ?? []),
+      lanes: renderLanes(lanes, (id) => tasksByLane.get(id) ?? []),
     };
     boardEl.replaceChildren(...[...board.lanes.values()].map((e) => e.el));
     if (boardStale) {
@@ -148,13 +148,11 @@ function sendJson(method, url, body) {
 
 /* The board's lanes, for `board.lanes`, each drawn with its cards. The API
    returns lanes in board order and each lane's tasks in lane order, so
-   neither is sorted here, and the first lane is the one that takes new tasks
-   under the "first_lane" rule. */
-function renderLanes(project, lanes, tasksOf) {
-  const addAnywhere = project.taskAddRule === "any_lane";
-  const entries = lanes.map((lane, index) => ({
+   neither is sorted here. */
+function renderLanes(lanes, tasksOf) {
+  const entries = lanes.map((lane) => ({
     lane,
-    el: renderLane(lane, addAnywhere || index === 0),
+    el: renderLane(lane, lane.acceptsNewTasks),
     tasks: tasksOf(lane.id),
   }));
   entries.forEach(renderCards);
@@ -643,8 +641,6 @@ async function saveSettings(draft) {
         projectId: shown.project.id,
         name: draft.name,
         description: draft.description,
-        taskAddRule: draft.taskAddRule,
-        managedByAi: draft.managedByAi,
         lanes: draft.lanes,
       }),
     );
@@ -695,7 +691,7 @@ const newProjectEl = document.createElement("tv-project-settings");
 
 /* As the new project mockup has them. */
 const startingLanes = [
-  { name: "To do", color: "#8fa6ff", marksDone: false },
+  { name: "To do", color: "#8fa6ff", marksDone: false, acceptsNewTasks: true },
   { name: "In progress", color: "#e8b154", marksDone: false },
   { name: "Done", color: "#5fd6ab", marksDone: true },
 ];
@@ -715,8 +711,6 @@ async function createProject(draft) {
       sendJson("POST", "/api/rpc/v1/createProject", {
         name: draft.name,
         description: draft.description,
-        taskAddRule: draft.taskAddRule,
-        managedByAi: draft.managedByAi,
         lanes: draft.lanes,
       }),
     );
@@ -1401,7 +1395,6 @@ async function refreshLanes(shown) {
   /* Changed in place, so updates already queued for this board still find
      it. */
   shown.lanes = renderLanes(
-    shown.project,
     lanes,
     (id) => shown.lanes.get(id)?.tasks ?? tasks.get(id) ?? [],
   );

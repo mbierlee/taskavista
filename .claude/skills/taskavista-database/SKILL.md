@@ -10,7 +10,7 @@ description: Make schema or data changes to Taskavista's postgres database. Use 
 | | |
 |---|---|
 | Container | `taskavista-postgres` (postgres 18, from `docker/docker-compose.yml`) |
-| Database | whatever `database.name` in `dashboard/config.json` says — read it from there, never hard-code it |
+| Database | `taskavista-dev`, from `dashboard/config-dev.json` — read it from there. **Never `taskavista`**: that is the installed (production) database, which `config-default.json` and the server on port 8090 use; touch it only when the user asks |
 | User / password | `taskavista` / `taskavista` |
 | Port | 5432 (pgadmin on http://localhost:5050) |
 | Schema | the default `public` — put everything there unless told otherwise |
@@ -18,12 +18,13 @@ description: Make schema or data changes to Taskavista's postgres database. Use 
 ## Reaching it
 
 **There is no psql client on this machine.** Everything goes through the container, into the
-database the dashboard uses, whose name is read from `dashboard/config.json` (run from the repo
-root; shell variables do not survive between commands, so read it in each one):
+development database, whose name is read from `dashboard/config-dev.json` (run from the repo
+root; shell variables do not survive between commands, so read it in each one). There is
+usually no `dashboard/config.json`:
 
 ```bash
-docker exec -i taskavista-postgres psql -U taskavista -d "$(jq -r .database.name dashboard/config.json)" -v ON_ERROR_STOP=1 -c '\d projects'
-docker exec -i taskavista-postgres psql -U taskavista -d "$(jq -r .database.name dashboard/config.json)" -v ON_ERROR_STOP=1 < dashboard/sql/init.sql
+docker exec -i taskavista-postgres psql -U taskavista -d "$(jq -r .database.name dashboard/config-dev.json)" -v ON_ERROR_STOP=1 -c '\d projects'
+docker exec -i taskavista-postgres psql -U taskavista -d "$(jq -r .database.name dashboard/config-dev.json)" -v ON_ERROR_STOP=1 < dashboard/sql/init.sql
 ```
 
 To drop and recreate the database, connect to `-d postgres` instead, since postgres will not drop
@@ -111,7 +112,8 @@ query. Check the repository's statements against the new schema by hand.
 
 Things about the D side worth knowing before you touch it:
 
-- **Connection settings live in `dashboard/config.json`**, under `database` (host, port, name,
+- **Connection settings live in the config file** (`config.json` when present, else the one given
+  with `--config`, such as `config-dev.json`), under `database` (host, port, name,
   user, password, connectionPoolSize), mirrored by `DatabaseConfig` in `source/app.d`. Every
   field is `@optional` with a default, so an omitted block still starts.
 - **The pool connects lazily.** The server starts fine with postgres down and fails on the
@@ -120,9 +122,9 @@ Things about the D side worth knowing before you touch it:
   `PQcancel*` API; Ubuntu 24.04 ships libpq 16 and the link fails on undefined symbols.
   Building at all needs `libpq-dev` installed — that supplies the `libpq.so` the linker wants,
   but still no `psql` binary.
-- **Enumerated `text` columns get an enum plus a converter**, as `TaskAddRule` /
-  `toTaskAddRule` do. `std.conv.to` matches enum *member names*, not their values, so
-  `first_lane` will not convert on its own. Add the same pairing for new enumerated columns.
+- **Enumerated `text` columns get an enum plus a converter**, as `AgentStatus` /
+  `toAgentStatus` do. `std.conv.to` matches enum *member names*, not their values, so
+  `to_be_scheduled` will not convert on its own. Add the same pairing for new enumerated columns.
 
 Verify a change against the real database rather than trusting a compile. For a table that
 has endpoints, the quickest way is to build, start the server and `curl` `/api/rest/v1/<resource>`; the

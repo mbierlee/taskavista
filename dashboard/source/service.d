@@ -13,7 +13,7 @@
 
 module service;
 
-import std.algorithm : canFind, filter, map;
+import std.algorithm : any, canFind, filter, map;
 import std.array : array;
 import std.string : strip;
 import std.typecons : Nullable, nullable;
@@ -65,7 +65,8 @@ class ProjectService
      * Stores a project.
      *
      * Creates the project when it has no id yet, and updates it otherwise. A project with no
-     * slug is given one made from its name, which must have a letter or digit in it.
+     * slug is given one made from its name, which must have a letter or digit in it. A project
+     * created on its own has no lanes, so it is not managed by AI.
      *
      * Params:
      *   project = The project to create or update.
@@ -119,6 +120,7 @@ class ProjectService
                     return projectFailure!Project(new ProjectNotFoundError);
                 }
 
+                readBack(project);
                 transactions.afterCommit(() => workingDirs.rename(oldSlug, project.slug));
                 events.project(Event.changed, project.id);
                 return projectSuccess(project);
@@ -136,7 +138,9 @@ class ProjectService
      * Creates the project and its lanes when the project has no id yet. Otherwise updates it
      * and gives it exactly these lanes: a lane with no id yet is created, and a lane of the
      * project's that is not among them is deleted, tasks and all. A project with no slug is
-     * given one made from its name, which must have a letter or digit in it.
+     * given one made from its name, which must have a letter or digit in it. A project with a
+     * lane the agents pick up is managed by AI: its agents start running when it comes to have
+     * one, and are paused when it has none any more.
      *
      * Params:
      *   projectWithLanes = The project and its lanes, at the positions they carry.
@@ -180,6 +184,8 @@ class ProjectService
                     return projectFailure!Project(newSlug.error);
                 }
 
+                project.managedByAi = lanes.any!(lane => lane.agentsPickUp);
+                project.aiPaused = !project.managedByAi;
                 repository.addWithLanes(project, lanes);
                 workingDirs.createIfRootExists(project.slug);
                 events.project(Event.created, project.id);
@@ -220,7 +226,8 @@ class ProjectService
             return projectFailure!Project(invalidLane);
         }
 
-        auto existing = this.lanes.ofProject(project.id).map!(lane => lane.id).array;
+        auto before = this.lanes.ofProject(project.id);
+        auto existing = before.map!(lane => lane.id).array;
         bool[UUID] kept;
         foreach (id; lanes
             .map!(lane => lane.id)
@@ -250,6 +257,9 @@ class ProjectService
         {
             return projectFailure!Project(new ProjectNotFoundError);
         }
+
+        followManaged(repository, this.lanes, project.id, before.any!(lane => lane.agentsPickUp));
+        readBack(project);
 
         transactions.afterCommit(() => workingDirs.rename(oldSlug, project.slug));
         // One event for the project and its lanes, which the UI reads as "its lanes may have
@@ -345,7 +355,15 @@ class ProjectService
     private ProjectViewModel view(Project project)
     {
         return new ProjectViewModel(project.id, project.name, project.slug, project.description,
-            project.taskAddRule, project.managedByAi, project.aiPaused, workingDirs.hasIndexPage(project.slug));
+            project.managedByAi, project.aiPaused, workingDirs.hasIndexPage(project.slug));
+    }
+
+    /// Fills in what a write leaves to the database: whether the project is managed by AI, and paused.
+    private void readBack(Project project)
+    {
+        auto stored = repository.find(project.id).get;
+        project.managedByAi = stored.managedByAi;
+        project.aiPaused = stored.aiPaused;
     }
 
     /// The first error among the lanes, or null when they are all fine.
@@ -540,19 +558,27 @@ class LaneService
             return laneFailure!Lane(new LanePositionTakenError);
         }
 
+        const wasManaged = repository.ofProject(lane.projectId).any!(other => other.agentsPickUp);
         if (creating)
         {
             repository.add(lane);
             events.lane(Event.created, lane.id, lane.projectId);
-            return laneSuccess(lane);
         }
-
-        if (!repository.update(lane))
+        else
         {
-            return laneFailure!Lane(new LaneNotFoundError);
+            if (!repository.update(lane))
+            {
+                return laneFailure!Lane(new LaneNotFoundError);
+            }
+
+            events.lane(Event.changed, lane.id, lane.projectId);
         }
 
-        events.lane(Event.changed, lane.id, lane.projectId);
+        if (followManaged(projects, repository, lane.projectId, wasManaged))
+        {
+            events.project(Event.changed, lane.projectId);
+        }
+
         return laneSuccess(lane);
     }
 
@@ -570,12 +596,24 @@ class LaneService
         return transactionally(transactions, {
             // Looked up first, since the lane is gone afterwards.
             auto lane = repository.find(id);
-            if (lane.isNull || !projects.lock(lane.get.projectId) || !repository.remove(id))
+            if (lane.isNull || !projects.lock(lane.get.projectId))
             {
                 return laneFailure(new LaneNotFoundError);
             }
 
-            events.lane(Event.deleted, id, lane.get.projectId);
+            const projectId = lane.get.projectId;
+            const wasManaged = repository.ofProject(projectId).any!(other => other.agentsPickUp);
+            if (!repository.remove(id))
+            {
+                return laneFailure(new LaneNotFoundError);
+            }
+
+            events.lane(Event.deleted, id, projectId);
+            if (followManaged(projects, repository, projectId, wasManaged))
+            {
+                events.project(Event.changed, projectId);
+            }
+
             return laneSuccess();
         });
     }
@@ -784,29 +822,29 @@ class TaskService
     }
 
     /**
-     * Creates a task, for save. The lane's project is locked first, so that its add-task rule,
-     * its lane order and whether it is managed by AI stay as read here until the task is in: a
-     * write to any of them takes the same lock.
+     * Creates a task, for save. The lane's project is locked first, so that the lane stays as
+     * read here until the task is in: a write to any of its project's lanes takes the same lock.
      */
     private Result!(Task, ITaskError) create(Task task)
     {
         return transactionally(transactions, {
             auto projectId = repository.projectOfLane(task.laneId);
-            // Looked up again once locked, since the lane may have been deleted before the lock.
-            if (projectId.isNull || !projects.lock(projectId.get) || repository.projectOfLane(task.laneId).isNull)
+            // Looked up once locked, since the lane may have been deleted or changed before the lock.
+            auto lane = projectId.isNull || !projects.lock(projectId.get) ? Nullable!Lane.init
+                : lanes.find(task.laneId);
+            if (lane.isNull)
             {
                 return taskFailure!Task(new LaneNotFoundError);
             }
 
-            if (!repository.acceptsNewTasks(task.laneId))
+            if (!lane.get.acceptsNewTasks)
             {
                 return taskFailure!Task(new LaneClosedToNewTasksError);
             }
 
-            // Only a project managed by AI hands its tasks to the agents. A task added while its
-            // project is not managed by AI stays out of their hands, even if the project is later.
-            auto project = projects.find(projectId.get);
-            task.agentStatus = project.get.managedByAi ? AgentStatus.toBeScheduled.nullable
+            // A task added to a lane the agents do not pick up stays out of their hands, even if
+            // it is later moved to one that they do, or the lane comes to be one.
+            task.agentStatus = lane.get.agentsPickUp ? AgentStatus.toBeScheduled.nullable
                 : Nullable!AgentStatus.init;
 
             try
@@ -898,8 +936,8 @@ class TaskService
 
     /**
      * Hands a task moved to another lane back to the task scheduler, when nothing is under way
-     * for it (its agent status is terminal) and the scheduler would take it up: its project is
-     * managed by AI and its new lane is not a done one. A move is how a person says the task is
+     * for it (its agent status is terminal) and the scheduler would take it up: its new lane is
+     * one the agents pick up and not a done one. A move is how a person says the task is
      * to be worked on again.
      */
     private void rescheduleMoved(UUID id)
@@ -919,7 +957,7 @@ class TaskService
             }
 
             auto project = locked.value.project;
-            if (!project.managedByAi || locked.value.lane.marksDone)
+            if (!locked.value.lane.agentsPickUp || locked.value.lane.marksDone)
             {
                 return false;
             }
@@ -988,14 +1026,14 @@ class TaskService
      *   id = The task's id.
      *
      * Returns: Success, or a failure: `TaskNotFoundError`, `ProjectNotManagedByAiError` for a
-     *   task of a project whose tasks the agents do not work on, `TaskDoneError` for a task in a
-     *   done lane, `TaskBeingScheduledError` for one the scheduler is at now, or
+     *   task of a project whose tasks the agents do not work on, `LaneNotPickedUpError` for a task
+     *   in a lane the agents do not pick up, `TaskDoneError` for a task in a done lane, `TaskBeingScheduledError` for one the scheduler is at now, or
      *   `TaskBeingWorkedOnError` for one an agent is working on now.
      */
     OperationResult!ITaskError reschedule(UUID id)
     {
         // Locked, so that the project is not taken off AI management, nor the task put in a done
-        // lane, between the checks and the write.
+        // lane or one the agents do not pick up, between the checks and the write.
         return transactionally(transactions, {
             auto locked = lockTask(id);
             if (locked.isFailure)
@@ -1007,6 +1045,11 @@ class TaskService
             if (!project.managedByAi)
             {
                 return taskFailure(new ProjectNotManagedByAiError);
+            }
+
+            if (!locked.value.lane.agentsPickUp)
+            {
+                return taskFailure(new LaneNotPickedUpError);
             }
 
             if (locked.value.lane.marksDone)
@@ -1545,8 +1588,13 @@ class TaskNotFoundError : ITaskError
 {
 }
 
-/// The lane does not take new tasks, as its project only takes them in its first lane.
+/// The lane does not take new tasks.
 class LaneClosedToNewTasksError : ITaskError
+{
+}
+
+/// The task is in a lane the AI agents do not pick up tasks from.
+class LaneNotPickedUpError : ITaskError
 {
 }
 
@@ -1704,6 +1752,31 @@ private E checkLane(E)(Lane lane)
 }
 
 /**
+ * Has a project's AI agents follow it being managed by AI, after a write to its lanes in the
+ * open transaction: they are paused when the project stops being managed, as none of its lanes
+ * is one the agents pick up any more, and started when it starts being managed.
+ *
+ * Params:
+ *   projects = Where the project is.
+ *   lanes = Where its lanes are, as written.
+ *   projectId = The project's id.
+ *   wasManaged = Whether it was managed by AI before the write.
+ *
+ * Returns: Whether being managed changed, and with it whether the agents are paused.
+ */
+private bool followManaged(IProjectRepository projects, ILaneRepository lanes, UUID projectId, bool wasManaged)
+{
+    const managed = lanes.ofProject(projectId).any!(lane => lane.agentsPickUp);
+    if (managed == wasManaged)
+    {
+        return false;
+    }
+
+    projects.setAiPaused(projectId, !managed);
+    return true;
+}
+
+/**
  * The task check constraints in sql/init.sql, checked before the write so that a bad field
  * comes back as an error rather than as a failed write.
  *
@@ -1784,6 +1857,8 @@ private LaneViewModel toViewModel(Lane lane)
     view.position = lane.position;
     view.color = lane.color;
     view.marksDone = lane.marksDone;
+    view.acceptsNewTasks = lane.acceptsNewTasks;
+    view.agentsPickUp = lane.agentsPickUp;
     return view;
 }
 
@@ -1797,13 +1872,15 @@ private Lane toModel(LaneViewModel view)
     lane.position = view.position;
     lane.color = view.color;
     lane.marksDone = view.marksDone;
+    lane.acceptsNewTasks = view.acceptsNewTasks;
+    lane.agentsPickUp = view.agentsPickUp;
     return lane;
 }
 
-/// The project a client sent, to be written. Whether its agents are paused is not the client's to say.
+/// The project a client sent, to be written. Whether it is managed by AI, and paused, is not the client's to say.
 private Project toModel(ProjectViewModel view)
 {
-    return new Project(view.id, view.name, view.slug, view.description, view.taskAddRule, view.managedByAi);
+    return new Project(view.id, view.name, view.slug, view.description);
 }
 
 /**
@@ -2020,7 +2097,6 @@ version (unittest)
     import std.uuid : randomUUID;
 
     import config : Config;
-    import model : TaskAddRule;
 
     /// What an IEventPublisher was told about one resource.
     private struct Published
@@ -2132,13 +2208,20 @@ version (unittest)
 
         Project[] all()
         {
-            return database.projects;
+            return database.projects.map!(project => derive(project)).array;
         }
 
         Nullable!Project find(UUID id)
         {
             auto found = database.projects.filter!(project => project.id == id);
-            return found.empty ? Nullable!Project.init : found.front.nullable;
+            return found.empty ? Nullable!Project.init : derive(found.front).nullable;
+        }
+
+        /// The project with managedByAi read from its lanes, as the repository's select does.
+        private Project derive(Project project)
+        {
+            project.managedByAi = database.lanes.canFind!(lane => lane.projectId == project.id && lane.agentsPickUp);
+            return project;
         }
 
         bool lock(UUID id)
@@ -2161,11 +2244,13 @@ version (unittest)
 
         bool update(Project project)
         {
-            foreach (ref stored; database.projects)
+            foreach (stored; database.projects)
             {
                 if (stored.id == project.id)
                 {
-                    stored = project;
+                    stored.name = project.name;
+                    stored.slug = project.slug;
+                    stored.description = project.description;
                     return true;
                 }
             }
@@ -2205,11 +2290,24 @@ version (unittest)
 
             database.removedLanes = removed;
             database.lanes = database.lanes.filter!(lane => !removed.canFind(lane.id)).array;
-            foreach (lane; lanes.filter!(lane => lane.id == UUID.init))
+            foreach (lane; lanes)
             {
-                lane.id = randomUUID;
                 lane.projectId = project.id;
-                database.lanes ~= lane;
+                if (lane.id == UUID.init)
+                {
+                    lane.id = randomUUID;
+                    database.lanes ~= lane;
+                }
+                else
+                {
+                    foreach (ref stored; database.lanes)
+                    {
+                        if (stored.id == lane.id)
+                        {
+                            stored = lane;
+                        }
+                    }
+                }
             }
 
             return true;
@@ -2375,14 +2473,6 @@ version (unittest)
         {
             auto found = database.lanes.filter!(lane => lane.id == laneId);
             return found.empty ? Nullable!UUID.init : found.front.projectId.nullable;
-        }
-
-        bool acceptsNewTasks(UUID laneId)
-        {
-            auto lane = database.lanes.filter!(candidate => candidate.id == laneId).front;
-            auto project = database.projects.filter!(candidate => candidate.id == lane.projectId).front;
-            return project.taskAddRule == TaskAddRule.anyLane || !database.lanes.canFind!(
-                other => other.projectId == lane.projectId && other.position.get < lane.position.get);
         }
 
         Task add(Task task)
@@ -2732,12 +2822,27 @@ version (unittest)
         return project;
     }
 
-    /// A lane already in `database`, of the project with id `projectId`.
-    private Lane storedLane(MockDatabase database, UUID projectId, string name, int position)
+    /**
+     * A lane already in `database`, of the project with id `projectId`, which takes new tasks
+     * when it is the first lane.
+     */
+    private Lane storedLane(MockDatabase database, UUID projectId, string name, int position, bool marksDone = false)
     {
-        auto lane = new Lane(randomUUID, projectId, name, position, "#000000", false);
+        auto lane = new Lane(randomUUID, projectId, name, position, "#000000", marksDone, position == 0);
         database.lanes ~= lane;
         return lane;
+    }
+
+    /// Has the agents pick up every lane `project` has in `database`, and its agents running.
+    private void manage(MockDatabase database, Project project)
+    {
+        foreach (lane; database.lanes.filter!(lane => lane.projectId == project.id))
+        {
+            lane.agentsPickUp = true;
+        }
+
+        project.managedByAi = true;
+        project.aiPaused = false;
     }
 }
 
@@ -2987,10 +3092,10 @@ unittest
     assert(service.remove(check.id).isSuccessful);
     assert(cast(TaskNotFoundError) service.remove(check.id).error);
 
-    // Only a task of a project managed by AI is to be scheduled; any other gets no status.
+    // Only a task in a lane the agents pick up is to be scheduled; any other gets no status.
     assert(database.agentStatuses[check.id].isNull);
     assert(!check.handedToAgents);
-    website.managedByAi = true;
+    ideas.agentsPickUp = true;
     auto draft = service.save(new TaskViewModel(UUID.init, ideas.id, "Draft the copy", 0)).value;
     assert(database.agentStatuses[draft.id] == AgentStatus.toBeScheduled);
     assert(draft.handedToAgents);
@@ -3045,11 +3150,10 @@ unittest
     auto events = new MockEventPublisher;
     auto service = taskServiceOver(database, events);
     auto managed = storedProject(database, "AI test");
-    managed.managedByAi = true;
     auto unmanaged = storedProject(database, "Q3 finance");
     auto toDo = storedLane(database, managed.id, "To do", 0);
-    auto done = new Lane(randomUUID, managed.id, "Done", 1, "#5fd6ab", true);
-    database.lanes ~= done;
+    auto done = storedLane(database, managed.id, "Done", 1, true);
+    manage(database, managed);
     auto declined = storedTask(database, toDo.id, "Write the poem", 0);
     database.agentStatuses[declined.id] = AgentStatus.declined.nullable;
 
@@ -3066,7 +3170,57 @@ unittest
     auto ideas = storedLane(database, unmanaged.id, "Ideas", 0);
     assert(cast(ProjectNotManagedByAiError) service.reschedule(storedTask(database, ideas.id, "Sum it", 0).id).error);
     assert(cast(TaskNotFoundError) service.reschedule(randomUUID).error);
+    toDo.agentsPickUp = false;
+    database.agentStatuses[declined.id] = AgentStatus.declined.nullable;
+    assert(cast(LaneNotPickedUpError) service.reschedule(declined.id).error);
     assert(events.notes == [declined.id]);
+}
+
+// A project is managed by AI while it has a lane the agents pick up, and its agents follow that.
+unittest
+{
+    auto database = new MockDatabase;
+    auto events = new MockEventPublisher;
+    auto projects = serviceOver(database, events);
+    auto lanes = laneServiceOver(database, events);
+    auto tasks = taskServiceOver(database, events);
+
+    auto lane(UUID id, string name, int position, bool acceptsNewTasks, bool agentsPickUp)
+    {
+        return new LaneViewModel(id, UUID.init, name, position, "#000000", false, acceptsNewTasks, agentsPickUp);
+    }
+
+    auto created = projects.save(new ProjectWithLanes(new ProjectViewModel("Q3 finance", null),
+        [lane(UUID.init, "To do", 0, true, false), lane(UUID.init, "Doing", 1, false, false)]));
+    auto project = created.value.project;
+    auto toDo = created.value.lanes[0].id;
+    auto doing = created.value.lanes[1].id;
+    assert(!project.managedByAi && project.aiPaused);
+    assert(cast(LaneClosedToNewTasksError) tasks.save(new TaskViewModel(UUID.init, doing, "Late", 0)).error);
+    auto plain = tasks.save(new TaskViewModel(UUID.init, toDo, "Sum it", 0)).value;
+    assert(database.agentStatuses[plain.id].isNull);
+
+    auto saved = projects.save(new ProjectWithLanes(new ProjectViewModel(project.id, "Q3 finance", "q3-finance"),
+        [lane(toDo, "To do", 0, true, true), lane(doing, "Doing", 1, true, true)]));
+    assert(saved.value.project.managedByAi && !saved.value.project.aiPaused);
+    auto handed = tasks.save(new TaskViewModel(UUID.init, doing, "Check it", 0)).value;
+    assert(database.agentStatuses[handed.id] == AgentStatus.toBeScheduled);
+
+    // A save of the project on its own leaves it managed, and its agents running.
+    auto renamed = projects.save(new ProjectViewModel(project.id, "Q3 numbers", "q3-finance"));
+    assert(renamed.value.managedByAi && !renamed.value.aiPaused);
+
+    // The project stops being managed once no lane is picked up, whichever write does it.
+    events.projects = null;
+    assert(lanes.save(lane(toDo, "To do", 0, true, false)).isSuccessful);
+    assert(events.projects.length == 0);
+    assert(lanes.remove(doing).isSuccessful);
+    assert(projects.get(project.id).value.aiPaused && !projects.get(project.id).value.managedByAi);
+    assert(events.projects == [Published(Event.changed, project.id)]);
+
+    auto added = lanes.save(new LaneViewModel(UUID.init, project.id, "Doing", 1, "#000000", false, false, true));
+    assert(added.isSuccessful && !projects.get(project.id).value.aiPaused);
+    assert(events.projects == [Published(Event.changed, project.id), Published(Event.changed, project.id)]);
 }
 
 // TaskService: clearing a lane deletes its tasks and no others.
@@ -3098,11 +3252,10 @@ unittest
     auto events = new MockEventPublisher;
     auto service = taskServiceOver(database, events);
     auto managed = storedProject(database, "AI test");
-    managed.managedByAi = true;
     auto toDo = storedLane(database, managed.id, "To do", 0);
     auto doing = storedLane(database, managed.id, "Doing", 1);
-    auto done = new Lane(randomUUID, managed.id, "Done", 2, "#5fd6ab", true);
-    database.lanes ~= done;
+    auto done = storedLane(database, managed.id, "Done", 2, true);
+    manage(database, managed);
     auto poem = storedTask(database, toDo.id, "Write the poem", 0);
     auto essay = storedTask(database, toDo.id, "Write the essay", 1);
     database.agentStatuses[poem.id] = AgentStatus.declined.nullable;
@@ -3305,7 +3458,8 @@ unittest
     auto events = new MockEventPublisher;
     auto service = serviceOver(database, events);
     auto managed = storedProject(database, "Q3 finance");
-    managed.managedByAi = true;
+    storedLane(database, managed.id, "To do", 0);
+    manage(database, managed);
     auto unmanaged = storedProject(database, "Website");
 
     assert(service.setAiPaused(managed.id, true).isSuccessful && managed.aiPaused);

@@ -15,11 +15,7 @@ create table if not exists projects (
 							  and slug = lower(slug)
 							  and slug is nfc normalized),
 	description   text not null default '',
-	task_add_rule text not null default 'first_lane'
-					   check (task_add_rule in ('first_lane', 'any_lane')),
-	managed_by_ai boolean not null default false,
-	ai_paused     boolean not null default false,
-	check (managed_by_ai or ai_paused)
+	ai_paused     boolean not null default true
 );
 
 create table if not exists lanes (
@@ -29,7 +25,10 @@ create table if not exists lanes (
 	position   integer not null check (position >= 0),
 	color      text not null check (color ~ '^#[0-9a-f]{6}$'),
 	-- Whether the tasks in this lane count as done.
-	marks_done boolean not null default false,
+	marks_done        boolean not null default false,
+	accepts_new_tasks boolean not null default false,
+	-- Whether AI agents take up the tasks in this lane.
+	agents_pick_up    boolean not null default false,
 	-- Deferrable so lanes can swap positions inside one transaction.
 	unique (project_id, position) deferrable initially immediate
 );

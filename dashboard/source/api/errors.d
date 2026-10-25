@@ -32,7 +32,8 @@ import service : AgentModelMissingError, AgentNameMissingError, AgentNameTakenEr
     AgentRuntimeMissingError, BeforeTaskNotFoundError, BeforeTaskNotInLaneError, EffortNotTakenError,
     IAgentError, ILaneError, IProjectError, ITaskError, LabelBlankError, LabelRepeatedError,
     LaneClosedToNewTasksError, LaneColorInvalidError, LaneListedTwiceError, LaneNameMissingError,
-    LaneNotFoundError, LaneOfOtherProjectError, LanePositionNegativeError, LanePositionTakenError,
+    LaneNotFoundError, LaneNotPickedUpError, LaneOfOtherProjectError, LanePositionNegativeError,
+    LanePositionTakenError,
     MaxParallelTasksInvalidError, ModelNotOfferedError, NameReservedError, NameTakenError, ProjectNameMissingError,
     ProjectNameUnusableError, ProjectNotFoundError, ProjectNotManagedByAiError, RuntimeNotFoundError,
     SlugInvalidError, SlugReservedError, SlugTakenError, TaskBeforeItselfError, TaskBeingScheduledError,
@@ -418,7 +419,7 @@ HTTPStatusException toHTTPError(ITaskError error, TaskViewModel task)
 
     if (cast(LaneClosedToNewTasksError) error)
     {
-        return new HTTPStatusException(HTTPStatus.conflict, "The project only takes new tasks in its first lane.");
+        return new HTTPStatusException(HTTPStatus.conflict, "The lane does not take new tasks.");
     }
 
     if (cast(TaskLeavesProjectError) error)
@@ -451,6 +452,12 @@ HTTPStatusException toHTTPError(ITaskError error, TaskViewModel task)
     {
         return new HTTPStatusException(HTTPStatus.conflict,
             "The task's project is not managed by AI agents, so no agent works on its tasks.");
+    }
+
+    if (cast(LaneNotPickedUpError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            "The task's lane is not one the AI agents pick up tasks from.");
     }
 
     if (cast(TaskDoneError) error)

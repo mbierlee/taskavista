@@ -20,33 +20,6 @@ import std.traits : EnumMembers;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
-/**
- * How a new task gets placed on the board, mirroring the
- * task_add_rule check constraint in sql/init.sql.
- */
-enum TaskAddRule : string
-{
-    firstLane = "first_lane",
-    anyLane = "any_lane"
-}
-
-/**
- * Converts a task_add_rule column value to its enum member. Throws on anything
- * the schema's check constraint would not have allowed in the first place.
- */
-TaskAddRule toTaskAddRule(string value) @safe
-{
-    foreach (rule; EnumMembers!TaskAddRule)
-    {
-        if (rule == value)
-        {
-            return rule;
-        }
-    }
-
-    throw new Exception(text("Not a task_add_rule the schema allows: ", value));
-}
-
 /// How far the agents got with a task: a tasks.agent_status value.
 enum AgentStatus : string
 {
@@ -92,39 +65,35 @@ class Project
     string slug;
     /// What the project is about, and directions for its AI agents. Empty for none.
     string description;
-    TaskAddRule taskAddRule = TaskAddRule.firstLane;
-    /// Whether AI agents may add, edit and move the project's tasks.
+    /**
+     * Whether the project is managed by AI: whether any of its lanes is one the AI agents pick
+     * up. Not a column of its own, so it is read but never written.
+     */
     bool managedByAi;
     /**
-     * Whether the project's AI agents are paused: always, for a project not managed by AI. It
-     * follows managedByAi when that changes, and is otherwise written only by
-     * `IProjectRepository.setAiPaused`.
+     * Whether the project's AI agents are paused: always, for a project not managed by AI. The
+     * service has it follow managedByAi when that changes.
      */
-    bool aiPaused;
+    bool aiPaused = true;
 
     this() @safe
     {
     }
 
-    this(string name, string slug, string description = null,
-        TaskAddRule taskAddRule = TaskAddRule.firstLane, bool managedByAi = false) @safe
+    this(string name, string slug, string description = null) @safe
     {
         this.name = name;
         this.slug = slug;
         this.description = description;
-        this.taskAddRule = taskAddRule;
-        this.managedByAi = managedByAi;
     }
 
-    this(UUID id, string name, string slug, string description = null,
-        TaskAddRule taskAddRule = TaskAddRule.firstLane, bool managedByAi = false,
-        bool aiPaused = false) @safe
+    this(UUID id, string name, string slug, string description = null, bool managedByAi = false,
+        bool aiPaused = true) @safe
     {
         this.id = id;
         this.name = name;
         this.slug = slug;
         this.description = description;
-        this.taskAddRule = taskAddRule;
         this.managedByAi = managedByAi;
         this.aiPaused = aiPaused;
     }
@@ -146,12 +115,17 @@ class Lane
     string color;
     /// Whether the tasks in this lane count as done.
     bool marksDone;
+    /// Whether a new task may be added to this lane.
+    bool acceptsNewTasks;
+    /// Whether AI agents take up the tasks in this lane.
+    bool agentsPickUp;
 
     this() @safe
     {
     }
 
-    this(UUID id, UUID projectId, string name, int position, string color, bool marksDone) @safe
+    this(UUID id, UUID projectId, string name, int position, string color, bool marksDone,
+        bool acceptsNewTasks = false, bool agentsPickUp = false) @safe
     {
         this.id = id;
         this.projectId = projectId;
@@ -159,6 +133,8 @@ class Lane
         this.position = position;
         this.color = color;
         this.marksDone = marksDone;
+        this.acceptsNewTasks = acceptsNewTasks;
+        this.agentsPickUp = agentsPickUp;
     }
 }
 

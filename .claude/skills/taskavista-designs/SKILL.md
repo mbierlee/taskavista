@@ -52,9 +52,9 @@ rather than guess. Everything that is not a `.dc.html` (the canvas runtime `supp
 
 **When the two disagree, the mockups win on looks and the wireframes win on behaviour.**
 The wireframes carry annotations the mockups drop — e.g. on search, that picking a result opens
-that task's project board with the card highlighted, and on project settings, that the first
-lane in the list is where new tasks land. Read the annotations on the wireframe of whatever
-screen you are building.
+that task's project board with the card highlighted, and on project settings, that any lane
+with Agents ticked makes the project AI-managed. Read the annotations on the wireframe of
+whatever screen you are building.
 
 ## Reading a canvas file
 

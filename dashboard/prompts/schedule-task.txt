@@ -44,7 +44,8 @@ means that agent, not you.
 </agents>
 
 These are the project's lanes, in the order they appear on the board, each with its ID and
-name. A lane marked "done" is one whose tasks count as done, which closes them.
+name. A lane marked "done" is one whose tasks count as done, which closes them. A lane marked
+"no agents" is one no agent works in, so a task is never given an agent there.
 
 <lanes>
 <lane list>

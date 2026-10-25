@@ -69,7 +69,7 @@ consecutive positions.
 
 `rescheduleTask` is a last resort for a task no agent is working on, meant for the agents in a
 chat: a person who finds a task stuck asks the agent to get it picked up. It is also how a task
-added while its project was not managed by AI, which has no agent status and so stays out of the
+created in a lane the agents do not pick up, which has no agent status and so stays out of the
 agents' hands (its `handedToAgents` is `false`), is handed to them: the task details panel's
 "Schedule for AI" button calls it. It sets the task's
 `agent_status` back to `to_be_scheduled` and clears its agent, and the `TaskScheduler` loop in `agent.d`
@@ -77,7 +77,7 @@ takes it up on its next round as it does a new task. Clearing the agent is neede
 only takes up tasks with none.
 
 It refuses what the loop would never take up, so that a 200 means the task will be scheduled: a
-task of a project not managed by AI (whose tasks have no agent status at all), and one in a done
+task of a project not managed by AI, one in a lane the agents do not pick up, and one in a done
 lane. It also refuses a task being scheduled or worked on, so that it does not undo the
 scheduler's or the agent's work as it lands; the update is conditional on the status, so this
 holds even when the two meet. A paused

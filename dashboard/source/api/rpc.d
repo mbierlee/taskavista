@@ -29,7 +29,6 @@ import std.uuid : UUID;
 
 import agent : AgentDrafter, ProjectDrafter;
 import api.errors : toHTTPError;
-import model : TaskAddRule;
 import result : Result;
 import service : AgentService, IAgentError, ProjectService, TaskService;
 import servicemodel : ProjectWithLanes;
@@ -56,6 +55,8 @@ struct LaneDraft
     string name;
     string color;
     @optional bool marksDone;
+    @optional bool acceptsNewTasks;
+    @optional bool agentsPickUp;
 }
 
 /// The slug the server made for a new project from its name.
@@ -137,22 +138,21 @@ interface RpcApi
 
     /**
      * Creates the project with these lanes, in this order, or nothing at all.
-     * A project managed by AI starts with its agents running.
+     * A project with a lane the agents pick up is managed by AI, and starts
+     * with its agents running.
      */
     @method(HTTPMethod.POST) @path("createProject")
-    CreateProjectResult createProject(string name, string description = null,
-        TaskAddRule taskAddRule = TaskAddRule.firstLane, bool managedByAi = false,
-        LaneDraft[] lanes = null) @safe;
+    CreateProjectResult createProject(string name, string description = null, LaneDraft[] lanes = null) @safe;
 
     /**
-     * Gives the project this name, description, rule, AI setting and exactly
-     * these lanes, in this order, or changes nothing. A lane of the project
-     * left out is deleted. Turning the AI setting off pauses the project's
-     * agents, and turning it on starts them.
+     * Gives the project this name, description and exactly these lanes, in
+     * this order, or changes nothing. A lane of the project left out is
+     * deleted. Saving it with no lane the agents pick up, when it had one,
+     * pauses its agents, and the other way round starts them.
      */
     @method(HTTPMethod.POST) @path("saveProjectSettings")
     SaveProjectSettingsResult saveProjectSettings(UUID projectId, string name, string description,
-        TaskAddRule taskAddRule, bool managedByAi, LaneDraft[] lanes) @safe;
+        LaneDraft[] lanes) @safe;
 
     /**
      * Pauses the project's AI agents, or resumes them, and changes nothing
@@ -261,13 +261,12 @@ class RpcController : RpcApi
         return ClearLaneResult();
     }
 
-    override CreateProjectResult createProject(string name, string description,
-        TaskAddRule taskAddRule, bool managedByAi, LaneDraft[] lanes) @trusted
+    override CreateProjectResult createProject(string name, string description, LaneDraft[] lanes) @trusted
     {
         enforceHTTP(lanes.filter!(lane => !lane.id.isNull).empty, HTTPStatus.badRequest,
             "A new project's lanes have no ids yet.");
 
-        auto project = new ProjectViewModel(name, null, description, taskAddRule, managedByAi);
+        auto project = new ProjectViewModel(name, null, description);
         auto created = projects.save(new ProjectWithLanes(project, toLanes(lanes)));
         if (created.isFailure)
         {
@@ -278,7 +277,7 @@ class RpcController : RpcApi
     }
 
     override SaveProjectSettingsResult saveProjectSettings(UUID projectId, string name,
-        string description, TaskAddRule taskAddRule, bool managedByAi, LaneDraft[] lanes) @trusted
+        string description, LaneDraft[] lanes) @trusted
     {
         auto stored = projects.get(projectId);
         if (stored.isFailure)
@@ -294,8 +293,7 @@ class RpcController : RpcApi
         // The slug is made again only on a rename, so a save that leaves the
         // name alone never moves the project to a new URL.
         const renamed = name != stored.value.name;
-        auto project = new ProjectViewModel(projectId, name, renamed ? null : stored.value.slug, description,
-            taskAddRule, managedByAi);
+        auto project = new ProjectViewModel(projectId, name, renamed ? null : stored.value.slug, description);
         auto saved = projects.save(new ProjectWithLanes(project, toLanes(lanes)));
         if (saved.isFailure)
         {
@@ -391,7 +389,7 @@ private LaneViewModel[] toLanes(LaneDraft[] drafts)
     foreach (index, draft; drafts.enumerate)
     {
         lanes ~= new LaneViewModel(draft.id.isNull ? UUID.init : draft.id.get, UUID.init, draft.name,
-            cast(int) index, draft.color, draft.marksDone);
+            cast(int) index, draft.color, draft.marksDone, draft.acceptsNewTasks, draft.agentsPickUp);
     }
 
     return lanes;

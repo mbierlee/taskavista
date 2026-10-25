@@ -35,7 +35,7 @@ lanes, tasks.
 
 | Part | Role | Module | For projects |
 |---|---|---|---|
-| Model | one row of the table, every column of it, exposed or not, plus any enum and its converter; what the repositories read and write, never sent over the wire | `model.d` | `Project`, `TaskAddRule`, `toTaskAddRule` |
+| Model | one row of the table, every column of it, exposed or not, plus any enum and its converter; what the repositories read and write, never sent over the wire | `model.d` | `Project`; for tasks, `AgentStatus`, `toAgentStatus` |
 | View model | the resource as the APIs send and receive it: only what the web UI and the agents need, which may be worked out from several columns or from outside the database (`canBeOpened`, `workingAgentId`); never reaches a repository | `viewmodel.d` | `ProjectViewModel` |
 | Service model | several view models written or read together | `servicemodel.d` | `ProjectWithLanes` |
 | Repository interface | what can be read and written, documented in Ddoc; everything but `app.d` knows only this | `repository/package.d` | `IProjectRepository` |
@@ -54,7 +54,7 @@ id where it must not.
 `Result` and `OperationResult`, in `result.d`, are what a service method returns.
 
 The dependencies run one way: `api/rest.d` and `api/rpc.d` import `api/errors.d`, `service.d`
-and `viewmodel.d` (and `model.d` only for an enum, such as `TaskAddRule`), never each other and
+and `viewmodel.d` (and `model.d` only for an enum, such as `AgentStatus`), never each other and
 never a repository; `api/errors.d` imports `service.d` and `viewmodel.d`; `service.d` imports the
 repository interfaces, `result.d`, `servicemodel.d`, `helpers.d`, `viewmodel.d` and `model.d`;
 `repository/postgres.d` imports the interfaces and `model.d`; `viewmodel.d` imports `model.d`
@@ -223,10 +223,10 @@ These all cost time on the projects resource. None of them produce an obvious er
   needs `@viaBody()` — with no argument, so the whole body maps to it. Without it, `PUT` silently
   looks in the query string.
 - **An enumerated `text` column needs an enum plus a hand-written converter.** `std.conv.to`
-  matches enum *member names*, so `to!TaskAddRule("first_lane")` fails on a
-  `enum TaskAddRule : string { firstLane = "first_lane" }`. Copy the `toTaskAddRule` loop over
+  matches enum *member names*, so `to!AgentStatus("to_be_scheduled")` fails on a
+  `enum AgentStatus : string { toBeScheduled = "to_be_scheduled" }`. Copy the `toAgentStatus` loop over
   `EnumMembers`. Going the other way, `cast(string)` is enough. On the wire vibe serializes such
-  an enum as its **value** (`"first_lane"`) and validates on the way in, which is what you want.
+  an enum as its **value** (`"to_be_scheduled"`) and validates on the way in, which is what you want.
 - **`failure(new SomeError)` makes a result of the error's own class.** `failure` infers its
   error type from the argument, so it gives a `Result!(T, ProjectNotFoundError)`, which does not
   convert to the `Result!(T, IProjectError)` the method returns; and `failure!IProjectError(…)`
@@ -289,7 +289,7 @@ deleted mock row does not come back and has to be reinserted by hand with its or
 Confirm the table is as you found it when finished:
 
 ```bash
-docker exec -i taskavista-postgres psql -U taskavista -d "$(jq -r .database.name dashboard/config.json)" -tAc 'select count(*) from lanes;'
+docker exec -i taskavista-postgres psql -U taskavista -d "$(jq -r .database.name dashboard/config-dev.json)" -tAc 'select count(*) from lanes;'
 ```
 
 (`lanes` throughout this section is a stand-in for whatever resource you are adding — there is no

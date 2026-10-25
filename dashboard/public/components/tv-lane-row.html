@@ -15,11 +15,13 @@
     opacity: 0.4;
   }
 
+  /* The columns come from the list, which lines its head up with them. */
   .row {
     position: relative;
-    display: flex;
+    display: grid;
+    grid-template-columns: var(--lane-columns);
     align-items: center;
-    gap: 12px;
+    gap: var(--lane-gap);
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: var(--r-ctl);
@@ -45,13 +47,11 @@
   }
 
   .handle {
-    flex: none;
     letter-spacing: 1px;
     cursor: grab;
   }
 
   .name {
-    flex: 1;
     min-width: 0;
     padding: 2px 4px;
     margin: -2px -4px;
@@ -69,7 +69,7 @@
   }
 
   .swatch {
-    flex: none;
+    justify-self: center;
     width: 22px;
     height: 22px;
     padding: 0;
@@ -85,22 +85,43 @@
       0 0 0 4px var(--accent);
   }
 
-  /* A fixed width, so the swatch before it lines up from row to row
-     whatever the count says, or when a new lane has none. */
-  .count {
-    flex: none;
-    width: 4.75em;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    font-size: 12px;
-    color: var(--muted);
+  .flag {
+    appearance: none;
+    justify-self: center;
+    display: grid;
+    place-content: center;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    border: 1px solid var(--muted-2);
+    border-radius: 4px;
+    cursor: pointer;
   }
-  :host(:not([count])) .count {
-    display: none;
+  .flag:checked {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+  .flag:checked::before {
+    content: "✓";
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 16px;
+    color: var(--accent-ink);
+  }
+  .flag:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
-  .remove {
-    flex: none;
+  /* Its column stays when there is no count, as in a new project, so the
+     rows line up with the list's head; a narrow list gives it no width. */
+  .count {
+    overflow: hidden;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    text-align: right;
+    font-size: 12px;
+    color: var(--muted);
   }
   .remove:hover:not(:disabled) {
     color: var(--danger);
@@ -124,6 +145,9 @@
     aria-haspopup="dialog"
     aria-expanded="false"
   ></button>
+  <input class="flag intake" type="checkbox" data-flag="intake" />
+  <input class="flag closing" type="checkbox" data-flag="closing" />
+  <input class="flag agents" type="checkbox" data-flag="agents" />
   <span class="count"></span>
   <button class="btn ghost remove" type="button">✕</button>
 </div>

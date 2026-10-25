@@ -20,7 +20,7 @@ import std.datetime.systime : SysTime;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
-import model : TaskAddRule, defaultEffort, defaultMaxParallelTasks;
+import model : defaultEffort, defaultMaxParallelTasks;
 
 /// A project.
 class ProjectViewModel
@@ -35,8 +35,10 @@ class ProjectViewModel
     @optional string slug;
     /// What the project is about, and directions for its AI agents. Empty for none.
     @optional string description;
-    @optional TaskAddRule taskAddRule = TaskAddRule.firstLane;
-    /// Whether AI agents may add, edit and move the project's tasks.
+    /**
+     * Whether AI agents may add, edit and move the project's tasks: whether any of its lanes is
+     * one they pick up. Read-only, and ignored in a body.
+     */
     @optional bool managedByAi;
     /**
      * Whether the project's AI agents are paused: always, for a project not managed by AI.
@@ -55,22 +57,19 @@ class ProjectViewModel
     {
     }
 
-    this(string name, string slug, string description = null,
-        TaskAddRule taskAddRule = TaskAddRule.firstLane, bool managedByAi = false) @safe
+    this(string name, string slug, string description = null) @safe
     {
         this.name = name;
         this.slug = slug;
         this.description = description;
-        this.taskAddRule = taskAddRule;
-        this.managedByAi = managedByAi;
     }
 
-    this(UUID id, string name, string slug, string description = null,
-        TaskAddRule taskAddRule = TaskAddRule.firstLane, bool managedByAi = false,
+    this(UUID id, string name, string slug, string description = null, bool managedByAi = false,
         bool aiPaused = false, bool canBeOpened = false) @safe
     {
-        this(name, slug, description, taskAddRule, managedByAi);
+        this(name, slug, description);
         this.id = id;
+        this.managedByAi = managedByAi;
         this.aiPaused = aiPaused;
         this.canBeOpened = canBeOpened;
     }
@@ -96,12 +95,17 @@ class LaneViewModel
     string color;
     /// Whether the tasks in this lane count as done. Optional on the wire, and false when left out.
     @optional bool marksDone;
+    /// Whether a new task may be added to this lane. Optional on the wire, and false when left out.
+    @optional bool acceptsNewTasks;
+    /// Whether AI agents take up the tasks in this lane. Optional on the wire, and false when left out.
+    @optional bool agentsPickUp;
 
     this() @safe
     {
     }
 
-    this(UUID id, UUID projectId, string name, int position, string color, bool marksDone) @safe
+    this(UUID id, UUID projectId, string name, int position, string color, bool marksDone,
+        bool acceptsNewTasks = false, bool agentsPickUp = false) @safe
     {
         this.id = id;
         this.projectId = projectId;
@@ -109,6 +113,8 @@ class LaneViewModel
         this.position = position;
         this.color = color;
         this.marksDone = marksDone;
+        this.acceptsNewTasks = acceptsNewTasks;
+        this.agentsPickUp = agentsPickUp;
     }
 }
 

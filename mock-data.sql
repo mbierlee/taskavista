@@ -4,23 +4,25 @@
 -- database with something in it. Re-runnable — it seeds an empty table and
 -- does nothing otherwise.
 
-insert into projects (name, slug, description, task_add_rule, managed_by_ai, ai_paused)
-select name, slug, description, task_add_rule, managed_by_ai, not managed_by_ai
+insert into projects (name, slug, description, ai_paused)
+select name, slug, description, not managed
 from (values
 	('Website relaunch', 'website-relaunch',
 		'The new marketing site, from design to launch day. The old site stays up until the new one has passed review.',
-		'first_lane', false),
-	('Q3 finance', 'q3-finance', '', 'any_lane', false),
-	('Локализация сайта', 'локализация-сайта', 'Перевод сайта на русский, японский, арабский и греческий.',
-		'any_lane', false),
+		false),
+	('Q3 finance', 'q3-finance', '', false),
+	('Локализация сайта', 'локализация-сайта', 'Перевод сайта на русский, японский, арабский и греческий.', false),
 	('AI test', 'ai-test',
 		'A playground for the AI agents. Keep task descriptions short, and leave tasks in "Done" alone.',
-		'first_lane', true)
-) as seed(name, slug, description, task_add_rule, managed_by_ai)
+		true)
+) as seed(name, slug, description, managed)
 where not exists (select 1 from projects);
 
-insert into lanes (project_id, name, position, color, marks_done)
-select p.id, seed.name, seed.position, seed.color, seed.marks_done
+-- Each project's lanes take new tasks in the first lane only, or in any, and are picked up by
+-- the agents in all of them or in none.
+insert into lanes (project_id, name, position, color, marks_done, accepts_new_tasks, agents_pick_up)
+select p.id, seed.name, seed.position, seed.color, seed.marks_done,
+	seed.position = 0 or rule.any_lane, rule.managed
 from (values
 	('website-relaunch', 'To do', 0, '#8fa6ff', false),
 	('website-relaunch', 'In progress', 1, '#e8b154', false),
@@ -38,6 +40,12 @@ from (values
 	('ai-test', 'In progress', 1, '#e8b154', false),
 	('ai-test', 'Done', 2, '#5fd6ab', true)
 ) as seed(slug, name, position, color, marks_done)
+join (values
+	('website-relaunch', false, false),
+	('q3-finance', true, false),
+	('локализация-сайта', true, false),
+	('ai-test', false, true)
+) as rule(slug, any_lane, managed) on rule.slug = seed.slug
 join projects p on p.slug = seed.slug
 where not exists (select 1 from lanes);
 

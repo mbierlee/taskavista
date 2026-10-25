@@ -101,8 +101,7 @@ interface IProjectRepository
     /**
      * Inserts a project.
      *
-     * Fills in the id the database assigned it, and whether its AI agents are paused, which
-     * they are unless it is managed by AI.
+     * Fills in the id the database assigned it. Its aiPaused is written as it is.
      *
      * Params:
      *   project = The project to insert.
@@ -112,10 +111,8 @@ interface IProjectRepository
     Project add(Project project);
 
     /**
-     * Writes a project back over the row with its id.
-     *
-     * Fills in whether its AI agents are paused now (see pausedOnceManaged); the aiPaused it
-     * carries is not written.
+     * Writes a project's name, slug and description back over the row with its id. Whether its
+     * AI agents are paused is left as it is; setAiPaused changes that.
      *
      * Params:
      *   project = The project to write.
@@ -139,7 +136,7 @@ interface IProjectRepository
      * Inserts a project and its lanes in one transaction.
      *
      * The lanes go in at the positions they carry. Fills in the ids the database assigned them
-     * and, as add does, whether the project's AI agents are paused.
+     * and the project's, whose aiPaused is written as it is.
      *
      * Params:
      *   project = The project to insert.
@@ -153,8 +150,8 @@ interface IProjectRepository
      * The lanes in `removed` are deleted, tasks and all, the rest are written at the positions
      * they carry, and a lane with no id yet is inserted and given the one the database
      * assigned. The position constraint is deferred to the commit, since lanes trading places
-     * briefly share one. Whether the project's AI agents are paused is written and filled in as
-     * update does it.
+     * briefly share one. Whether the project's AI agents are paused is left as it is, as by
+     * update.
      *
      * Params:
      *   project = The project to write.
@@ -323,17 +320,17 @@ interface ITaskRepository
     bool lock(UUID id);
 
     /**
-     * Gets the tasks waiting for the task scheduler: those of the projects managed by AI that
-     * are not paused, which are to be scheduled, assigned to no agent and not in a done
-     * lane.
+     * Gets the tasks waiting for the task scheduler: those in a lane the agents pick up that is
+     * not a done one, of a project that is not paused, which are to be scheduled and assigned to
+     * no agent.
      *
      * Returns: The tasks, the oldest first.
      */
     Task[] awaitingScheduling();
 
     /**
-     * Gets the tasks waiting for the agents they are assigned to: those of the projects managed
-     * by AI that are not paused, which are scheduled and not in a done lane.
+     * Gets the tasks waiting for the agents they are assigned to: those in a lane the agents pick
+     * up that is not a done one, of a project that is not paused, which are scheduled.
      *
      * Returns: The tasks, the oldest first.
      */
@@ -395,18 +392,6 @@ interface ITaskRepository
      * Returns: The project's id, or an empty Nullable when no lane has that id.
      */
     Nullable!UUID projectOfLane(UUID laneId);
-
-    /**
-     * Checks whether a lane's project lets a new task be added to it.
-     *
-     * Any lane does when the project's rule is any_lane, otherwise only its first lane does.
-     *
-     * Params:
-     *   laneId = The lane's id.
-     *
-     * Returns: Whether a new task may be added to the lane. False when no lane has that id.
-     */
-    bool acceptsNewTasks(UUID laneId);
 
     /**
      * Inserts a task, with its creation in its notes.
@@ -548,7 +533,7 @@ interface ITaskRepository
 
     /**
      * Finds which of the tasks are still there, and of each whether its project's agents are at
-     * work: whether the project is managed by AI and not paused.
+     * work: whether the project is managed by AI, by any of its lanes, and not paused.
      *
      * Params:
      *   ids = The tasks' ids.

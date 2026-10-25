@@ -39,7 +39,7 @@ In order, and keep the order:
 2. **`servers`** — only the relative `/api/rest/v1`, which resolves against wherever the spec
    was fetched from.
 3. **`tags`** — one per resource, whose description says what the resource *is* and the rules
-   that span its endpoints (positions and gaps, `taskAddRule`, done-ness).
+   that span its endpoints (positions and gaps, `acceptsNewTasks`, done-ness).
 4. **`paths`** — grouped by resource, in the order projects, lanes, tasks, runtimes and models,
    agents, defaults. Path-level `parameters` for the ids.
 5. **`components`** — `parameters` (the path ids), `schemas` (one per resource, plus the shared

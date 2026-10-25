@@ -23,8 +23,8 @@ import std.format : format;
 import std.typecons : Nullable, nullable;
 import std.uuid : UUID;
 
-import model : Agent, AgentLogEntry, AgentStatus, Default, EffortLevel, Lane, Model, Project, Runtime, Task, TaskAddRule,
-    TaskNote, toAgentStatus, toTaskAddRule;
+import model : Agent, AgentLogEntry, AgentStatus, Default, EffortLevel, Lane, Model, Project, Runtime, Task, TaskNote,
+    toAgentStatus;
 import repository : Deadlock, ForeignKeyViolation, IAgentLogRepository, IAgentRepository, IDefaultRepository,
     ILaneRepository, IProjectRepository, IRuntimeRepository, ITaskRepository, ITransactional, PositionConflict,
     UniqueViolation;
@@ -214,14 +214,9 @@ private T translated(T)(scope T delegate() dg)
     }
 }
 
-/**
- * The assignment to ai_paused in an update that sets managed_by_ai to $6. A
- * project that stops being managed by AI has its agents paused, and one
- * that starts being managed has them running; otherwise they stay as they
- * were. On the right of a set, managed_by_ai is still the old value.
- */
-private enum pausedOnceManaged =
-    "ai_paused = case when managed_by_ai = $6 then ai_paused else not $6 end";
+/// A project's columns, and whether it is managed by AI, for a select from projects p.
+private enum projectColumns = "p.id, p.name, p.slug, p.description, p.ai_paused,"
+    ~ " exists (select 1 from lanes l where l.project_id = p.id and l.agents_pick_up) as managed_by_ai";
 
 /// IProjectRepository over postgres.
 class PostgresProjectRepository : IProjectRepository
@@ -236,7 +231,7 @@ class PostgresProjectRepository : IProjectRepository
     Project[] all()
     {
         QueryParams query;
-        query.sqlCommand = "select id, name, slug, description, task_add_rule, managed_by_ai, ai_paused from projects order by name";
+        query.sqlCommand = "select " ~ projectColumns ~ " from projects p order by p.name";
 
         return connections.use((scope connection) {
             auto answer = connection.execParams(query);
@@ -256,7 +251,7 @@ class PostgresProjectRepository : IProjectRepository
     Nullable!Project find(UUID id)
     {
         QueryParams query;
-        query.sqlCommand = "select id, name, slug, description, task_add_rule, managed_by_ai, ai_paused from projects where id = $1";
+        query.sqlCommand = "select " ~ projectColumns ~ " from projects p where p.id = $1";
         query.argsVariadic(id);
 
         return connections.use((scope connection) {
@@ -294,14 +289,11 @@ class PostgresProjectRepository : IProjectRepository
     Project add(Project project)
     {
         QueryParams query;
-        query.sqlCommand = "insert into projects (name, slug, description, task_add_rule, managed_by_ai, ai_paused) values ($1, $2, $3, $4, $5, not $5) returning id, ai_paused";
-        query.argsVariadic(project.name, project.slug, project.description,
-            cast(string) project.taskAddRule, project.managedByAi);
+        query.sqlCommand = "insert into projects (name, slug, description, ai_paused) values ($1, $2, $3, $4) returning id";
+        query.argsVariadic(project.name, project.slug, project.description, project.aiPaused);
 
         connections.use((scope connection) {
-            auto row = connection.execParams(query)[0];
-            project.id = row["id"].as!UUID;
-            project.aiPaused = row["ai_paused"].as!bool;
+            project.id = connection.execParams(query)[0]["id"].as!UUID;
         });
 
         return project;
@@ -310,20 +302,11 @@ class PostgresProjectRepository : IProjectRepository
     bool update(Project project)
     {
         QueryParams query;
-        query.sqlCommand = "update projects set name = $2, slug = $3, description = $4, task_add_rule = $5, managed_by_ai = $6, "
-            ~ pausedOnceManaged ~ " where id = $1 returning ai_paused";
-        query.argsVariadic(project.id, project.name, project.slug, project.description,
-            cast(string) project.taskAddRule, project.managedByAi);
+        query.sqlCommand = "update projects set name = $2, slug = $3, description = $4 where id = $1 returning id";
+        query.argsVariadic(project.id, project.name, project.slug, project.description);
 
         return connections.use((scope connection) {
-            auto answer = connection.execParams(query);
-            if (answer.length == 0)
-            {
-                return false;
-            }
-
-            project.aiPaused = answer[0]["ai_paused"].as!bool;
-            return true;
+            return connection.execParams(query).length > 0;
         });
     }
 
@@ -342,21 +325,18 @@ class PostgresProjectRepository : IProjectRepository
     {
         connections.transaction((scope connection) {
             QueryParams insert;
-            insert.sqlCommand = "insert into projects (name, slug, description, task_add_rule, managed_by_ai, ai_paused) values ($1, $2, $3, $4, $5, not $5) returning id, ai_paused";
-            insert.argsVariadic(project.name, project.slug, project.description,
-                cast(string) project.taskAddRule, project.managedByAi);
-            auto row = connection.execParams(insert)[0];
-            project.id = row["id"].as!UUID;
-            project.aiPaused = row["ai_paused"].as!bool;
+            insert.sqlCommand = "insert into projects (name, slug, description, ai_paused) values ($1, $2, $3, $4) returning id";
+            insert.argsVariadic(project.name, project.slug, project.description, project.aiPaused);
+            project.id = connection.execParams(insert)[0]["id"].as!UUID;
 
             foreach (lane; lanes)
             {
                 lane.projectId = project.id;
 
                 QueryParams add;
-                add.sqlCommand = "insert into lanes (project_id, name, position, color, marks_done) values ($1, $2, $3, $4, $5) returning id";
+                add.sqlCommand = "insert into lanes (project_id, name, position, color, marks_done, accepts_new_tasks, agents_pick_up) values ($1, $2, $3, $4, $5, $6, $7) returning id";
                 add.argsVariadic(lane.projectId, lane.name, lane.position.get, lane.color, lane
-                    .marksDone);
+                    .marksDone, lane.acceptsNewTasks, lane.agentsPickUp);
                 lane.id = connection.execParams(add)[0]["id"].as!UUID;
             }
         });
@@ -368,17 +348,12 @@ class PostgresProjectRepository : IProjectRepository
             connection.exec("set constraints all deferred");
 
             QueryParams update;
-            update.sqlCommand = "update projects set name = $2, slug = $3, description = $4, task_add_rule = $5, managed_by_ai = $6, "
-                ~ pausedOnceManaged ~ " where id = $1 returning ai_paused";
-            update.argsVariadic(project.id, project.name, project.slug, project.description,
-                cast(string) project.taskAddRule, project.managedByAi);
-            auto answer = connection.execParams(update);
-            if (answer.length == 0)
+            update.sqlCommand = "update projects set name = $2, slug = $3, description = $4 where id = $1 returning id";
+            update.argsVariadic(project.id, project.name, project.slug, project.description);
+            if (connection.execParams(update).length == 0)
             {
                 return false;
             }
-
-            project.aiPaused = answer[0]["ai_paused"].as!bool;
 
             foreach (id; removed)
             {
@@ -395,16 +370,17 @@ class PostgresProjectRepository : IProjectRepository
                 QueryParams write;
                 if (lane.id == UUID.init)
                 {
-                    write.sqlCommand = "insert into lanes (project_id, name, position, color, marks_done) values ($1, $2, $3, $4, $5) returning id";
+                    write.sqlCommand = "insert into lanes (project_id, name, position, color, marks_done, accepts_new_tasks, agents_pick_up) values ($1, $2, $3, $4, $5, $6, $7) returning id";
                     write.argsVariadic(lane.projectId, lane.name, lane.position.get, lane.color, lane
-                        .marksDone);
+                        .marksDone, lane.acceptsNewTasks, lane.agentsPickUp);
                     lane.id = connection.execParams(write)[0]["id"].as!UUID;
                 }
                 else
                 {
-                    write.sqlCommand = "update lanes set name = $2, position = $3, color = $4, marks_done = $5 where id = $1";
+                    write.sqlCommand = "update lanes set name = $2, position = $3, color = $4, marks_done = $5, accepts_new_tasks = $6,"
+                        ~ " agents_pick_up = $7 where id = $1";
                     write.argsVariadic(lane.id, lane.name, lane.position.get, lane.color, lane
-                        .marksDone);
+                        .marksDone, lane.acceptsNewTasks, lane.agentsPickUp);
                     connection.execParams(write);
                 }
             }
@@ -432,7 +408,6 @@ private Project toProject(immutable Row row)
         row["name"].as!string,
         row["slug"].as!string,
         row["description"].as!string,
-        row["task_add_rule"].as!string.toTaskAddRule,
         row["managed_by_ai"].as!bool,
         row["ai_paused"].as!bool
     );
@@ -451,7 +426,7 @@ class PostgresLaneRepository : ILaneRepository
     Lane[] ofProject(UUID projectId)
     {
         QueryParams query;
-        query.sqlCommand = "select id, project_id, name, position, color, marks_done from lanes where project_id = $1 order by position";
+        query.sqlCommand = "select id, project_id, name, position, color, marks_done, accepts_new_tasks, agents_pick_up from lanes where project_id = $1 order by position";
         query.argsVariadic(projectId);
 
         return connections.use((scope connection) {
@@ -472,7 +447,7 @@ class PostgresLaneRepository : ILaneRepository
     Nullable!Lane find(UUID id)
     {
         QueryParams query;
-        query.sqlCommand = "select id, project_id, name, position, color, marks_done from lanes where id = $1";
+        query.sqlCommand = "select id, project_id, name, position, color, marks_done, accepts_new_tasks, agents_pick_up from lanes where id = $1";
         query.argsVariadic(id);
 
         return connections.use((scope connection) {
@@ -529,8 +504,9 @@ class PostgresLaneRepository : ILaneRepository
     Lane add(Lane lane)
     {
         QueryParams query;
-        query.sqlCommand = "insert into lanes (project_id, name, position, color, marks_done) values ($1, $2, $3, $4, $5) returning id";
-        query.argsVariadic(lane.projectId, lane.name, lane.position.get, lane.color, lane.marksDone);
+        query.sqlCommand = "insert into lanes (project_id, name, position, color, marks_done, accepts_new_tasks, agents_pick_up) values ($1, $2, $3, $4, $5, $6, $7) returning id";
+        query.argsVariadic(lane.projectId, lane.name, lane.position.get, lane.color, lane.marksDone,
+            lane.acceptsNewTasks, lane.agentsPickUp);
 
         lane.id = connections.use((scope connection) {
             return connection.execParams(query)[0]["id"].as!UUID;
@@ -542,8 +518,10 @@ class PostgresLaneRepository : ILaneRepository
     bool update(Lane lane)
     {
         QueryParams query;
-        query.sqlCommand = "update lanes set name = $2, position = $3, color = $4, marks_done = $5 where id = $1 returning id";
-        query.argsVariadic(lane.id, lane.name, lane.position.get, lane.color, lane.marksDone);
+        query.sqlCommand = "update lanes set name = $2, position = $3, color = $4, marks_done = $5, accepts_new_tasks = $6,"
+            ~ " agents_pick_up = $7 where id = $1 returning id";
+        query.argsVariadic(lane.id, lane.name, lane.position.get, lane.color, lane.marksDone, lane.acceptsNewTasks,
+            lane.agentsPickUp);
 
         return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
@@ -570,7 +548,9 @@ private Lane toLane(immutable Row row)
         row["name"].as!string,
         row["position"].as!int,
         row["color"].as!string,
-        row["marks_done"].as!bool
+        row["marks_done"].as!bool,
+        row["accepts_new_tasks"].as!bool,
+        row["agents_pick_up"].as!bool
     );
 }
 
@@ -637,7 +617,7 @@ class PostgresTaskRepository : ITaskRepository
         query.sqlCommand = "select " ~ taskColumns ~ " from tasks t"
             ~ " join lanes l on l.id = t.lane_id join projects p on p.id = l.project_id"
             ~ " where t.agent_status = 'to_be_scheduled' and t.assigned_ai_agent_id is null and not l.marks_done"
-            ~ " and p.managed_by_ai and not p.ai_paused order by t.created_at";
+            ~ " and l.agents_pick_up and not p.ai_paused order by t.created_at";
 
         return connections.use((scope connection) {
             return connection.execParams(query).toTasks;
@@ -649,7 +629,7 @@ class PostgresTaskRepository : ITaskRepository
         QueryParams query;
         query.sqlCommand = "select " ~ taskColumns ~ " from tasks t"
             ~ " join lanes l on l.id = t.lane_id join projects p on p.id = l.project_id"
-            ~ " where t.agent_status = 'scheduled' and not l.marks_done and p.managed_by_ai and not p.ai_paused"
+            ~ " where t.agent_status = 'scheduled' and not l.marks_done and l.agents_pick_up and not p.ai_paused"
             ~ " order by t.created_at";
 
         return connections.use((scope connection) {
@@ -732,21 +712,6 @@ class PostgresTaskRepository : ITaskRepository
 
             return answer.length == 0 ? Nullable!UUID.init
                 : answer[0]["project_id"].as!UUID.nullable;
-        });
-    }
-
-    bool acceptsNewTasks(UUID laneId)
-    {
-        QueryParams query;
-        query.sqlCommand = "select p.task_add_rule = $2"
-            ~ " or l.position = (select min(position) from lanes where project_id = p.id) as accepts"
-            ~ " from lanes l join projects p on p.id = l.project_id where l.id = $1";
-        query.argsVariadic(laneId, cast(string) TaskAddRule.anyLane);
-
-        return connections.use((scope connection) {
-            auto answer = connection.execParams(query);
-
-            return answer.length > 0 && answer[0]["accepts"].as!bool;
         });
     }
 
@@ -1002,7 +967,8 @@ class PostgresTaskRepository : ITaskRepository
 
         // Given as one text, since the ids go in no other array parameter.
         QueryParams query;
-        query.sqlCommand = "select t.id, p.managed_by_ai and not p.ai_paused as at_work from tasks t"
+        query.sqlCommand = "select t.id, not p.ai_paused"
+            ~ " and exists (select 1 from lanes m where m.project_id = p.id and m.agents_pick_up) as at_work from tasks t"
             ~ " join lanes l on l.id = t.lane_id join projects p on p.id = l.project_id"
             ~ " where t.id = any(string_to_array($1, ',')::uuid[])";
         query.argsVariadic(ids.map!(id => id.toString).join(","));

@@ -84,8 +84,8 @@ return transactionally(transactions, {
   agent with its labels) becomes part of the open one, and commits or rolls back with it.
 - **Locks are taken in the order project, lane, task, agent.** Two transactions that keep to it
   never wait on each other in a circle: one just waits at the first lock they share. Every write
-  to a project's lanes locks the project first, which is what keeps a project's lanes, its
-  add-task rule and its lane order still while a task is added or the project is saved. A
+  to a project's lanes locks the project first, which is what keeps a project's lanes, which
+  of them take new tasks, and their order still while a task is added or the project is saved. A
   deadlock means some transaction broke the order; postgres aborts it, the repository throws
   `Deadlock`, and the API answers 503 (see [rest-api.md](rest-api.md)) and logs it.
 - **Nothing in a transaction starts a task of its own** (`runTask`). The open transaction is kept
@@ -204,10 +204,10 @@ answer as shown:
 | Project settings | `insert into lanes … (project P)`, sleep 3 | `saveProjectSettings` for P, without that lane | 200; P has only the lanes sent |
 | Settings, project gone | `delete from projects where id = P`, sleep 3 | `saveProjectSettings` for P | 404 "No project has that id." |
 | Lane positions | `select … from projects where id = P for update`, sleep 2 | two lanes created in P at once, no position | both 200, positions one after the other |
-| Resuming agents | `update projects set managed_by_ai = false` (P managed, paused), sleep 3 | `setAiPaused` P false | 409 not managed by AI agents; P still paused |
+| Resuming agents | `update lanes set agents_pick_up = false where project_id = P` (P managed, paused), sleep 3 | `setAiPaused` P false | 409 not managed by AI agents; P still paused |
 | Rescheduling | `update lanes set marks_done = true` (the task's lane), sleep 3 | `rescheduleTask` (task declined, P managed) | 409 "The task is in a done lane, so it is done." |
 | Rescheduling, task moved | lock P, sleep 1.5, move the task to a done lane, commit | `rescheduleTask`, sent after 0.3 s | 409 done lane: the lane it moved to was checked |
-| Add-task rule | `update projects set task_add_rule = 'first_lane'`, sleep 3 | task created in P's second lane | 409 "The project only takes new tasks in its first lane." |
+| New tasks | `update lanes set accepts_new_tasks = false` (P's second lane), sleep 3 | task created in P's second lane | 409 "The lane does not take new tasks." |
 | Unique names | `insert into projects (…, slug 'rival2', ai_paused true)`, sleep 3 | `POST /projects` with slug `rival2` | 409 "Another project already has the slug 'rival2'." |
 | Unique names | the same with slug `sails` | `createProject` named "Sails!" | 409 "A project called “Sails” already exists. Pick another name." |
 | Unique names | `insert into agents (… 'Twin2' …)`, sleep 3 | `POST /agents` named Twin2 | 409 "An agent called “Twin2” already exists. …" |
