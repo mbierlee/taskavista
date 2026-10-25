@@ -60,7 +60,7 @@ sudo install -d -o "$user" -g "$user" -m 0750 "$data_dir" "$projects_dir"
 
 echo "==> Installing into $app_dir"
 sudo install -d -m 0755 "$app_dir" "$app_dir/bin"
-sudo install -m 0755 "$dashboard_dir/bin/taskavista-dashboard" "$app_dir/bin/taskavista-dashboard"
+sudo install -m 0755 "$dashboard_dir/bin/release/taskavista-dashboard" "$app_dir/bin/taskavista-dashboard"
 # --delete, so a file removed from the repo does not go on being served.
 sudo rsync -a --delete --chown=root:root "$dashboard_dir/public/" "$app_dir/public/"
 # Only the schema, so sample data put next to it is never applied to this database.

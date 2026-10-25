@@ -31,7 +31,8 @@ dub run
 
 and open http://localhost:8080. On its first start against an empty database, the dashboard
 creates the schema from `dashboard/sql/init.sql`. Build without running with `dub build`;
-the binary goes into `dashboard/bin/`.
+the binary goes into `dashboard/bin/debug/`, or into `dashboard/bin/release/` with
+`dub build --build=release`.
 
 The dashboard reads its settings from `dashboard/config.json` if it exists, and otherwise uses
 built-in defaults that match the Docker database: database `taskavista-dev` on
