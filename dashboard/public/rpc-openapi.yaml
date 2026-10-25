@@ -29,7 +29,7 @@ info:
     |---|---|
     | 400 | A body that is not a JSON object, a required argument missing, an argument of the wrong type, a malformed UUID, or a value the call refuses |
     | 404 | Nothing has an id that was sent, a call that does not exist, or a method other than `POST` |
-    | 409 | The call clashes with what is stored: a project slug that is taken or reserved, resuming the agents of a project not managed by AI, or rescheduling a task that cannot be |
+    | 409 | The call clashes with what is stored: a project slug that is taken or reserved, resuming the agents of a project none of whose lanes has `agentsPickUp`, or rescheduling a task that cannot be |
     | 502 | An agent could not answer a chat message |
     | 503 | The request clashed with another one made at the same time; send it again after the `Retry-After` seconds |
     | 500 | An unexpected server error |
@@ -160,8 +160,8 @@ paths:
         It also hands a task to the agents for the first time: one created in a lane without
         `agentsPickUp`, whose `handedToAgents` is `false`, is otherwise never scheduled.
 
-        Only a task of a project managed by AI agents can be rescheduled, and not one in a done
-        lane or a lane without `agentsPickUp`, nor one the scheduler is choosing an agent for or
+        Only a task in a lane with `agentsPickUp` can be rescheduled, and not one in a done
+        lane, nor one the scheduler is choosing an agent for or
         an agent is working on at that moment. A task of a project whose agents are paused waits
         until they are resumed. Rescheduling a task that is
         already waiting for the scheduler is not an error.
@@ -201,15 +201,12 @@ paths:
               example: { statusMessage: No task has that id. }
         "409":
           description: |
-            The task's project is not managed by AI agents, the task is in a done lane or one
-            without `agentsPickUp`, or the task scheduler is choosing an agent for it or an
-            agent is working on it now.
+            The task is in a lane without `agentsPickUp` or in a done lane, or the task scheduler
+            is choosing an agent for it or an agent is working on it now.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               examples:
-                notManaged:
-                  value: { statusMessage: "The task's project is not managed by AI agents, so no agent works on its tasks." }
                 notPickedUp:
                   value: { statusMessage: "The task's lane is not one the AI agents pick up tasks from." }
                 done:
@@ -418,9 +415,9 @@ paths:
       summary: Pause a project's AI agents, or resume them
       description: |
         Pauses a project's AI agents, or resumes them, and changes nothing else about the
-        project. The REST API serves the project's `aiPaused` read-only; besides this call, only a
-        change to `managedByAi`, which the project's lanes decide, changes it. Only a project
-        managed by AI can be resumed: one that is not is always paused. Asking for the state the
+        project. The REST API serves the project's `aiPaused` read-only; besides this call, only
+        the project coming to have a lane with `agentsPickUp`, or losing its last, changes it.
+        Only a project with such a lane can be resumed: one without is always paused. Asking for the state the
         project is already in is not an error.
       requestBody:
         required: true
@@ -462,11 +459,11 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
               example: { statusMessage: No project has that id. }
         "409":
-          description: "`paused` is `false` and the project is not managed by AI agents."
+          description: "`paused` is `false` and none of the project's lanes has `agentsPickUp`."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-              example: { statusMessage: "The project is not managed by AI agents, so its agents cannot be resumed." }
+              example: { statusMessage: "None of the project's lanes is one the AI agents pick up tasks from, so its agents cannot be resumed." }
         "503": { $ref: "#/components/responses/Clash" }
         "500": { $ref: "#/components/responses/ServerError" }
 
@@ -862,7 +859,7 @@ paths:
                 oneOf:
                   - type: object
                     title: Draft
-                    required: [name, description, taskAddRule, managedByAi, lanes]
+                    required: [name, description, lanes]
                     properties:
                       name:
                         type: string
@@ -870,18 +867,13 @@ paths:
                       description:
                         type: string
                         description: What the project is about; empty for none.
-                      taskAddRule:
-                        $ref: "#/components/schemas/TaskAddRule"
-                      managedByAi:
-                        type: boolean
-                        description: Whether AI agents would schedule and work on its tasks.
                       lanes:
                         type: array
                         minItems: 1
                         description: The lanes, in board order.
                         items:
                           type: object
-                          required: [name, color, marksDone]
+                          required: [name, color, marksDone, acceptsNewTasks, agentsPickUp]
                           properties:
                             name:
                               type: string
@@ -893,6 +885,14 @@ paths:
                             marksDone:
                               type: boolean
                               description: Whether a task in the lane is done.
+                            acceptsNewTasks:
+                              type: boolean
+                              description: Whether a task can be created in the lane.
+                            agentsPickUp:
+                              type: boolean
+                              description: |
+                                Whether the AI agents would work on the tasks in the lane. A draft
+                                with any such lane is for a project managed by AI.
                   - type: object
                     title: No draft
                     required: [error]
@@ -904,14 +904,12 @@ paths:
                 draft:
                   summary: A draft
                   value:
-                    name: Marketing Site Relaunch
                     description: Relaunch the marketing site by December, with a new pricing page, the blog migrated, and faster load times. Every change gets reviewed by legal before it goes live.
-                    taskAddRule: first_lane
-                    managedByAi: false
                     lanes:
-                      - { name: To do, color: "#8fa6ff", marksDone: false }
-                      - { name: In progress, color: "#e8b154", marksDone: false }
-                      - { name: Done, color: "#5fd6ab", marksDone: true }
+                      - { color: "#8fa6ff", marksDone: false, acceptsNewTasks: true, agentsPickUp: false, name: To do }
+                      - { color: "#e8b154", marksDone: false, acceptsNewTasks: false, agentsPickUp: false, name: In progress }
+                      - { color: "#5fd6ab", marksDone: true, acceptsNewTasks: false, agentsPickUp: false, name: Done }
+                    name: Marketing Site Relaunch
                 vague:
                   summary: A description that says too little ("hmm")
                   value: { error: "The description does not say what the project is about." }
@@ -957,13 +955,6 @@ components:
         What the project is about, and directions for the AI agents that work on it. Free text,
         over as many lines as needed; empty for none.
       examples: [Launch the kite range in the spring catalogue.]
-
-    TaskAddRule:
-      type: string
-      enum: [first_lane, any_lane]
-      description: |
-        Which lanes a task could be created in: only the first lane, or any lane. Not stored as
-        such: a lane takes new tasks by its own `acceptsNewTasks`.
 
     NewLane:
       description: A lane of a new project, with the same rules as a lane in the REST API.

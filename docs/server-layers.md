@@ -204,7 +204,7 @@ answer as shown:
 | Project settings | `insert into lanes … (project P)`, sleep 3 | `saveProjectSettings` for P, without that lane | 200; P has only the lanes sent |
 | Settings, project gone | `delete from projects where id = P`, sleep 3 | `saveProjectSettings` for P | 404 "No project has that id." |
 | Lane positions | `select … from projects where id = P for update`, sleep 2 | two lanes created in P at once, no position | both 200, positions one after the other |
-| Resuming agents | `update lanes set agents_pick_up = false where project_id = P` (P managed, paused), sleep 3 | `setAiPaused` P false | 409 not managed by AI agents; P still paused |
+| Resuming agents | `update lanes set agents_pick_up = false where project_id = P` (P managed, paused), sleep 3 | `setAiPaused` P false | 409 none of P's lanes is one the agents pick up; P still paused |
 | Rescheduling | `update lanes set marks_done = true` (the task's lane), sleep 3 | `rescheduleTask` (task declined, P managed) | 409 "The task is in a done lane, so it is done." |
 | Rescheduling, task moved | lock P, sleep 1.5, move the task to a done lane, commit | `rescheduleTask`, sent after 0.3 s | 409 done lane: the lane it moved to was checked |
 | New tasks | `update lanes set accepts_new_tasks = false` (P's second lane), sleep 3 | task created in P's second lane | 409 "The lane does not take new tasks." |

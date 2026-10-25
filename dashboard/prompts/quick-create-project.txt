@@ -39,14 +39,18 @@ as they are worked on. Suggest the project's fields:
     to more than one lane.
   - marksDone: true for a lane that holds tasks that are finished, usually only the last one.
     Otherwise false.
+  - acceptsNewTasks: true for a lane new tasks can be added to. Usually that is only the first
+    lane; give it to more lanes only when the description says tasks can start in them, such
+    as tasks that arrive already under way.
+  - agentsPickUp: true for a lane whose tasks AI agents work on. Give it to no lane unless the
+    description asks for AI agents to do the project's work. When it does, give it to the
+    lanes it says the agents work in, or, when it does not say which, to every lane that does
+    not hold finished tasks. A lane the description keeps for people, such as a human review,
+    never gets it.
   Suggest the usual lanes, "To do", "In progress" and "Done", in that order and with the colours
   in the example below. Change them only as the description asks: add a lane it asks for, in its
   place in the order, and leave out one it asks to go without. Do not add, leave out or rename a
   lane of your own accord, even where the work seems to call for it, such as a lane for review.
-- taskAddRule: "first_lane" when new tasks should only be added to the first lane, as is usual,
-  or "any_lane" when the work is such that a task can start in any lane.
-- managedByAi: true only if the description asks for AI agents to do the project's tasks.
-  Otherwise false.
 
 These are the colours a lane can have, as hex codes, each with what it looks like:
 
@@ -59,7 +63,7 @@ Write the name, description and lane names in the language of the description.
 Answer with a single JSON object, and nothing else: no explanation, and no code fence or other
 markup around it. For example:
 
-{"name": "Marketing Site Relaunch", "description": "Relaunch the marketing site by December, with a new pricing page, the blog migrated, and faster load times.", "lanes": [{"name": "To do", "color": "#8fa6ff", "marksDone": false}, {"name": "In progress", "color": "#e8b154", "marksDone": false}, {"name": "Done", "color": "#5fd6ab", "marksDone": true}], "taskAddRule": "first_lane", "managedByAi": false}
+{"name": "Marketing Site Relaunch", "description": "Relaunch the marketing site by December, with a new pricing page, the blog migrated, and faster load times.", "lanes": [{"name": "To do", "color": "#8fa6ff", "marksDone": false, "acceptsNewTasks": true, "agentsPickUp": false}, {"name": "In progress", "color": "#e8b154", "marksDone": false, "acceptsNewTasks": false, "agentsPickUp": false}, {"name": "Done", "color": "#5fd6ab", "marksDone": true, "acceptsNewTasks": false, "agentsPickUp": false}]}
 
 If the description does not say what the project is, so that you cannot suggest one without
 making it up, answer instead with a JSON object holding only an "error", which tells the person

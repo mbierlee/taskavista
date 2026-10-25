@@ -77,8 +77,8 @@ takes it up on its next round as it does a new task. Clearing the agent is neede
 only takes up tasks with none.
 
 It refuses what the loop would never take up, so that a 200 means the task will be scheduled: a
-task of a project not managed by AI, one in a lane the agents do not pick up, and one in a done
-lane. It also refuses a task being scheduled or worked on, so that it does not undo the
+task in a lane the agents do not pick up, which covers every task of a project not managed by AI,
+and one in a done lane. It also refuses a task being scheduled or worked on, so that it does not undo the
 scheduler's or the agent's work as it lands; the update is conditional on the status, so this
 holds even when the two meet. A paused
 project is not refused, since resuming it is all the task then waits for.

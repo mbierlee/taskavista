@@ -66,6 +66,9 @@ export const store = new Store({
   currentProjectSlug: null,
   /* True while the lanes and tasks of the selected project are being fetched. */
   boardLoading: false,
+  /* Whether any lane of the board shown is one the AI agents pick up tasks
+     from, which makes its project managed by AI. False until its lanes are in. */
+  boardAgentLanes: false,
   /* The ids of the projects whose AI agents are being paused or resumed, from
      the press of the button until the server has answered. */
   aiPausing: [],

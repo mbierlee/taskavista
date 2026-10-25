@@ -214,9 +214,8 @@ private T translated(T)(scope T delegate() dg)
     }
 }
 
-/// A project's columns, and whether it is managed by AI, for a select from projects p.
-private enum projectColumns = "p.id, p.name, p.slug, p.description, p.ai_paused,"
-    ~ " exists (select 1 from lanes l where l.project_id = p.id and l.agents_pick_up) as managed_by_ai";
+/// A project's columns, for a select from projects p.
+private enum projectColumns = "p.id, p.name, p.slug, p.description, p.ai_paused";
 
 /// IProjectRepository over postgres.
 class PostgresProjectRepository : IProjectRepository
@@ -408,7 +407,6 @@ private Project toProject(immutable Row row)
         row["name"].as!string,
         row["slug"].as!string,
         row["description"].as!string,
-        row["managed_by_ai"].as!bool,
         row["ai_paused"].as!bool
     );
 }

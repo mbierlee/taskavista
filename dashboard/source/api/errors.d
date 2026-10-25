@@ -236,7 +236,7 @@ HTTPStatusException toHTTPError(IProjectError error, ProjectViewModel project)
     if (cast(ProjectNotManagedByAiError) error)
     {
         return new HTTPStatusException(HTTPStatus.conflict,
-            "The project is not managed by AI agents, so its agents cannot be resumed.");
+            "None of the project's lanes is one the AI agents pick up tasks from, so its agents cannot be resumed.");
     }
 
     if (cast(ProjectNameMissingError) error)
@@ -446,12 +446,6 @@ HTTPStatusException toHTTPError(ITaskError error, TaskViewModel task)
     {
         return new HTTPStatusException(HTTPStatus.conflict,
             format("Another task of the lane is already at %s.", positionOf(task.position)));
-    }
-
-    if (cast(ProjectNotManagedByAiError) error)
-    {
-        return new HTTPStatusException(HTTPStatus.conflict,
-            "The task's project is not managed by AI agents, so no agent works on its tasks.");
     }
 
     if (cast(LaneNotPickedUpError) error)

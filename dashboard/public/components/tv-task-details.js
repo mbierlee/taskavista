@@ -13,10 +13,10 @@
    The task details panel, which slides over the right of the board: the
    task's lane, which a menu moves it out of, its description, which can be
    edited in place, the AI agent working on it, its notes, and a button that deletes it. In a
-   project managed by AI, a task never handed to the agents, such as one added before the
-   project was, has a "Schedule for AI" button by that one instead. It holds no data of its own:
+   lane the agents pick up, a task never handed to them, such as one added before the lane was
+   one, has a "Schedule for AI" button by that one instead. It holds no data of its own:
    show() hands it a task and the board's lanes, and the notes follow once they are
-   loaded; the agent's name and whether the project is managed by AI come from the store.
+   loaded; the agent's name comes from the store.
    Closed, it shows nothing; `open` is set while it shows.
 
    Events (bubbling and composed):
@@ -49,7 +49,6 @@ export class TvTaskDetails extends HTMLElement {
   #lanes = [];
   #opener = null;
   #agents = [];
-  #project = null;
   #unwatch = [];
 
   #layer;
@@ -123,15 +122,6 @@ export class TvTaskDetails extends HTMLElement {
         (state) => state.agents.list,
         (list) => {
           this.#agents = list;
-          this.#renderAgent();
-        },
-      ),
-      store.watch(
-        (state) =>
-          state.projects.list.find((p) => p.slug === state.currentProjectSlug) ??
-          null,
-        (project) => {
-          this.#project = project;
           this.#renderAgent();
         },
       ),
@@ -381,13 +371,14 @@ export class TvTaskDetails extends HTMLElement {
     }));
   }
 
-  /* Neither shows for a project not managed by AI, and a task in a done
-     lane cannot be scheduled. An agent the store does not know yet, such
-     as one added since the agents were loaded, is shown unnamed until it
-     does. */
+  /* Neither shows for a task in a lane the agents do not pick up, and a
+     task in a done lane cannot be scheduled. An agent the store does not
+     know yet, such as one added since the agents were loaded, is shown
+     unnamed until it does. */
   #renderAgent() {
     const task = this.#task;
-    const managed = Boolean(task && this.#project?.managedByAi);
+    const lane = this.#lanes.find((l) => l.id === task?.laneId);
+    const managed = Boolean(task && lane?.agentsPickUp);
     const agentId = managed ? (task.workingAgentId ?? null) : null;
     this.#agent.hidden = agentId === null;
     this.#agentName.textContent =
@@ -395,7 +386,6 @@ export class TvTaskDetails extends HTMLElement {
         ? ""
         : (this.#agents.find((a) => a.id === agentId)?.name ?? "An AI agent");
 
-    const lane = this.#lanes.find((l) => l.id === task?.laneId);
     this.#schedule.hidden =
       !managed || task.handedToAgents || Boolean(lane?.marksDone);
   }

@@ -42,8 +42,9 @@ servers:
 tags:
   - name: Projects
     description: |
-      A project is the board itself: a name, a slug that identifies it readably, whether AI
-      agents manage it, which its lanes decide, and whether those agents are paused.
+      A project is the board itself: a name, a slug that identifies it readably, a description,
+      and whether its AI agents are paused. It is managed by AI while any of its lanes has
+      `agentsPickUp`; the project itself has no field for it.
   - name: Lanes
     description: |
       A lane is one column of a project's board: a name, where it sits, its colour, whether the
@@ -102,8 +103,8 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Project" }
               example:
-                - { id: 534980ce-e65b-4044-9d5a-1e5b769650c3, name: Office Cats Management Game, slug: office-cats-management-game, description: A video game about managing cats who work in an office., managedByAi: true, aiPaused: false, canBeOpened: false }
-                - { id: a7850cce-6484-4853-b6c2-0937bd69993b, name: Test, slug: test, description: "", managedByAi: false, aiPaused: true, canBeOpened: false }
+                - { id: 534980ce-e65b-4044-9d5a-1e5b769650c3, name: Office Cats Management Game, slug: office-cats-management-game, description: A video game about managing cats who work in an office., aiPaused: false, canBeOpened: false }
+                - { id: a7850cce-6484-4853-b6c2-0937bd69993b, name: Test, slug: test, description: "", aiPaused: true, canBeOpened: false }
         "500": { $ref: "#/components/responses/ServerError" }
     post:
       tags: [Projects]
@@ -111,8 +112,8 @@ paths:
       summary: Create a project
       description: |
         The body is a project without an id. `slug` and `description` may be left out. A new
-        project has no lanes, so it is not managed by AI and its agents are paused, whatever
-        `managedByAi` and `aiPaused` the body has. An `id` sent in the body is ignored.
+        project has no lanes, so none the agents pick up, and its agents are paused, whatever
+        `aiPaused` the body has. An `id` sent in the body is ignored.
 
         A slug that was sent is named in a 409's message; when the slug was derived from the
         name, the message refers to the name instead, and names the project that already has it.
@@ -134,7 +135,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., managedByAi: false, aiPaused: true, canBeOpened: false }
+              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., aiPaused: true, canBeOpened: false }
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
@@ -170,7 +171,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., managedByAi: true, aiPaused: false, canBeOpened: false }
+              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., aiPaused: false, canBeOpened: false }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -183,8 +184,8 @@ paths:
         so **renaming a project without sending its slug changes its URL**; send the slug to keep
         it. Likewise a `description` left out empties the description.
 
-        `managedByAi` and `aiPaused` are never taken from the body: a `PUT` leaves both as they
-        were. The response gives the values stored.
+        `aiPaused` is never taken from the body: a `PUT` leaves it as it was. The response gives
+        the value stored.
 
         The same 400s and 409 as `POST` apply, except that a project keeping its own slug is not
         a conflict.
@@ -200,7 +201,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration v2, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., managedByAi: true, aiPaused: false, canBeOpened: false }
+              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration v2, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., aiPaused: false, canBeOpened: false }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
@@ -804,21 +805,15 @@ components:
             What the project is about, and directions for the AI agents that work on it. Free
             text, over as many lines as needed; empty for none.
           examples: [Move the zebras to the new enclosure before the winter.]
-        managedByAi:
-          type: boolean
-          readOnly: true
-          description: |
-            Ignored in a `POST` or `PUT` body. Whether AI agents may add, edit and move the
-            project's tasks: whether any of its lanes has `agentsPickUp` set.
         aiPaused:
           type: boolean
           readOnly: true
           description: |
             Ignored in a `POST` or `PUT` body. Whether the project's AI agents are paused, which
-            they always are for a project with `managedByAi` false. It follows `managedByAi`: a
-            project's agents start running when it comes to have a lane with `agentsPickUp`, and
-            are paused when it has none any more. The `setAiPaused` RPC call pauses and resumes
-            them in between.
+            they always are for a project none of whose lanes has `agentsPickUp`. It follows the
+            lanes: a project's agents start running when it comes to have a lane with
+            `agentsPickUp`, and are paused when it has none any more. The `setAiPaused` RPC call
+            pauses and resumes them in between.
         canBeOpened:
           type: boolean
           readOnly: true
@@ -872,7 +867,7 @@ components:
           default: false
           description: |
             Whether the AI agents work on the tasks in this lane, other than in a lane that marks
-            them done. A project with any lane that sets it is managed by AI (`managedByAi`).
+            them done. A project with any lane that sets it is managed by AI.
 
     Task:
       type: object

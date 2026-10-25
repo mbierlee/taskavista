@@ -66,13 +66,8 @@ class Project
     /// What the project is about, and directions for its AI agents. Empty for none.
     string description;
     /**
-     * Whether the project is managed by AI: whether any of its lanes is one the AI agents pick
-     * up. Not a column of its own, so it is read but never written.
-     */
-    bool managedByAi;
-    /**
-     * Whether the project's AI agents are paused: always, for a project not managed by AI. The
-     * service has it follow managedByAi when that changes.
+     * Whether the project's AI agents are paused: always, for a project none of whose lanes the
+     * agents pick up. The service has it follow its lanes when that changes.
      */
     bool aiPaused = true;
 
@@ -87,14 +82,12 @@ class Project
         this.description = description;
     }
 
-    this(UUID id, string name, string slug, string description = null, bool managedByAi = false,
-        bool aiPaused = true) @safe
+    this(UUID id, string name, string slug, string description = null, bool aiPaused = true) @safe
     {
         this.id = id;
         this.name = name;
         this.slug = slug;
         this.description = description;
-        this.managedByAi = managedByAi;
         this.aiPaused = aiPaused;
     }
 }

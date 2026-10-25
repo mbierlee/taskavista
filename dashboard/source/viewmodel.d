@@ -36,14 +36,10 @@ class ProjectViewModel
     /// What the project is about, and directions for its AI agents. Empty for none.
     @optional string description;
     /**
-     * Whether AI agents may add, edit and move the project's tasks: whether any of its lanes is
-     * one they pick up. Read-only, and ignored in a body.
-     */
-    @optional bool managedByAi;
-    /**
-     * Whether the project's AI agents are paused: always, for a project not managed by AI.
-     * Read-only, and ignored in a body: it follows managedByAi when that changes, and the
-     * setAiPaused RPC call changes it otherwise.
+     * Whether the project's AI agents are paused: always, for a project none of whose lanes the
+     * agents pick up. Read-only, and ignored in a body: it follows the lanes when the project
+     * comes to have such a lane or loses its last, and the setAiPaused RPC call changes it
+     * otherwise.
      */
     @optional bool aiPaused;
     /**
@@ -64,12 +60,11 @@ class ProjectViewModel
         this.description = description;
     }
 
-    this(UUID id, string name, string slug, string description = null, bool managedByAi = false,
-        bool aiPaused = false, bool canBeOpened = false) @safe
+    this(UUID id, string name, string slug, string description = null, bool aiPaused = false,
+        bool canBeOpened = false) @safe
     {
         this(name, slug, description);
         this.id = id;
-        this.managedByAi = managedByAi;
         this.aiPaused = aiPaused;
         this.canBeOpened = canBeOpened;
     }

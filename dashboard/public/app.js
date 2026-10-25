@@ -82,6 +82,7 @@ async function showBoard(project) {
 
   boardEl.name = project?.name ?? "";
   boardEl.replaceChildren();
+  store.update({ boardAgentLanes: false });
   if (!project) {
     store.update({ boardLoading: false });
     return;
@@ -103,6 +104,7 @@ async function showBoard(project) {
       project,
       lanes: renderLanes(lanes, (id) => tasksByLane.get(id) ?? []),
     };
+    showAgentLanes(lanes);
     boardEl.replaceChildren(...[...board.lanes.values()].map((e) => e.el));
     if (boardStale) {
       boardStale = false;
@@ -157,6 +159,12 @@ function renderLanes(lanes, tasksOf) {
   }));
   entries.forEach(renderCards);
   return new Map(entries.map((entry) => [entry.lane.id, entry]));
+}
+
+/* A project is managed by AI while any of its lanes is one the agents pick
+   up, which the agents strip over the board follows. */
+function showAgentLanes(lanes) {
+  store.update({ boardAgentLanes: lanes.some((lane) => lane.agentsPickUp) });
 }
 
 function renderLane(lane, canAdd) {
@@ -1398,6 +1406,7 @@ async function refreshLanes(shown) {
     lanes,
     (id) => shown.lanes.get(id)?.tasks ?? tasks.get(id) ?? [],
   );
+  showAgentLanes(lanes);
   boardEl.replaceChildren(...[...shown.lanes.values()].map((e) => e.el));
   markOpenCard();
   if (open && laneOf(open.id)) {

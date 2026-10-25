@@ -234,23 +234,18 @@ export class TvProjectSettings extends HTMLElement {
     );
   }
 
-  /* `lanes` are { name, color, marksDone }, with acceptsNewTasks and
-     agentsPickUp when they are known, and `draft`, when an agent suggested
-     the project, has its { name, description, taskAddRule, managedByAi } to
-     start from. A lane without the flags takes them from the draft: new
-     tasks in the first lane only, unless taskAddRule is "any_lane", and
-     agents in every lane that does not close tasks when it is managed by AI.
-     The name takes the focus, so the screen must be on the page by then. "/"
-     goes back to the last project shown. */
+  /* `lanes` are { name, color, marksDone, acceptsNewTasks, agentsPickUp },
+     a flag left out being false, and `draft`, when an agent suggested the
+     project, has its { name, description } to start from. The name takes
+     the focus, so the screen must be on the page by then. "/" goes back to
+     the last project shown. */
   create(lanes, draft = null) {
-    const anyLane = draft?.taskAddRule === "any_lane";
-    const managed = draft?.managedByAi ?? false;
     this.#start(
       null,
-      lanes.map((lane, index) => ({
+      lanes.map((lane) => ({
         ...lane,
-        acceptsNewTasks: lane.acceptsNewTasks ?? (anyLane || index === 0),
-        agentsPickUp: lane.agentsPickUp ?? (managed && !lane.marksDone),
+        acceptsNewTasks: lane.acceptsNewTasks ?? false,
+        agentsPickUp: lane.agentsPickUp ?? false,
         id: null,
         taskCount: 0,
       })),

@@ -2319,9 +2319,9 @@ class ProjectDrafter
 /**
  * Reads an agent's answer to the quick-create project prompt, as `answerObject`
  * finds it. A lane without a name is dropped, a colour that is not one of
- * `laneColors` is replaced by one of them, and a rule the schema does not know
- * becomes "first_lane", so the screen shows only what it could save. Whatever
- * else is in the object is dropped.
+ * `laneColors` is replaced by one of them, and a lane flag that is not true is
+ * false, so the screen shows only what it could save. Whatever else is in the
+ * object is dropped.
  *
  * Returns: The draft, or an error object when the agent answered with one, or
  *   an empty Nullable when the answer is neither, or has no lanes.
@@ -2380,6 +2380,8 @@ private Nullable!Json readProjectDraft(string answer)
                 lane["name"] = text(item, "name");
                 lane["color"] = color;
                 lane["marksDone"] = flag(item, "marksDone");
+                lane["acceptsNewTasks"] = flag(item, "acceptsNewTasks");
+                lane["agentsPickUp"] = flag(item, "agentsPickUp");
                 lanes ~= lane;
             }
         }
@@ -2390,14 +2392,9 @@ private Nullable!Json readProjectDraft(string answer)
         return Nullable!Json.init;
     }
 
-    auto rule = text(json, "taskAddRule");
-
     auto draft = Json.emptyObject;
     draft["name"] = text(json, "name");
     draft["description"] = text(json, "description");
-    // The settings screen's add-task rule, which it applies to the lanes itself.
-    draft["taskAddRule"] = rule == "any_lane" ? "any_lane" : "first_lane";
-    draft["managedByAi"] = flag(json, "managedByAi");
     draft["lanes"] = Json(lanes);
 
     return draft.nullable;
@@ -2406,27 +2403,26 @@ private Nullable!Json readProjectDraft(string answer)
 unittest
 {
     auto fenced = readProjectDraft("Here it is:\n```json\n{\"name\": \" Site Relaunch \", \"description\": \"New site.\","
-            ~ " \"lanes\": [{\"name\": \"To do\", \"color\": \"#8FA6FF\"}, {\"name\": \" \", \"color\": \"#e8b154\"},"
-            ~ " {\"name\": \"Doing\", \"color\": \"#123456\"}, 3, {\"name\": \"Done\", \"color\": \"#5fd6ab\","
-            ~ " \"marksDone\": true}], \"taskAddRule\": \"any_lane\", \"managedByAi\": true, \"extra\": 1}\n```");
+            ~ " \"lanes\": [{\"name\": \"To do\", \"color\": \"#8FA6FF\", \"acceptsNewTasks\": true, \"agentsPickUp\": true},"
+            ~ " {\"name\": \" \", \"color\": \"#e8b154\"}, {\"name\": \"Doing\", \"color\": \"#123456\","
+            ~ " \"agentsPickUp\": \"yes\"}, 3, {\"name\": \"Done\", \"color\": \"#5fd6ab\", \"marksDone\": true}],"
+            ~ " \"taskAddRule\": \"any_lane\", \"managedByAi\": true, \"extra\": 1}\n```");
     assert(!fenced.isNull);
     auto draft = fenced.get;
     assert(draft["name"].get!string == "Site Relaunch");
     assert(draft["description"].get!string == "New site.");
-    assert(draft["taskAddRule"].get!string == "any_lane");
-    assert(draft["managedByAi"].get!bool);
-    assert("extra" !in draft);
+    assert("extra" !in draft && "taskAddRule" !in draft && "managedByAi" !in draft);
     assert(draft["lanes"].length == 3);
     assert(draft["lanes"][0]["color"].get!string == "#8fa6ff");
     assert(!draft["lanes"][0]["marksDone"].get!bool);
+    assert(draft["lanes"][0]["acceptsNewTasks"].get!bool && draft["lanes"][0]["agentsPickUp"].get!bool);
     assert(draft["lanes"][1]["name"].get!string == "Doing");
     assert(draft["lanes"][1]["color"].get!string == "#e8b154");
+    assert(!draft["lanes"][1]["acceptsNewTasks"].get!bool && !draft["lanes"][1]["agentsPickUp"].get!bool);
     assert(draft["lanes"][2]["marksDone"].get!bool);
 
-    auto plain = readProjectDraft(`{"name": "Site", "lanes": [{"name": "To do", "color": "#8fa6ff"}],`
-            ~ ` "taskAddRule": "last_lane"}`);
-    assert(plain.get["taskAddRule"].get!string == "first_lane");
-    assert(!plain.get["managedByAi"].get!bool);
+    auto plain = readProjectDraft(`{"name": "Site", "lanes": [{"name": "To do", "color": "#8fa6ff"}]}`);
+    assert(!plain.get["lanes"][0]["acceptsNewTasks"].get!bool && !plain.get["lanes"][0]["agentsPickUp"].get!bool);
     assert(plain.get["description"].get!string == "");
 
     auto error = readProjectDraft(`{"error": "Say what the project is."}`);

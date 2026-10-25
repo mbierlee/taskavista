@@ -13,7 +13,9 @@
    The strip over the board of a project managed by AI agents, saying whether
    they are at work, with the button that pauses or resumes them. It takes no
    attributes: the project comes from the store, and the strip is hidden for
-   a project that is not managed by AI agents, or when there is none. It sets
+   a project that is not managed by AI agents, none of whose lanes on the
+   board the store's `boardAgentLanes` says the agents pick up, or when there
+   is none. It sets
    `paused` on itself, for its styles. Its button is disabled while the
    store's `aiPausing` holds the project, as its last press is being saved,
    and the second and later clicks of a double or triple click are ignored.
@@ -30,8 +32,10 @@ const template = await loadTemplate("tv-agents-bar.html");
 export class TvAgentsBar extends HTMLElement {
   #project = null;
   #pausing = [];
+  #agentLanes = false;
   #unwatch;
   #unwatchPausing;
+  #unwatchAgentLanes;
   #text;
   #button;
   #buttonText;
@@ -72,11 +76,19 @@ export class TvAgentsBar extends HTMLElement {
         this.#render();
       },
     );
+    this.#unwatchAgentLanes = store.watch(
+      (state) => state.boardAgentLanes,
+      (agentLanes) => {
+        this.#agentLanes = agentLanes;
+        this.#render();
+      },
+    );
   }
 
   disconnectedCallback() {
     this.#unwatch();
     this.#unwatchPausing();
+    this.#unwatchAgentLanes();
   }
 
   #onToggle() {
@@ -97,7 +109,7 @@ export class TvAgentsBar extends HTMLElement {
 
   #render() {
     const project = this.#project;
-    this.hidden = !project?.managedByAi;
+    this.hidden = !project || !this.#agentLanes;
     const paused = project?.aiPaused ?? false;
     this.toggleAttribute("paused", paused);
     this.#text.textContent = paused

@@ -184,8 +184,7 @@ class ProjectService
                     return projectFailure!Project(newSlug.error);
                 }
 
-                project.managedByAi = lanes.any!(lane => lane.agentsPickUp);
-                project.aiPaused = !project.managedByAi;
+                project.aiPaused = !lanes.any!(lane => lane.agentsPickUp);
                 repository.addWithLanes(project, lanes);
                 workingDirs.createIfRootExists(project.slug);
                 events.project(Event.created, project.id);
@@ -324,19 +323,20 @@ class ProjectService
      *   paused = Whether its agents are to be paused.
      *
      * Returns: Success, or a failure: `ProjectNotFoundError`, or `ProjectNotManagedByAiError` for
-     *   resuming the agents of a project not managed by AI, which has none running.
+     *   resuming the agents of a project none of whose lanes they pick up, which has none
+     *   running.
      */
     OperationResult!IProjectError setAiPaused(UUID id, bool paused)
     {
-        // Locked, so that the project is not taken off AI management between the check and the
-        // write, which would leave an unmanaged project with its agents running.
+        // Locked, so that the project does not lose its last lane the agents pick up between the
+        // check and the write, which would leave it with its agents running and nothing to do.
         return transactionally(transactions, {
             if (!repository.lock(id))
             {
                 return projectFailure(new ProjectNotFoundError);
             }
 
-            if (!paused && !repository.find(id).get.managedByAi)
+            if (!paused && !lanes.ofProject(id).any!(lane => lane.agentsPickUp))
             {
                 return projectFailure(new ProjectNotManagedByAiError);
             }
@@ -355,15 +355,13 @@ class ProjectService
     private ProjectViewModel view(Project project)
     {
         return new ProjectViewModel(project.id, project.name, project.slug, project.description,
-            project.managedByAi, project.aiPaused, workingDirs.hasIndexPage(project.slug));
+            project.aiPaused, workingDirs.hasIndexPage(project.slug));
     }
 
-    /// Fills in what a write leaves to the database: whether the project is managed by AI, and paused.
+    /// Fills in what a write leaves to the database: whether the project's agents are paused.
     private void readBack(Project project)
     {
-        auto stored = repository.find(project.id).get;
-        project.managedByAi = stored.managedByAi;
-        project.aiPaused = stored.aiPaused;
+        project.aiPaused = repository.find(project.id).get.aiPaused;
     }
 
     /// The first error among the lanes, or null when they are all fine.
@@ -1025,15 +1023,15 @@ class TaskService
      * Params:
      *   id = The task's id.
      *
-     * Returns: Success, or a failure: `TaskNotFoundError`, `ProjectNotManagedByAiError` for a
-     *   task of a project whose tasks the agents do not work on, `LaneNotPickedUpError` for a task
-     *   in a lane the agents do not pick up, `TaskDoneError` for a task in a done lane, `TaskBeingScheduledError` for one the scheduler is at now, or
-     *   `TaskBeingWorkedOnError` for one an agent is working on now.
+     * Returns: Success, or a failure: `TaskNotFoundError`, `LaneNotPickedUpError` for a task in
+     *   a lane the agents do not pick up, `TaskDoneError` for a task in a done lane,
+     *   `TaskBeingScheduledError` for one the scheduler is at now, or `TaskBeingWorkedOnError` for
+     *   one an agent is working on now.
      */
     OperationResult!ITaskError reschedule(UUID id)
     {
-        // Locked, so that the project is not taken off AI management, nor the task put in a done
-        // lane or one the agents do not pick up, between the checks and the write.
+        // Locked, so that the task is not put in a done lane or one the agents do not pick up,
+        // nor its lane changed to such a one, between the checks and the write.
         return transactionally(transactions, {
             auto locked = lockTask(id);
             if (locked.isFailure)
@@ -1042,11 +1040,6 @@ class TaskService
             }
 
             auto project = locked.value.project;
-            if (!project.managedByAi)
-            {
-                return taskFailure(new ProjectNotManagedByAiError);
-            }
-
             if (!locked.value.lane.agentsPickUp)
             {
                 return taskFailure(new LaneNotPickedUpError);
@@ -1461,8 +1454,8 @@ class ProjectNotFoundError : IProjectError, ILaneError, ITaskError, IAgentError
 {
 }
 
-/// The project is not managed by AI, so it has no agents to resume or to hand its tasks to.
-class ProjectNotManagedByAiError : IProjectError, ITaskError
+/// None of the project's lanes is one the AI agents pick up, so it has no agents to resume.
+class ProjectNotManagedByAiError : IProjectError
 {
 }
 
@@ -2208,20 +2201,13 @@ version (unittest)
 
         Project[] all()
         {
-            return database.projects.map!(project => derive(project)).array;
+            return database.projects;
         }
 
         Nullable!Project find(UUID id)
         {
             auto found = database.projects.filter!(project => project.id == id);
-            return found.empty ? Nullable!Project.init : derive(found.front).nullable;
-        }
-
-        /// The project with managedByAi read from its lanes, as the repository's select does.
-        private Project derive(Project project)
-        {
-            project.managedByAi = database.lanes.canFind!(lane => lane.projectId == project.id && lane.agentsPickUp);
-            return project;
+            return found.empty ? Nullable!Project.init : found.front.nullable;
         }
 
         bool lock(UUID id)
@@ -2841,7 +2827,6 @@ version (unittest)
             lane.agentsPickUp = true;
         }
 
-        project.managedByAi = true;
         project.aiPaused = false;
     }
 }
@@ -3168,7 +3153,7 @@ unittest
     assert(cast(TaskBeingWorkedOnError) service.reschedule(declined.id).error);
     assert(cast(TaskDoneError) service.reschedule(storedTask(database, done.id, "Read the poem", 0).id).error);
     auto ideas = storedLane(database, unmanaged.id, "Ideas", 0);
-    assert(cast(ProjectNotManagedByAiError) service.reschedule(storedTask(database, ideas.id, "Sum it", 0).id).error);
+    assert(cast(LaneNotPickedUpError) service.reschedule(storedTask(database, ideas.id, "Sum it", 0).id).error);
     assert(cast(TaskNotFoundError) service.reschedule(randomUUID).error);
     toDo.agentsPickUp = false;
     database.agentStatuses[declined.id] = AgentStatus.declined.nullable;
@@ -3195,27 +3180,28 @@ unittest
     auto project = created.value.project;
     auto toDo = created.value.lanes[0].id;
     auto doing = created.value.lanes[1].id;
-    assert(!project.managedByAi && project.aiPaused);
+    assert(project.aiPaused);
     assert(cast(LaneClosedToNewTasksError) tasks.save(new TaskViewModel(UUID.init, doing, "Late", 0)).error);
     auto plain = tasks.save(new TaskViewModel(UUID.init, toDo, "Sum it", 0)).value;
     assert(database.agentStatuses[plain.id].isNull);
 
     auto saved = projects.save(new ProjectWithLanes(new ProjectViewModel(project.id, "Q3 finance", "q3-finance"),
         [lane(toDo, "To do", 0, true, true), lane(doing, "Doing", 1, true, true)]));
-    assert(saved.value.project.managedByAi && !saved.value.project.aiPaused);
+    assert(!saved.value.project.aiPaused);
     auto handed = tasks.save(new TaskViewModel(UUID.init, doing, "Check it", 0)).value;
     assert(database.agentStatuses[handed.id] == AgentStatus.toBeScheduled);
 
     // A save of the project on its own leaves it managed, and its agents running.
     auto renamed = projects.save(new ProjectViewModel(project.id, "Q3 numbers", "q3-finance"));
-    assert(renamed.value.managedByAi && !renamed.value.aiPaused);
+    assert(!renamed.value.aiPaused);
 
     // The project stops being managed once no lane is picked up, whichever write does it.
     events.projects = null;
     assert(lanes.save(lane(toDo, "To do", 0, true, false)).isSuccessful);
     assert(events.projects.length == 0);
     assert(lanes.remove(doing).isSuccessful);
-    assert(projects.get(project.id).value.aiPaused && !projects.get(project.id).value.managedByAi);
+    assert(projects.get(project.id).value.aiPaused);
+    assert(cast(ProjectNotManagedByAiError) projects.setAiPaused(project.id, false).error);
     assert(events.projects == [Published(Event.changed, project.id)]);
 
     auto added = lanes.save(new LaneViewModel(UUID.init, project.id, "Doing", 1, "#000000", false, false, true));

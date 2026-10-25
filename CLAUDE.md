@@ -18,7 +18,7 @@ lane, and tasks added from a lane's "+ Add a task", both saved through the API. 
 tasks done has a "Clear" button that, once confirmed, deletes all of its tasks in one RPC call. A card an AI agent is at work on, the task scheduler included,
 has its lane's colour sweeping along its border and names the agent. Clicking a card
 opens the task details panel over the board, with the task's lane (which it can be moved out of),
-its description, which can be edited there, the agent working on it, and its notes, and a button that deletes the task, beside which, in a project managed by AI, a task added before the project was gets "Schedule for AI", which hands it to the agents. A project's
+its description, which can be edited there, the agent working on it, and its notes, and a button that deletes the task, beside which a task in a lane the agents pick up, added before the lane was one, gets "Schedule for AI", which hands it to the agents. A project's
 name, description and lanes, with which of them take new tasks, close them and are worked on by agents, are edited on its settings screen (`/projects/:slug/settings`),
 and a project is created on the same screen in its new-project mode (`/projects/new`). With no
 projects yet, `/` shows the project prompt (`tv-project-prompt`) instead of a board, where an agent (Generic, or else a task scheduler)
@@ -27,7 +27,7 @@ draft on the new-project screen to be reviewed before it is created; the same pr
 "Quick-create project" (`/projects/new/quick`) once there are projects.
 The Taskavista settings screen (`/settings`, the topbar's ⚙) lists the AI agents, and adds,
 edits and deletes them in a dialog, along with their labels; a new agent starts on the runtime, model and effort level in `defaults`, and each agent is run at its effort level. An agent can be disabled there, which keeps the task scheduler from giving it tasks (a disabled task scheduler schedules none) and stops what it is working on, handing those tasks back to the scheduler; it can still be chatted with. Its "Quick-create an agent" has an agent (Generic, or else a task scheduler) draft one from a description, with `dashboard/prompts/quick-create-agent.txt`, and opens the draft in that dialog to be reviewed before it is added.
-A project managed by AI agents shows a strip over its board saying whether the agents are at
+A project managed by AI agents, which is one with a lane the agents pick up, shows a strip over its board saying whether the agents are at
 work, with a button that pauses or resumes them. Pausing stops the agents' runs on its tasks
 within a round of the task scheduler's and executor's loops, as deleting a task does its run; a
 stopped task waits to be taken up again on resume. The topbar's chat button opens the agent chat, a panel beside
