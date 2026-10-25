@@ -147,22 +147,8 @@
      click gives it too. Under it, ending at the column's right, so the last column's
      stays on the screen. */
   .tooltip {
-    position: absolute;
     top: calc(100% + 10px);
     right: -8px;
-    z-index: 2;
-    display: none;
-    background: var(--surface-hover);
-    border: 1px solid var(--border-dashed);
-    box-shadow: var(--shadow-lifted);
-    border-radius: 7px;
-    padding: 6px 10px;
-    font-size: 12px;
-    font-weight: 400;
-    letter-spacing: 0;
-    text-transform: none;
-    white-space: nowrap;
-    color: var(--text-2);
   }
   .info:hover + .tooltip,
   .info:focus + .tooltip {

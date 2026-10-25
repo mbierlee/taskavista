@@ -237,6 +237,28 @@
     }
   }
 
+  /* A note shown in a bubble over the screen, for what a control or chip
+     does. Hidden until the component shows it, on hover and focus of what it
+     explains, and placed by the component too, inside a positioned
+     ancestor. */
+  .tooltip {
+    position: absolute;
+    z-index: 2;
+    display: none;
+    background: var(--surface-hover);
+    border: 1px solid var(--border-dashed);
+    box-shadow: var(--shadow-lifted);
+    border-radius: 7px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: normal;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--text-2);
+  }
+
   /* A lane's colour, which the element or an ancestor sets as --dot. */
   .dot {
     flex: none;

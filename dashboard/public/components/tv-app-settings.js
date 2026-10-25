@@ -266,7 +266,7 @@ export class TvAppSettings extends HTMLElement {
         .find((m) => m.id === agent.model)
         ?.effortLevels.find((e) => e.id === agent.effort)?.name ??
       agent.effort;
-    item.querySelector(".scheduler").hidden = !agent.taskScheduler;
+    item.querySelector(".scheduler-tip").hidden = !agent.taskScheduler;
     const labels = item.querySelector(".agent-labels");
     labels.hidden = agent.labels.length === 0;
     labels.replaceChildren(
