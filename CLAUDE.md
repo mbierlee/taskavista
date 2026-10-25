@@ -1,7 +1,6 @@
 # Taskavista
 
-Taskavista is a task board: a project holds lanes, lanes hold task cards. It is early —
-the board screen is a working prototype and the pieces behind it are still going in.
+Taskavista is a task board: a project holds lanes, lanes hold task cards.
 
 - `dashboard/` — a D / vibe.d HTTP server that serves the web UI out of `public/`, layered into
   controllers, services and repositories (see `docs/server-layers.md`). It also

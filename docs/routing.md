@@ -65,7 +65,7 @@ into `navigation.navigate()`, as it does for `project-select`.
 
 | Route | Screen |
 |---|---|
-| `/` | Redirects to the last project shown (kept in localStorage), or the first project. With no projects at all it shows `tv-project-prompt`, to describe the first project for an agent to draft, with the topbar's project switcher hidden, and goes to the first project as soon as one is made, wherever it was made |
+| `/` | Shows nothing, with the topbar's project switcher hidden, until the project list is in, then redirects to the last project shown (kept in localStorage), or the first project. With no projects at all it shows `tv-project-prompt`, to describe the first project for an agent to draft, and goes to the first project as soon as one is made, wherever it was made |
 | `/settings` | `tv-app-settings`, the Taskavista settings, with the AI agents fetched fresh each time. Names no project, so the selection is left as it was. Marks the topbar's gear as current |
 | `/projects/new` | `tv-project-settings` as the new project screen, a fresh draft with three starting lanes each time, or the draft an agent suggested on the project prompt, which is kept in the history entry's state (`draft`), so back, forward and a reload show it again; the topbar's project switcher hidden. Creating the project replaces this URL with its board. Comes before `/projects/:slug`, and `new` is a reserved slug on the server |
 | `/projects/new/quick` | `tv-project-prompt` without `first-run`, the project switcher's "Quick-create project": the first run's prompt, for describing a project for an agent to draft alongside the others, emptied each time, with the topbar's project switcher hidden and a link back to the board. The draft opens on `/projects/new` as at first run |

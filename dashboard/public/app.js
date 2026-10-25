@@ -8,9 +8,7 @@
  * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
  */
 
-/* Taskavista board prototype.
-
-   The screen is assembled from custom elements (see components/), which own all
+/* The screen is assembled from custom elements (see components/), which own all
    of the presentation and interaction. What is left here is the data they
    show, and acting on the events they raise.
 
@@ -39,7 +37,7 @@ import "./components/tv-agent-chat.js";
 import { store } from "./store.js";
 
 const topbarEl = document.querySelector("tv-topbar");
-const boardEl = document.querySelector("tv-board");
+const boardEl = document.createElement("tv-board");
 const detailsEl = document.querySelector("tv-task-details");
 const chatEl = document.querySelector("tv-agent-chat");
 
@@ -1546,7 +1544,11 @@ const notFoundEl = document.createElement("tv-not-found");
    its screen shows, and one with `settings: true` marks the topbar's gear. "new" is a reserved slug (see enforceSlug in api/checks.d),
    and comes before the pattern that would take it for one. */
 const routes = [
-  { pattern: new URLPattern({ pathname: "/" }), show: showRoot },
+  {
+    pattern: new URLPattern({ pathname: "/" }),
+    show: showRoot,
+    switcher: false,
+  },
   {
     pattern: new URLPattern({ pathname: "/settings" }),
     show: showAppSettings,
@@ -1615,7 +1617,8 @@ function redirect(path) {
   navigation.navigate(path, { history: "replace" });
 }
 
-/* The root has no screen of its own. */
+/* The root has no screen of its own, and shows nothing, not even the
+   switcher, until the project list says which screen it is. */
 async function showRoot(params, signal) {
   await projectsLoaded;
   if (signal.aborted) {
@@ -1632,11 +1635,11 @@ async function showRoot(params, signal) {
     /* With no projects at all, the first project is set up here. A list that
        could not be loaded is not known to be empty, so that gets the board. */
     if (store.state.projects.status === "ready") {
-      topbarEl.toggleAttribute("no-switcher", true);
       projectPromptEl.toggleAttribute("first-run", true);
       mainEl.replaceChildren(projectPromptEl);
       projectPromptEl.focus();
     } else {
+      topbarEl.toggleAttribute("no-switcher", false);
       mainEl.replaceChildren(boardEl);
     }
     return;

@@ -8,7 +8,7 @@
  * License: MIT. The full terms of the license can be found in the LICENSE.txt file.
  */
 
-/* <tv-board name="Website relaunch"> ...lanes... </tv-board>
+/* <tv-board name="Office move"> ...lanes... </tv-board>
 
    The board owns the one piece of behaviour no single lane can: dragging a
    card from one lane to another. It holds no data — it reports the move and lets the caller decide.
