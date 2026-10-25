@@ -14,7 +14,9 @@
    they are at work, with the button that pauses or resumes them. It takes no
    attributes: the project comes from the store, and the strip is hidden for
    a project that is not managed by AI agents, or when there is none. It sets
-   `paused` on itself, for its styles.
+   `paused` on itself, for its styles. Its button is disabled while the
+   store's `aiPausing` holds the project, as its last press is being saved,
+   and the second and later clicks of a double or triple click are ignored.
 
    Events (bubbling and composed):
      agents-pause  detail { projectId, paused }  the button was pressed:
@@ -27,7 +29,9 @@ const template = await loadTemplate("tv-agents-bar.html");
 
 export class TvAgentsBar extends HTMLElement {
   #project = null;
+  #pausing = [];
   #unwatch;
+  #unwatchPausing;
   #text;
   #button;
   #buttonText;
@@ -40,7 +44,15 @@ export class TvAgentsBar extends HTMLElement {
     this.#button = root.querySelector(".toggle");
     this.#buttonText = root.querySelector(".label-text");
 
-    this.#button.addEventListener("click", () => this.#onToggle());
+    /* A press means the opposite of what the strip shows, which the first
+       click of a double click has already changed, so only that first click
+       counts. The button is also disabled while a press is being saved, for
+       a second press that comes before the server has answered. */
+    this.#button.addEventListener("click", (event) => {
+      if (event.detail <= 1) {
+        this.#onToggle();
+      }
+    });
   }
 
   connectedCallback() {
@@ -53,10 +65,18 @@ export class TvAgentsBar extends HTMLElement {
         this.#render();
       },
     );
+    this.#unwatchPausing = store.watch(
+      (state) => state.aiPausing,
+      (pausing) => {
+        this.#pausing = pausing;
+        this.#render();
+      },
+    );
   }
 
   disconnectedCallback() {
     this.#unwatch();
+    this.#unwatchPausing();
   }
 
   #onToggle() {
@@ -84,6 +104,9 @@ export class TvAgentsBar extends HTMLElement {
       ? "AI agents are paused"
       : "AI agents are handling this project";
     this.#buttonText.textContent = paused ? "Resume agents" : "Pause agents";
+    this.#button.disabled = Boolean(
+      project && this.#pausing.includes(project.id),
+    );
   }
 }
 

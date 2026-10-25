@@ -66,6 +66,9 @@ export const store = new Store({
   currentProjectSlug: null,
   /* True while the lanes and tasks of the selected project are being fetched. */
   boardLoading: false,
+  /* The ids of the projects whose AI agents are being paused or resumed, from
+     the press of the button until the server has answered. */
+  aiPausing: [],
   /* The AI agents, with the runtimes and models their names come from, as
      their REST endpoints return them. status is "loading", "ready" or
      "unavailable". */

@@ -550,8 +550,15 @@ function projectExists(slug) {
 let keepBoard = false;
 
 /* On screen straight away, then on the server. If the server refuses, the
-   strip over the board goes back to what it said before. */
+   strip over the board goes back to what it said before. Its button is
+   disabled until the server has answered, so a second press, such as the
+   second click of a double click, cannot undo the first. */
 async function setAiPaused(projectId, paused) {
+  if (store.state.aiPausing.includes(projectId)) {
+    return;
+  }
+
+  store.update({ aiPausing: [...store.state.aiPausing, projectId] });
   showAiPaused(projectId, paused);
   try {
     await queueWrite(() =>
@@ -563,6 +570,10 @@ async function setAiPaused(projectId, paused) {
       error,
     );
     showAiPaused(projectId, !paused);
+  } finally {
+    store.update({
+      aiPausing: store.state.aiPausing.filter((id) => id !== projectId),
+    });
   }
 }
 
