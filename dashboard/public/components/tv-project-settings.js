@@ -18,14 +18,19 @@
    (marksDone) and Agents (agentsPickUp). The project has no AI setting of
    its own: it is managed by AI when any lane has Agents ticked.
 
+   The working directory is under "Advanced", collapsed at first. On a new
+   project it follows the name, under the `workingDirRoot` property, until
+   it is edited.
+
    Events (bubbling and composed):
-     settings-save   detail { name, description, lanes }
+     settings-save   detail { name, description, lanes, workingDir }
                      `lanes` is every lane in the new order, as { id, name,
                      color, marksDone, acceptsNewTasks, agentsPickUp }; id is
                      null for a lane added here, and a lane left out was
                      removed.
-     project-create  detail { name, description, lanes }  the same, with
-                     every id null.
+     project-create  detail { name, description, lanes, workingDir }  the
+                     same, with every id null, and workingDir null when it
+                     was left to follow the name, for the server to choose.
      project-delete  detail { id } */
 
 import { attachTemplate, loadTemplate } from "./template.js";
@@ -120,6 +125,9 @@ export class TvProjectSettings extends HTMLElement {
   #colorBefore = null;
   #dragKey = null;
   #dropIndex = null;
+  #workingDirRoot = null;
+  /* Whether the working directory is still the one made from the name. */
+  #workingDirFollows = false;
 
   #back;
   #title;
@@ -132,6 +140,9 @@ export class TvProjectSettings extends HTMLElement {
   #delete;
   #list;
   #addLane;
+  #advancedToggle;
+  #advancedBody;
+  #workingDir;
   #picker;
   #error;
   #cancel;
@@ -152,6 +163,9 @@ export class TvProjectSettings extends HTMLElement {
     this.#delete = root.querySelector(".delete");
     this.#list = root.querySelector(".lanes");
     this.#addLane = root.querySelector(".add-lane");
+    this.#advancedToggle = root.querySelector(".advanced-toggle");
+    this.#advancedBody = root.querySelector(".advanced-body");
+    this.#workingDir = root.querySelector(".working-dir");
     this.#picker = root.querySelector("tv-color-picker");
     this.#error = root.querySelector(".error");
     this.#cancel = root.querySelector(".cancel");
@@ -161,6 +175,13 @@ export class TvProjectSettings extends HTMLElement {
     this.#name.addEventListener("input", () => {
       clearTimeout(this.#nameCheck);
       this.#nameCheck = setTimeout(() => this.#checkName(), nameCheckDelayMs);
+      this.#renderWorkingDir();
+    });
+    this.#advancedToggle.addEventListener("click", () => {
+      this.#expandAdvanced(this.#advancedBody.hidden);
+    });
+    this.#workingDir.addEventListener("input", () => {
+      this.#workingDirFollows = false;
     });
     this.#delete.addEventListener("click", () => this.#onDelete());
     this.#addLane.addEventListener("click", () => this.#onAddLane());
@@ -255,6 +276,13 @@ export class TvProjectSettings extends HTMLElement {
     this.#name.focus();
   }
 
+  /* The directory a new project's working directory goes in, from the
+     server's defaults, or null while it is not known. */
+  set workingDirRoot(root) {
+    this.#workingDirRoot = root;
+    this.#renderWorkingDir();
+  }
+
   #start(project, lanes, board, draft = null) {
     const fields = project ?? draft;
     this.#project = project;
@@ -279,6 +307,13 @@ export class TvProjectSettings extends HTMLElement {
     }
     this.#description.value = fields?.description ?? "";
     this.#checkName();
+
+    this.#expandAdvanced(false);
+    this.#workingDirFollows = !project;
+    this.#workingDir.value = project?.workingDir ?? "";
+    this.#workingDir.required = Boolean(project);
+    this.#workingDir.placeholder = "";
+    this.#renderWorkingDir();
 
     this.#status.hidden = true;
     this.#form.hidden = false;
@@ -328,6 +363,10 @@ export class TvProjectSettings extends HTMLElement {
     /* Enter may come before the pause that would have checked the name. A
        name that is only spaces fails the fields' pattern. */
     this.#checkName();
+    /* A field left blank under a collapsed "Advanced" could not show why. */
+    if (!this.#workingDir.checkValidity()) {
+      this.#expandAdvanced(true);
+    }
     if (this.#save.disabled || !this.#form.reportValidity()) {
       return;
     }
@@ -350,6 +389,9 @@ export class TvProjectSettings extends HTMLElement {
               agentsPickUp,
             }),
           ),
+          workingDir: this.#workingDirFollows
+            ? null
+            : this.#workingDir.value.trim(),
         },
       }),
     );
@@ -402,6 +444,11 @@ export class TvProjectSettings extends HTMLElement {
     this.#nameError.hidden = message === "";
     this.#name.setAttribute("aria-invalid", message !== "");
     this.#save.disabled = message !== "";
+  }
+
+  #expandAdvanced(expanded) {
+    this.#advancedToggle.setAttribute("aria-expanded", expanded);
+    this.#advancedBody.hidden = !expanded;
   }
 
   /* ---------- lanes ---------- */
@@ -650,6 +697,21 @@ export class TvProjectSettings extends HTMLElement {
       lane.id === null ? "" : taskCount(lane.taskCount),
     );
     return row;
+  }
+
+  /* Only a new project's, while it follows the name; the server gives a
+     project whose directory of that name is another's one with a number
+     after it. */
+  #renderWorkingDir() {
+    if (!this.#workingDirFollows) {
+      return;
+    }
+    const root = this.#workingDirRoot?.replace(/\/+$/, "");
+    const slug = slugify(this.#name.value);
+    this.#workingDir.value = root && slug ? `${root}/${slug}` : "";
+    this.#workingDir.placeholder = root
+      ? `${root}/…`
+      : "Chosen when the project is created";
   }
 
   #rowOf(key) {

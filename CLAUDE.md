@@ -19,7 +19,7 @@ tasks done has a "Clear" button that, once confirmed, deletes all of its tasks i
 has its lane's colour sweeping along its border and names the agent. Clicking a card
 opens the task details panel over the board, with the task's lane (which it can be moved out of),
 its description, which can be edited there, the agent working on it, and its notes, and a button that deletes the task, beside which a task in a lane the agents pick up, added before the lane was one, gets "Schedule for AI", which hands it to the agents. A project's
-name, description and lanes, with which of them take new tasks, close them and are worked on by agents, are edited on its settings screen (`/projects/:slug/settings`),
+name, description and lanes, with which of them take new tasks, close them and are worked on by agents, and its working directory, under "Advanced", are edited on its settings screen (`/projects/:slug/settings`),
 and a project is created on the same screen in its new-project mode (`/projects/new`). With no
 projects yet, `/` shows the project prompt (`tv-project-prompt`) instead of a board, where an agent (Generic, or else a task scheduler)
 drafts the first project from a description, with `dashboard/prompts/quick-create-project.txt`, and opens the
@@ -36,11 +36,11 @@ with a system prompt of two parts, each filled in by `PromptParser`: `dashboard/
 which starts every interaction with an agent and gives it the API help in
 `dashboard/public/agent-help.txt` (which agents can also fetch from the server), then
 `dashboard/prompts/system/new-agent-chat.txt`, the chat's own part; the tabs last as long as the page.
-A project can have a working directory for its files, named after its slug under `projectWorkingDirRoot`
-in `config.json`, when that root exists (see `workingdir.d`): task agents run in it, and a chat started in a
-project runs in its own scratch space with the working directory open to it, so it can still be resumed
-after the slug changes. Closing a chat's tab ends the chat on the server, which removes its scratch space, and
-a run's scratch space goes when the run ends. With no working directory, agents work in their scratch space. A project
+A project can have a working directory for its files, kept in `projects.working_dir`: a new project's is
+named after its slug under `projectWorkingDirRoot` in `config.json`, unless another is given, and stays
+where it is when the slug changes. It is made when the directory it goes in exists (see `workingdir.d`): task agents run in it, and
+a chat started in a project runs in its own scratch space with the working directory open to it. Closing
+a chat's tab ends the chat on the server, which removes its scratch space, and a run's scratch space goes when the run ends. With no working directory, agents work in their scratch space. A project
 whose working directory has an `index.html` has an "Open project" button in the topbar, which opens
 it in a new tab, served under `/working-dirs/<slug>/`; it appears once a task is moved after the page
 was made, such as by the task scheduler moving on the task whose agent made it. Every write

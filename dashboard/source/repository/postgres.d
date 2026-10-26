@@ -215,7 +215,7 @@ private T translated(T)(scope T delegate() dg)
 }
 
 /// A project's columns, for a select from projects p.
-private enum projectColumns = "p.id, p.name, p.slug, p.description, p.ai_paused";
+private enum projectColumns = "p.id, p.name, p.slug, p.description, p.ai_paused, p.working_dir";
 
 /// IProjectRepository over postgres.
 class PostgresProjectRepository : IProjectRepository
@@ -260,6 +260,19 @@ class PostgresProjectRepository : IProjectRepository
         });
     }
 
+    Nullable!Project findBySlug(string slug)
+    {
+        QueryParams query;
+        query.sqlCommand = "select " ~ projectColumns ~ " from projects p where p.slug = $1";
+        query.argsVariadic(slug);
+
+        return connections.use((scope connection) {
+            auto answer = connection.execParams(query);
+
+            return answer.length == 0 ? Nullable!Project.init : answer[0].toProject.nullable;
+        });
+    }
+
     bool lock(UUID id)
     {
         QueryParams query;
@@ -285,11 +298,23 @@ class PostgresProjectRepository : IProjectRepository
         });
     }
 
+    bool workingDirTaken(string workingDir, UUID except)
+    {
+        QueryParams query;
+        query.sqlCommand = "select 1 from projects where working_dir = $1 and id <> $2";
+        query.argsVariadic(workingDir, except);
+
+        return connections.use((scope connection) {
+            return connection.execParams(query).length > 0;
+        });
+    }
+
     Project add(Project project)
     {
         QueryParams query;
-        query.sqlCommand = "insert into projects (name, slug, description, ai_paused) values ($1, $2, $3, $4) returning id";
-        query.argsVariadic(project.name, project.slug, project.description, project.aiPaused);
+        query.sqlCommand = "insert into projects (name, slug, description, ai_paused, working_dir) values ($1, $2, $3, $4, $5)"
+            ~ " returning id";
+        query.argsVariadic(project.name, project.slug, project.description, project.aiPaused, project.workingDir);
 
         connections.use((scope connection) {
             project.id = connection.execParams(query)[0]["id"].as!UUID;
@@ -301,8 +326,9 @@ class PostgresProjectRepository : IProjectRepository
     bool update(Project project)
     {
         QueryParams query;
-        query.sqlCommand = "update projects set name = $2, slug = $3, description = $4 where id = $1 returning id";
-        query.argsVariadic(project.id, project.name, project.slug, project.description);
+        query.sqlCommand = "update projects set name = $2, slug = $3, description = $4, working_dir = $5 where id = $1"
+            ~ " returning id";
+        query.argsVariadic(project.id, project.name, project.slug, project.description, project.workingDir);
 
         return connections.use((scope connection) {
             return connection.execParams(query).length > 0;
@@ -324,8 +350,9 @@ class PostgresProjectRepository : IProjectRepository
     {
         connections.transaction((scope connection) {
             QueryParams insert;
-            insert.sqlCommand = "insert into projects (name, slug, description, ai_paused) values ($1, $2, $3, $4) returning id";
-            insert.argsVariadic(project.name, project.slug, project.description, project.aiPaused);
+            insert.sqlCommand = "insert into projects (name, slug, description, ai_paused, working_dir) values ($1, $2, $3, $4, $5)"
+                ~ " returning id";
+            insert.argsVariadic(project.name, project.slug, project.description, project.aiPaused, project.workingDir);
             project.id = connection.execParams(insert)[0]["id"].as!UUID;
 
             foreach (lane; lanes)
@@ -347,8 +374,9 @@ class PostgresProjectRepository : IProjectRepository
             connection.exec("set constraints all deferred");
 
             QueryParams update;
-            update.sqlCommand = "update projects set name = $2, slug = $3, description = $4 where id = $1 returning id";
-            update.argsVariadic(project.id, project.name, project.slug, project.description);
+            update.sqlCommand = "update projects set name = $2, slug = $3, description = $4, working_dir = $5 where id = $1"
+                ~ " returning id";
+            update.argsVariadic(project.id, project.name, project.slug, project.description, project.workingDir);
             if (connection.execParams(update).length == 0)
             {
                 return false;
@@ -407,7 +435,8 @@ private Project toProject(immutable Row row)
         row["name"].as!string,
         row["slug"].as!string,
         row["description"].as!string,
-        row["ai_paused"].as!bool
+        row["ai_paused"].as!bool,
+        row["working_dir"].as!string
     );
 }
 

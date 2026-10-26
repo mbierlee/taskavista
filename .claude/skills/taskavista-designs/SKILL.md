@@ -108,7 +108,7 @@ mockup, and a new project's starting lanes are in `app.js`.
 
 ## Current build state
 
-Built: the **board**, the **project switcher**, **project settings**, **new project** (the
+Built: the **board**, the **project switcher**, **project settings** with its "Advanced" working directory, **new project** (the
 settings component in its `new` mode), the **first run** screen (`tv-project-prompt`), which has an agent (Generic, or else a
 task scheduler) draft a project to open on the new project screen (the mockups have no generating or failed state, so it
 borrows the quick-create tile's) and is also the **quick-create project** screen the project switcher opens, the **agents strip** over the board of an AI-managed project, the **Taskavista settings**

@@ -83,7 +83,9 @@ tags:
   - name: Defaults
     description: |
       The value each app-wide setting starts from, one per key: so far the `runtime`, `model` and
-      `effort` a new agent is offered, as the `id` of a runtime, a model and an effort level. A value is plain text and
+      `effort` a new agent is offered, as the `id` of a runtime, a model and an effort level, and
+      `working_dir_root`, the directory a new project's working directory goes in, from the
+      server's config. A value is plain text and
       is not checked against anything, so a client should fall back to something sensible when it
       names nothing that exists. Defaults can only be read.
 
@@ -103,8 +105,8 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Project" }
               example:
-                - { id: 534980ce-e65b-4044-9d5a-1e5b769650c3, name: Office Cats Management Game, slug: office-cats-management-game, description: A video game about managing cats who work in an office., aiPaused: false, canBeOpened: false }
-                - { id: a7850cce-6484-4853-b6c2-0937bd69993b, name: Test, slug: test, description: "", aiPaused: true, canBeOpened: false }
+                - { id: 534980ce-e65b-4044-9d5a-1e5b769650c3, name: Office Cats Management Game, slug: office-cats-management-game, description: A video game about managing cats who work in an office., aiPaused: false, canBeOpened: false, workingDir: /home/user/taskavista-projects/office-cats-management-game }
+                - { id: a7850cce-6484-4853-b6c2-0937bd69993b, name: Test, slug: test, description: "", aiPaused: true, canBeOpened: false, workingDir: /home/user/taskavista-projects/test }
         "500": { $ref: "#/components/responses/ServerError" }
     post:
       tags: [Projects]
@@ -113,7 +115,8 @@ paths:
       description: |
         The body is a project without an id. `slug` and `description` may be left out. A new
         project has no lanes, so none the agents pick up, and its agents are paused, whatever
-        `aiPaused` the body has. An `id` sent in the body is ignored.
+        `aiPaused` the body has. An `id` sent in the body is ignored. With no `workingDir`, the
+        project is given one named after its slug.
 
         A slug that was sent is named in a 409's message; when the slug was derived from the
         name, the message refers to the name instead, and names the project that already has it.
@@ -135,15 +138,17 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., aiPaused: true, canBeOpened: false }
+              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., aiPaused: true, canBeOpened: false, workingDir: /home/user/taskavista-projects/zebra-migration }
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
-          description: Another project already has the slug, or it is a reserved one.
+          description: Another project already has the slug or the working directory, or the slug is a reserved one.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               examples:
+                workingDirTaken:
+                  value: { statusMessage: "Another project already has that working directory. Pick another one." }
                 slugTaken:
                   value: { statusMessage: "Another project already has the slug 'website-relaunch'." }
                 slugReserved:
@@ -171,7 +176,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., aiPaused: false, canBeOpened: false }
+              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., aiPaused: false, canBeOpened: false, workingDir: /home/user/taskavista-projects/zebra-migration }
         "400": { $ref: "#/components/responses/MalformedId" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
@@ -182,7 +187,8 @@ paths:
       description: |
         A full replacement, not a patch. For `slug` the default is the one derived from the name,
         so **renaming a project without sending its slug changes its URL**; send the slug to keep
-        it. Likewise a `description` left out empties the description.
+        it. Likewise a `description` left out empties the description, but a `workingDir` left
+        out keeps the project's own.
 
         `aiPaused` is never taken from the body: a `PUT` leaves it as it was. The response gives
         the value stored.
@@ -201,7 +207,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Project" }
-              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration v2, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., aiPaused: false, canBeOpened: false }
+              example: { id: e9f156dd-9015-45b5-9451-0a9517c53e33, name: Zebra migration v2, slug: zebra-migration, description: Move the zebras to the new enclosure before the winter., aiPaused: false, canBeOpened: false, workingDir: /home/user/taskavista-projects/zebra-migration }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
@@ -728,6 +734,7 @@ paths:
                 - { key: effort, value: default }
                 - { key: model, value: sonnet }
                 - { key: runtime, value: claude-code }
+                - { key: working_dir_root, value: /home/user/taskavista-projects }
         "500": { $ref: "#/components/responses/ServerError" }
 
 components:
@@ -822,6 +829,18 @@ components:
             browser: an `index.html` at the top of the project's working directory, which the
             server serves at `/working-dirs/{slug}/index.html`, outside this API, along with the
             rest of the directory's files.
+        workingDir:
+          type: string
+          description: |
+            The directory on the server that the project's agents work in, whether it is there yet
+            or not. An absolute path, or one starting with `~`, which is stored expanded and
+            normalized, as the response shows; anything else is a 400, and one another project
+            has a 409. A project sent without one, or with a blank one, is given one named after
+            its slug when it is new, under the `working_dir_root` default, or after its slug with
+            `-2`, `-3` and so on when another project already has that one, and keeps its own
+            otherwise. It stays where it is when the slug changes. A directory given is made when
+            the one it goes in is there; nothing is moved out of the old one.
+          examples: [/home/user/taskavista-projects/q3-finance]
 
     Lane:
       type: object

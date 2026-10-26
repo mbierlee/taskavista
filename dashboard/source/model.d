@@ -70,6 +70,11 @@ class Project
      * agents pick up. The service has it follow its lanes when that changes.
      */
     bool aiPaused = true;
+    /**
+     * The directory its agents work in, whether it is there or not. Chosen when the project is
+     * created, after its slug then, and kept when the slug changes.
+     */
+    string workingDir;
 
     this() @safe
     {
@@ -82,13 +87,15 @@ class Project
         this.description = description;
     }
 
-    this(UUID id, string name, string slug, string description = null, bool aiPaused = true) @safe
+    this(UUID id, string name, string slug, string description = null, bool aiPaused = true,
+        string workingDir = null) @safe
     {
         this.id = id;
         this.name = name;
         this.slug = slug;
         this.description = description;
         this.aiPaused = aiPaused;
+        this.workingDir = workingDir;
     }
 }
 

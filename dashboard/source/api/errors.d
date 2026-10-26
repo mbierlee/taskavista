@@ -38,7 +38,8 @@ import service : AgentModelMissingError, AgentNameMissingError, AgentNameTakenEr
     ProjectNameUnusableError, ProjectNotFoundError, ProjectNotManagedByAiError, RuntimeNotFoundError,
     SlugInvalidError, SlugReservedError, SlugTakenError, TaskBeforeItselfError, TaskBeingScheduledError,
     TaskBeingWorkedOnError, TaskDescriptionMissingError, TaskDoneError, TaskKeptMovingError, TaskLeavesProjectError,
-    TaskNotFoundError, TaskPositionNegativeError, TaskPositionTakenError;
+    TaskNotFoundError, TaskPositionNegativeError, TaskPositionTakenError, WorkingDirInvalidError,
+    WorkingDirTakenError;
 import viewmodel : AgentViewModel, LaneViewModel, ProjectViewModel, TaskViewModel;
 
 /**
@@ -288,6 +289,18 @@ HTTPStatusException toHTTPError(IProjectError error, ProjectViewModel project)
     {
         return new HTTPStatusException(HTTPStatus.conflict,
             format("A project called “%s” already exists. Pick another name.", taken.ownerName));
+    }
+
+    if (cast(WorkingDirInvalidError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.badRequest,
+            "A working directory is an absolute path, or one starting with ~.");
+    }
+
+    if (cast(WorkingDirTakenError) error)
+    {
+        return new HTTPStatusException(HTTPStatus.conflict,
+            "Another project already has that working directory. Pick another one.");
     }
 
     if (cast(LaneOfOtherProjectError) error)

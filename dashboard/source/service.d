@@ -13,8 +13,10 @@
 
 module service;
 
-import std.algorithm : any, canFind, filter, map;
+import std.algorithm : any, canFind, filter, map, sort;
 import std.array : array;
+import std.format : format;
+import std.path : buildNormalizedPath, expandTilde, isAbsolute;
 import std.string : strip;
 import std.typecons : Nullable, nullable;
 import std.uni : toLower;
@@ -40,8 +42,8 @@ immutable string[] reservedSlugs = ["new"];
 
 /**
  * The rules a project and its lanes are read and written by. Every write it makes is reported to
- * the event stream once it has succeeded. A project's working directory is made along with it and
- * moves along with its slug.
+ * the event stream once it has succeeded. A project's working directory is made along with it, and
+ * when it is given another; it stays where it is when the project's slug changes.
  */
 class ProjectService
 {
@@ -66,14 +68,16 @@ class ProjectService
      *
      * Creates the project when it has no id yet, and updates it otherwise. A project with no
      * slug is given one made from its name, which must have a letter or digit in it. A project
-     * created on its own has no lanes, so it is not managed by AI.
+     * created on its own has no lanes, so it is not managed by AI. A new project with no working
+     * directory is given one named after its slug, and an existing one keeps its own.
      *
      * Params:
      *   project = The project to create or update.
      *
      * Returns: The project as stored, or a failure: `ProjectNameMissingError`,
      *   `ProjectNameUnusableError`, `SlugInvalidError`, `SlugReservedError`, `SlugTakenError`,
-     *   `NameReservedError`, `NameTakenError` or `ProjectNotFoundError`.
+     *   `NameReservedError`, `NameTakenError`, `WorkingDirInvalidError`, `WorkingDirTakenError`
+     *   or `ProjectNotFoundError`.
      */
     Result!(ProjectViewModel, IProjectError) save(ProjectViewModel project)
     {
@@ -100,31 +104,43 @@ class ProjectService
         {
             if (project.id == UUID.init)
             {
+                auto invalidDir = settleWorkingDir(project, null);
+                if (invalidDir !is null)
+                {
+                    return projectFailure!Project(invalidDir);
+                }
+
                 repository.add(project);
-                workingDirs.createIfRootExists(project.slug);
+                workingDirs.ensure(project.workingDir);
                 events.project(Event.created, project.id);
                 return projectSuccess(project);
             }
 
-            // Locked, so that the slug the working directory is renamed from is the one the update
-            // replaces, whatever other save comes along meanwhile.
-            return transactionally(transactions, {
-                if (!repository.lock(project.id))
-                {
-                    return projectFailure!Project(new ProjectNotFoundError);
-                }
+            auto stored = repository.find(project.id);
+            if (stored.isNull)
+            {
+                return projectFailure!Project(new ProjectNotFoundError);
+            }
 
-                const oldSlug = repository.find(project.id).get.slug;
-                if (!repository.update(project))
-                {
-                    return projectFailure!Project(new ProjectNotFoundError);
-                }
+            auto invalidDir = settleWorkingDir(project, stored.get.workingDir);
+            if (invalidDir !is null)
+            {
+                return projectFailure!Project(invalidDir);
+            }
 
-                readBack(project);
-                transactions.afterCommit(() => workingDirs.rename(oldSlug, project.slug));
-                events.project(Event.changed, project.id);
-                return projectSuccess(project);
-            });
+            if (!repository.update(project))
+            {
+                return projectFailure!Project(new ProjectNotFoundError);
+            }
+
+            if (project.workingDir != stored.get.workingDir)
+            {
+                workingDirs.ensure(project.workingDir);
+            }
+
+            readBack(project);
+            events.project(Event.changed, project.id);
+            return projectSuccess(project);
         }
         catch (UniqueViolation violation)
         {
@@ -140,7 +156,8 @@ class ProjectService
      * project's that is not among them is deleted, tasks and all. A project with no slug is
      * given one made from its name, which must have a letter or digit in it. A project with a
      * lane the agents pick up is managed by AI: its agents start running when it comes to have
-     * one, and are paused when it has none any more.
+     * one, and are paused when it has none any more. A new project with no working directory is
+     * given one named after its slug, and an existing one keeps its own.
      *
      * Params:
      *   projectWithLanes = The project and its lanes, at the positions they carry.
@@ -149,7 +166,8 @@ class ProjectService
      *   `ProjectNameUnusableError`, `ProjectNotFoundError`, `SlugInvalidError`,
      *   `SlugReservedError`, `SlugTakenError`, `NameReservedError`, `NameTakenError`,
      *   `LaneNameMissingError`, `LanePositionNegativeError`, `LaneColorInvalidError`,
-     *   `LaneOfOtherProjectError`, `LaneNotFoundError` or `LaneListedTwiceError`.
+     *   `LaneOfOtherProjectError`, `LaneNotFoundError`, `LaneListedTwiceError`,
+     *   `WorkingDirInvalidError` or `WorkingDirTakenError`.
      */
     Result!(ProjectWithLanes, IProjectError) save(ProjectWithLanes projectWithLanes)
     {
@@ -184,9 +202,15 @@ class ProjectService
                     return projectFailure!Project(newSlug.error);
                 }
 
+                auto invalidDir = settleWorkingDir(project, null);
+                if (invalidDir !is null)
+                {
+                    return projectFailure!Project(invalidDir);
+                }
+
                 project.aiPaused = !lanes.any!(lane => lane.agentsPickUp);
                 repository.addWithLanes(project, lanes);
-                workingDirs.createIfRootExists(project.slug);
+                workingDirs.ensure(project.workingDir);
                 events.project(Event.created, project.id);
                 return projectSuccess(project);
             }
@@ -211,12 +235,17 @@ class ProjectService
             return projectFailure!Project(new ProjectNotFoundError);
         }
 
-        const oldSlug = repository.find(project.id).get.slug;
-
         auto slug = checkSlug(project);
         if (slug.isFailure)
         {
             return projectFailure!Project(slug.error);
+        }
+
+        const oldWorkingDir = repository.find(project.id).get.workingDir;
+        auto invalidDir = settleWorkingDir(project, oldWorkingDir);
+        if (invalidDir !is null)
+        {
+            return projectFailure!Project(invalidDir);
         }
 
         auto invalidLane = checkLanes(lanes);
@@ -260,7 +289,11 @@ class ProjectService
         followManaged(repository, this.lanes, project.id, before.any!(lane => lane.agentsPickUp));
         readBack(project);
 
-        transactions.afterCommit(() => workingDirs.rename(oldSlug, project.slug));
+        if (project.workingDir != oldWorkingDir)
+        {
+            transactions.afterCommit({ workingDirs.ensure(project.workingDir); });
+        }
+
         // One event for the project and its lanes, which the UI reads as "its lanes may have
         // changed too", rather than one per lane.
         events.project(Event.changed, project.id);
@@ -355,13 +388,61 @@ class ProjectService
     private ProjectViewModel view(Project project)
     {
         return new ProjectViewModel(project.id, project.name, project.slug, project.description,
-            project.aiPaused, workingDirs.hasIndexPage(project.slug));
+            project.aiPaused, workingDirs.hasIndexPage(project.workingDir), project.workingDir);
     }
 
-    /// Fills in what a write leaves to the database: whether the project's agents are paused.
+    /// Fills in what a write leaves to the database: whether its agents are paused, and its working directory.
     private void readBack(Project project)
     {
-        project.aiPaused = repository.find(project.id).get.aiPaused;
+        auto stored = repository.find(project.id).get;
+        project.aiPaused = stored.aiPaused;
+        project.workingDir = stored.workingDir;
+    }
+
+    /**
+     * Settles the working directory of a project about to be written. One that has none is given
+     * `current`, or when that is null, as for a new project, one named after its slug. One given
+     * is stored absolute and normalized, and must be no other project's.
+     *
+     * Returns: The error, or null when the working directory is fine.
+     */
+    private IProjectError settleWorkingDir(Project project, string current)
+    {
+        const given = project.workingDir.strip;
+        if (given.length == 0)
+        {
+            project.workingDir = current !is null ? current : freeWorkingDir(project.slug);
+            return null;
+        }
+
+        const dir = expandTilde(given);
+        if (!isAbsolute(dir))
+        {
+            return new WorkingDirInvalidError;
+        }
+
+        project.workingDir = buildNormalizedPath(dir);
+        if (repository.workingDirTaken(project.workingDir, project.id))
+        {
+            return new WorkingDirTakenError;
+        }
+
+        return null;
+    }
+
+    /**
+     * The working directory a new project is given when it has none: named after its slug, unless
+     * another project has that one already, as a project keeps its own when its slug changes.
+     */
+    private string freeWorkingDir(string slug)
+    {
+        auto dir = workingDirs.path(slug);
+        for (auto number = 2; repository.workingDirTaken(dir, UUID.init); number++)
+        {
+            dir = workingDirs.path(format("%s-%d", slug, number));
+        }
+
+        return dir;
     }
 
     /// The first error among the lanes, or null when they are all fine.
@@ -411,14 +492,19 @@ class ProjectService
     }
 
     /**
-     * The error for a write the unique slug refused, as checkSlug would have answered had the
-     * other project taken the slug before it rather than after. Only to be called once the write's
-     * transaction is over, since it reads.
+     * The error for a write the unique slug or working directory refused, as the checks would
+     * have answered had the other project taken it before it rather than after. Only to be called
+     * once the write's transaction is over, since it reads.
      *
-     * Throws: The violation, when it is of another constraint than the slug's.
+     * Throws: The violation, when it is of another constraint than those.
      */
     private IProjectError slugTaken(Project project, bool derived, UniqueViolation violation)
     {
+        if (violation.constraint == "projects_working_dir_key")
+        {
+            return new WorkingDirTakenError;
+        }
+
         if (violation.constraint != "projects_slug_key")
         {
             throw violation;
@@ -1422,20 +1508,25 @@ class AgentService
 class DefaultService
 {
     private IDefaultRepository repository;
+    private ProjectWorkingDirs workingDirs;
 
-    this(IDefaultRepository repository)
+    this(IDefaultRepository repository, ProjectWorkingDirs workingDirs)
     {
         this.repository = repository;
+        this.workingDirs = workingDirs;
     }
 
     /**
-     * Gets every default.
+     * Gets every default, those in the database and `working_dir_root`, the directory a new
+     * project's working directory goes in, which is in the config instead.
      *
      * Returns: Every default, by key.
      */
     DefaultViewModel[] getAll()
     {
-        return repository.all().map!(value => toViewModel(value)).array;
+        auto defaults = repository.all().map!(value => toViewModel(value)).array;
+        defaults ~= new DefaultViewModel("working_dir_root", workingDirs.root);
+        return defaults.sort!((a, b) => a.key < b.key).release;
     }
 }
 
@@ -1499,6 +1590,16 @@ class NameTakenError : IProjectError
     {
         this.ownerName = ownerName;
     }
+}
+
+/// The project's working directory is not an absolute path, nor one starting with ~.
+class WorkingDirInvalidError : IProjectError
+{
+}
+
+/// Another project already has the project's working directory.
+class WorkingDirTakenError : IProjectError
+{
 }
 
 /// A lane given for a project is another project's.
@@ -1873,7 +1974,7 @@ private Lane toModel(LaneViewModel view)
 /// The project a client sent, to be written. Whether it is managed by AI, and paused, is not the client's to say.
 private Project toModel(ProjectViewModel view)
 {
-    return new Project(view.id, view.name, view.slug, view.description);
+    return new Project(view.id, view.name, view.slug, view.description, true, view.workingDir);
 }
 
 /**
@@ -2215,10 +2316,21 @@ version (unittest)
             return !find(id).isNull;
         }
 
+        Nullable!Project findBySlug(string slug)
+        {
+            auto found = database.projects.filter!(project => project.slug == slug);
+            return found.empty ? Nullable!Project.init : found.front.nullable;
+        }
+
         Nullable!string slugOwner(string slug, UUID except)
         {
             auto found = database.projects.filter!(project => project.slug == slug && project.id != except);
             return found.empty ? Nullable!string.init : found.front.name.nullable;
+        }
+
+        bool workingDirTaken(string workingDir, UUID except)
+        {
+            return database.projects.canFind!(project => project.workingDir == workingDir && project.id != except);
         }
 
         Project add(Project project)
@@ -2237,6 +2349,7 @@ version (unittest)
                     stored.name = project.name;
                     stored.slug = project.slug;
                     stored.description = project.description;
+                    stored.workingDir = project.workingDir;
                     return true;
                 }
             }
@@ -2876,6 +2989,38 @@ unittest
 
     // A failed check writes nothing.
     assert(database.projects.length == 1);
+}
+
+// save, for the working directory.
+unittest
+{
+    auto database = new MockDatabase;
+    auto service = serviceOver(database);
+
+    auto site = service.save(new ProjectViewModel("Website", "site")).value;
+    assert(site.workingDir == "/nonexistent/taskavista-test-projects/site");
+
+    site.slug = "web";
+    site.workingDir = null;
+    auto renamed = service.save(site);
+    assert(renamed.isSuccessful && renamed.value.workingDir == "/nonexistent/taskavista-test-projects/site");
+
+    // The slug is free again, but the directory named after it is not.
+    auto again = service.save(new ProjectViewModel("Website", "site")).value;
+    assert(again.workingDir == "/nonexistent/taskavista-test-projects/site-2");
+
+    site.workingDir = " /srv/web/../site/ ";
+    auto moved = service.save(site);
+    assert(moved.isSuccessful && moved.value.workingDir == "/srv/site");
+
+    again.workingDir = "/srv/site";
+    assert(cast(WorkingDirTakenError) service.save(again).error);
+    again.workingDir = "relative/dir";
+    assert(cast(WorkingDirInvalidError) service.save(again).error);
+
+    auto given = new ProjectViewModel("Shop", "shop");
+    given.workingDir = "/srv/shop";
+    assert(service.save(given).value.workingDir == "/srv/shop");
 }
 
 // get, getAll and remove.

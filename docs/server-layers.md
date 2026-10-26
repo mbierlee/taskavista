@@ -92,7 +92,7 @@ return transactionally(transactions, {
   per vibe.d task, so work in another task would quietly run outside it, and could wait forever
   on its locks.
 - **What is to happen only for a write that stands** goes through `ITransactional.afterCommit`:
-  renaming a working directory, checking a project's index page, and every event, since
+  checking a project's index page, and every event, since
   `IEventPublisher` is a `CommittedEventPublisher` that holds each one back until the commit.
   Outside a transaction, `afterCommit` runs its delegate right away.
 - **A clash no lock can prevent**, such as two new projects with one slug, is answered after the

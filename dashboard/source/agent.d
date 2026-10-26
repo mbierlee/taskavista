@@ -809,7 +809,7 @@ class AgentChat : IAgentChat
             }
         }
 
-        auto workingDir = project.isNull ? null : workingDirs.ensure(project.get.slug);
+        auto workingDir = project.isNull ? null : workingDirs.ensure(project.get.workingDir);
         if (sessionId !is null)
         {
             return executor.prompt(agent.id.toString, message, true, sessionId, null, workingDir, null,
@@ -1585,7 +1585,7 @@ class TaskExecutor
 
         // Made before the prompt, which names them. Caught here, so the task's notes say the
         // agent could not get to work.
-        auto workingDir = workingDirs.ensure(project.get.slug);
+        auto workingDir = workingDirs.ensure(project.get.workingDir);
         run.workingDir = workingDir;
         auto runId = randomUUID();
         string scratchSpace;

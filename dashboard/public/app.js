@@ -650,6 +650,7 @@ async function saveSettings(draft) {
         name: draft.name,
         description: draft.description,
         lanes: draft.lanes,
+        workingDir: draft.workingDir,
       }),
     );
   } catch (error) {
@@ -708,6 +709,24 @@ const startingLanes = [
    finishes after the screen was left, or opened afresh, leaves it alone. */
 let newProjectDraft = 0;
 
+/* The directory new projects' working directories go in, from the server's
+   config, which does not change while it runs; fetched once, when the new
+   project screen first needs it. */
+let workingDirRoot = null;
+
+async function loadWorkingDirRoot() {
+  if (workingDirRoot === null) {
+    try {
+      const defaults = await fetchJson("/api/rest/v1/defaults");
+      workingDirRoot =
+        defaults.find((d) => d.key === "working_dir_root")?.value ?? null;
+    } catch (error) {
+      console.error("Could not load the working directory root:", error);
+    }
+  }
+  newProjectEl.workingDirRoot = workingDirRoot;
+}
+
 /* The project is created whole or not at all, so a refusal
    leaves the draft as it is to be put right. */
 async function createProject(draft) {
@@ -720,6 +739,8 @@ async function createProject(draft) {
         name: draft.name,
         description: draft.description,
         lanes: draft.lanes,
+        /* Left out for the server to choose. */
+        workingDir: draft.workingDir ?? undefined,
       }),
     );
   } catch (error) {
@@ -1701,6 +1722,7 @@ function showNewProject() {
   mainEl.replaceChildren(newProjectEl);
   const draft = navigation.currentEntry.getState()?.draft ?? null;
   newProjectEl.create(draft?.lanes ?? startingLanes, draft);
+  loadWorkingDirRoot();
 }
 
 /* The project prompt the first run has, here for a project alongside the

@@ -48,6 +48,12 @@ class ProjectViewModel
      * a body.
      */
     @optional bool canBeOpened;
+    /**
+     * The directory the project's agents work in, whether it is there or not; absolute, or
+     * starting with ~. Kept when the slug changes. Optional on the wire: a new project left
+     * without one is given one named after its slug, and an existing one keeps its own.
+     */
+    @optional string workingDir;
 
     this() @safe
     {
@@ -61,12 +67,13 @@ class ProjectViewModel
     }
 
     this(UUID id, string name, string slug, string description = null, bool aiPaused = false,
-        bool canBeOpened = false) @safe
+        bool canBeOpened = false, string workingDir = null) @safe
     {
         this(name, slug, description);
         this.id = id;
         this.aiPaused = aiPaused;
         this.canBeOpened = canBeOpened;
+        this.workingDir = workingDir;
     }
 }
 

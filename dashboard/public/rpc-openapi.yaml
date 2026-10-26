@@ -307,6 +307,13 @@ paths:
                   default: []
                   items: { $ref: "#/components/schemas/NewLane" }
                   description: The lanes in board order; each one's position is its place in the list.
+                workingDir:
+                  type: string
+                  description: |
+                    The directory the project's agents work in: an absolute path, or one starting
+                    with `~`. Left out or blank, the project is given one named after its slug,
+                    under the `working_dir_root` default, with `-2`, `-3` and so on after it when
+                    another project already has that one.
             example: { name: Kite launch, description: Launch the kite range in the spring catalogue., lanes: [{ name: To do, color: "#8FA6FF", acceptsNewTasks: true, agentsPickUp: true }, { name: Done, color: "#5fd6ab", marksDone: true, agentsPickUp: true }] }
       responses:
         "200":
@@ -318,15 +325,17 @@ paths:
         "400":
           description: |
             `name` missing, blank, or without a letter or digit; a lane with a blank name or a
-            malformed colour; a lane with an id.
+            malformed colour; a lane with an id; a `workingDir` that is not absolute nor starts
+            with `~`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { statusMessage: "A new project's lanes have no ids yet." }
         "409":
           description: |
-            Another project already has the slug the name makes, or it is a reserved one (`new`).
-            The message refers to the name, not the slug.
+            Another project already has the slug the name makes, or it is a reserved one (`new`),
+            in which case the message refers to the name, not the slug; or another project already
+            has the working directory.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -340,7 +349,7 @@ paths:
       operationId: saveProjectSettings
       summary: Change a project's name and description, and replace its lanes
       description: |
-        Gives a project a name, a description and exactly the lanes sent, in their order. Either the whole of it is saved or nothing is, and that includes a lane
+        Gives a project a name, a description, a working directory and exactly the lanes sent, in their order. Either the whole of it is saved or nothing is, and that includes a lane
         deleted together with its tasks.
 
         **A lane of the project that is not in the list is deleted, along with its tasks**, so an
@@ -374,6 +383,12 @@ paths:
                   description: |
                     The project's lanes in board order; each one's position is its place in the
                     list. A lane of the project left out is deleted, with its tasks.
+                workingDir:
+                  type: string
+                  description: |
+                    The directory the project's agents work in: an absolute path, or one starting
+                    with `~`. Left out or blank, the project keeps its own. Nothing is moved out
+                    of the old one.
             example: { projectId: 08463b1c-e98c-49e8-9d6c-78115d96863b, name: Kite launch v2, description: "Launch the kite range in the spring catalogue, and the kite bags with it.", lanes: [{ id: 27a3b98c-d241-4a63-a180-58f2cc417d14, name: To do, color: "#8fa6ff", acceptsNewTasks: true }, { id: null, name: Backlog, color: "#e8b154", acceptsNewTasks: true }] }
       responses:
         "200":
@@ -386,7 +401,8 @@ paths:
           description: |
             `projectId`, `name`, `description` or `lanes` missing;
             `name` blank or without a letter or digit; a lane with a blank name or a malformed
-            colour; a lane id listed twice; a lane of another project.
+            colour; a lane id listed twice; a lane of another project; a `workingDir` that is not
+            absolute nor starts with `~`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -400,7 +416,8 @@ paths:
         "409":
           description: |
             After a rename, another project already has the slug the new name makes, or it is a
-            reserved one. The message is put in terms of the name.
+            reserved one, which the message puts in terms of the name; or another project already
+            has the working directory.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

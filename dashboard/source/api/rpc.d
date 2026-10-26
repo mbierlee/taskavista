@@ -139,20 +139,23 @@ interface RpcApi
     /**
      * Creates the project with these lanes, in this order, or nothing at all.
      * A project with a lane the agents pick up is managed by AI, and starts
-     * with its agents running.
+     * with its agents running. One with no working directory is given one
+     * named after its slug.
      */
     @method(HTTPMethod.POST) @path("createProject")
-    CreateProjectResult createProject(string name, string description = null, LaneDraft[] lanes = null) @safe;
+    CreateProjectResult createProject(string name, string description = null, LaneDraft[] lanes = null,
+        string workingDir = null) @safe;
 
     /**
      * Gives the project this name, description and exactly these lanes, in
      * this order, or changes nothing. A lane of the project left out is
      * deleted. Saving it with no lane the agents pick up, when it had one,
-     * pauses its agents, and the other way round starts them.
+     * pauses its agents, and the other way round starts them. With no
+     * working directory, it keeps its own.
      */
     @method(HTTPMethod.POST) @path("saveProjectSettings")
     SaveProjectSettingsResult saveProjectSettings(UUID projectId, string name, string description,
-        LaneDraft[] lanes) @safe;
+        LaneDraft[] lanes, string workingDir = null) @safe;
 
     /**
      * Pauses the project's AI agents, or resumes them, and changes nothing
@@ -261,12 +264,14 @@ class RpcController : RpcApi
         return ClearLaneResult();
     }
 
-    override CreateProjectResult createProject(string name, string description, LaneDraft[] lanes) @trusted
+    override CreateProjectResult createProject(string name, string description, LaneDraft[] lanes,
+        string workingDir) @trusted
     {
         enforceHTTP(lanes.filter!(lane => !lane.id.isNull).empty, HTTPStatus.badRequest,
             "A new project's lanes have no ids yet.");
 
         auto project = new ProjectViewModel(name, null, description);
+        project.workingDir = workingDir;
         auto created = projects.save(new ProjectWithLanes(project, toLanes(lanes)));
         if (created.isFailure)
         {
@@ -277,7 +282,7 @@ class RpcController : RpcApi
     }
 
     override SaveProjectSettingsResult saveProjectSettings(UUID projectId, string name,
-        string description, LaneDraft[] lanes) @trusted
+        string description, LaneDraft[] lanes, string workingDir) @trusted
     {
         auto stored = projects.get(projectId);
         if (stored.isFailure)
@@ -294,6 +299,7 @@ class RpcController : RpcApi
         // name alone never moves the project to a new URL.
         const renamed = name != stored.value.name;
         auto project = new ProjectViewModel(projectId, name, renamed ? null : stored.value.slug, description);
+        project.workingDir = workingDir;
         auto saved = projects.save(new ProjectWithLanes(project, toLanes(lanes)));
         if (saved.isFailure)
         {

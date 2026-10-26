@@ -16,8 +16,9 @@ It skips two kinds of path, which get a plain 404 instead:
 
 - anything under `/api/`: a mistyped endpoint shouldn't come back as HTML.
 
-Before both, `/working-dirs/` serves the files in the projects' working directories, such as
-the page the topbar's "Open project" opens, so it is not a path a route can have.
+Before both, `/working-dirs/<slug>/` serves the files in the working directory of the project
+with that slug, wherever it is, such as the page the topbar's "Open project" opens, so it is not
+a path a route can have.
 - anything whose last segment has a file extension (`/nope.js`): a missing file shouldn't
   either. This means a route must not end in a segment with a dot in it. If this rule changes,
   change `isPagePath` in `app.js` to match.

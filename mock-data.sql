@@ -4,8 +4,9 @@
 -- database with something in it. Re-runnable — it seeds an empty table and
 -- does nothing otherwise.
 
-insert into projects (name, slug, description, ai_paused)
-select name, slug, description, not managed
+-- The working directories are under the root in config-dev.json.
+insert into projects (name, slug, description, ai_paused, working_dir)
+select name, slug, description, not managed, '~/taskavista-projects-dev/' || slug
 from (values
 	('Website relaunch', 'website-relaunch',
 		'The new marketing site, from design to launch day. The old site stays up until the new one has passed review.',

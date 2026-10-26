@@ -48,6 +48,8 @@
   /* Around a chip, and the suggestions under a field of chips. */
   --border-chip: #3a404a;
   --text-status: #c9cfd8;
+  /* A heading that opens and closes the section under it, such as "Advanced". */
+  --text-disclosure: #d5d9df;
   /* Something running right now, such as the project's AI agents. */
   --live: #5fd6ab;
   /* Destructive actions: deleting a project or a task, removing a lane. */

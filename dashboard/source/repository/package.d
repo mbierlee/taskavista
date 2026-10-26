@@ -75,6 +75,16 @@ interface IProjectRepository
     Nullable!Project find(UUID id);
 
     /**
+     * Finds a project by its slug.
+     *
+     * Params:
+     *   slug = The project's slug.
+     *
+     * Returns: The project with this slug, or an empty Nullable when there is none.
+     */
+    Nullable!Project findBySlug(string slug);
+
+    /**
      * Locks a project's row until the open transaction ends (see ITransactional), so that a
      * write to it waits, and a find returns it as it is from then on.
      *
@@ -99,9 +109,22 @@ interface IProjectRepository
     Nullable!string slugOwner(string slug, UUID except);
 
     /**
+     * Whether a project already has a working directory.
+     *
+     * Params:
+     *   workingDir = The working directory's path, as stored.
+     *   except = The id of the project not to count, or UUID.init to check against every
+     *     project.
+     *
+     * Returns: True when a project other than `except` has this working directory.
+     */
+    bool workingDirTaken(string workingDir, UUID except);
+
+    /**
      * Inserts a project.
      *
-     * Fills in the id the database assigned it. Its aiPaused is written as it is.
+     * Fills in the id the database assigned it. Its aiPaused and working directory are written
+     * as they are.
      *
      * Params:
      *   project = The project to insert.
@@ -111,8 +134,8 @@ interface IProjectRepository
     Project add(Project project);
 
     /**
-     * Writes a project's name, slug and description back over the row with its id. Whether its
-     * AI agents are paused is left as it is; setAiPaused changes that.
+     * Writes a project's name, slug, description and working directory back over the row with its
+     * id. Whether its AI agents are paused is left as it is; setAiPaused changes that.
      *
      * Params:
      *   project = The project to write.
@@ -136,7 +159,7 @@ interface IProjectRepository
      * Inserts a project and its lanes in one transaction.
      *
      * The lanes go in at the positions they carry. Fills in the ids the database assigned them
-     * and the project's, whose aiPaused is written as it is.
+     * and the project's, whose aiPaused and working directory are written as they are.
      *
      * Params:
      *   project = The project to insert.

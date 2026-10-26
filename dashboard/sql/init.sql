@@ -15,7 +15,10 @@ create table if not exists projects (
 							  and slug = lower(slug)
 							  and slug is nfc normalized),
 	description   text not null default '',
-	ai_paused     boolean not null default true
+	ai_paused     boolean not null default true,
+	-- Absolute, or starting with ~ for the home directory of the user the
+	-- server runs as. It need not exist yet.
+	working_dir   text not null unique
 );
 
 create table if not exists lanes (

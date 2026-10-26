@@ -166,6 +166,50 @@
     border: 1px dashed var(--border-dashed);
   }
 
+  .advanced {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 28px;
+  }
+  .advanced-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    align-self: flex-start;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-disclosure);
+    cursor: pointer;
+  }
+  .chevron {
+    flex: none;
+    color: var(--muted);
+    transition: transform 0.15s;
+  }
+  .advanced-toggle[aria-expanded="true"] .chevron {
+    transform: rotate(90deg);
+  }
+  .advanced-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-left: 20px;
+  }
+  .advanced-body[hidden] {
+    display: none;
+  }
+  .working-dir {
+    width: 100%;
+    background: var(--surface-2);
+    padding: 11px 13px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 14px;
+  }
+
   .error {
     margin: 20px 0 0;
     font-size: 14px;
@@ -286,6 +330,42 @@
       </div>
       <div class="lanes" role="list" aria-labelledby="lanes-label"></div>
       <button class="btn quiet add-lane" type="button">+ Add a lane</button>
+    </div>
+
+    <div class="advanced">
+      <button
+        class="advanced-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="advanced-body"
+      >
+        <svg
+          class="chevron"
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.4"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M9 6l6 6-6 6" />
+        </svg>
+        Advanced
+      </button>
+      <div class="advanced-body" id="advanced-body" hidden>
+        <label class="label" for="working-dir">Working directory</label>
+        <input
+          id="working-dir"
+          class="field working-dir"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          pattern=".*\S.*"
+        />
+      </div>
     </div>
 
     <p class="error" role="alert" hidden></p>
