@@ -1,73 +1,79 @@
 ---
 name: taskavista-designs
-description: Pull the Taskavista UI mockups down from Claude Design so a screen can be built or revised in the dashboard. Use when asked to build, finish, or change a Taskavista screen (board, search, project settings, new project, task details, Taskavista settings, agent chat — or the dropped avatar menu and account settings), when someone refers to "the mockups" or "the designs", or when the styling of an existing screen needs checking against its source design.
+description: Pull the Taskavista UI mockups down from their claude.ai design canvas so a screen can be built or revised in the dashboard. Use when asked to build, finish, or change a Taskavista screen (board, search, project settings, new project, task details, Taskavista settings, agent chat — or the dropped avatar menu and account settings), when someone refers to "the mockups" or "the designs", or when the styling of an existing screen needs checking against its source design.
 ---
 
-# Pulling the Taskavista designs from Claude Design
+# Pulling the Taskavista designs from their canvas
 
-The mockups are **not in this repo**. They live in a Claude Design project and are fetched with
-the `DesignSync` tool. This skill is the retrieval path plus the traps that cost time the first
-time round.
+The mockups are **not in this repo**. They live on a canvas, a claude.ai artifact of the Design
+type, and are read with the `Artifact` tool. This skill is the retrieval path plus the traps that
+cost time the first time round.
 
-## The project
+## The canvas
 
 | | |
 |---|---|
-| Project ID | `a9f6efe6-4ce3-4154-8c46-de32ecdd4aa3` |
-| URL | https://claude.ai/design/p/a9f6efe6-4ce3-4154-8c46-de32ecdd4aa3 |
-| Type | `PROJECT_TYPE_PROJECT` (a regular design project) |
+| URL | https://claude.ai/artifact/RaTEKKcKCc4CLHjvQ8NfKy |
+| Type | Design (canvas), owned by the user, private |
+
+(The old Claude Design project and its `DesignSync` tool are retired; the designs were moved to
+this canvas.)
 
 ## How to fetch
 
-1. **Load the tool** if it isn't in the tool list: `ToolSearch(query: "select:DesignSync")`.
-2. **Authorize.** Every call fails without it. The error tells the user to run `/design-login`
-   once from an **interactive** Claude Code session; a non-interactive session cannot run it.
-   Relay that message and wait — do not work around it.
-3. **Go straight to the UUID.** Do not call `list_projects` first: it is filtered to
-   *design-system* projects, and this is a regular project, so it returns `[]`. That empty list
-   means nothing is wrong.
-4. `DesignSync(method: "list_files", projectId: "a9f6efe6-…")`
-5. `DesignSync(method: "get_file", projectId: "a9f6efe6-…", path: "<file>")`
+1. **List the files**: `Artifact(action: "list", scope: "files", url: "<the canvas>")`.
+2. **Read them**, several in one call: `Artifact(action: "read", url: "<the canvas>",
+   paths: ["project/canvas.json", "project/mockups/…"])`. Small files come back inline, so there
+   is no need to Read the saved copy; the copies land in the scratchpad, never in the repo.
 
-`get_project`, `list_files`, and `get_file` all work on this project when the UUID is passed
-explicitly. `get_file` caps at 256 KiB; the canvases have so far been well under it.
+No sign-in step is needed. **This skill only reads the canvas — never publish to it** unless the
+user asks for a design change.
 
-## What is in the project
+## What is on the canvas
 
-File names, canvas titles, and screen ids get edited in Claude Design, so this skill does not
-record them. **Take them from `list_files` and the fetched canvases every time**, and refer to
-screens by what they are (board, search, project settings, …), not by a remembered id.
+File names, artboard titles, and screen numbers get edited, so this skill does not record them.
+**Take them from the file listing and `project/canvas.json` every time**, and refer to screens by
+what they are (board, search, project settings, …), not by a remembered number.
 
-The design content is the `.dc.html` canvases. Tell them apart by **content, not by name**:
+- **`project/canvas.json`** is the index. Its `boards` map each artboard file to a `title` that
+  says which screen and which state it shows (e.g. "Task details — agent working on it"), and a
+  `page`. Read it first and pick files by title.
+- **One `.dc.html` per artboard**, one screen state each, under `project/`. The canvas has three
+  pages:
+  - **Mockups** (`project/mockups/`, plus `project/Main.dc.html`, the board) — the **visual
+    source of truth**. Dark scheme, Figtree, 1000px wide.
+  - **Wireframes** (`project/wireframes/`) — the earlier light, hand-drawn sketch pass (Patrick
+    Hand / Caveat), one per mockup with the same number. Use it for **structure and intent**,
+    never for colour or type — it is a different, superseded visual language.
+  - **Brand** (`project/brand/`) — the style tile ("Type & color", naming the typeface and
+    palette outright) and the wordmark.
 
-- **The mockups** — the **visual source of truth**. Dark scheme, Figtree, and the first frame is
-  a style tile naming the palette outright.
-- **The wireframes** — the earlier light, hand-drawn sketch pass (Patrick Hand / Caveat). Use it
-  for **structure and intent**, never for colour or type — it is a different, superseded visual
-  language.
-
-If the listing shows a canvas that is neither, or you cannot tell which is which, ask the user
-rather than guess. Everything that is not a `.dc.html` (the canvas runtime `support.js`, the
-`.thumbnail` preview) is platform furniture — never fetch it.
+If a file belongs to none of these, or you cannot tell which is which, ask the user rather than
+guess. Everything outside `project/` (`index.html`, `SKILL.md`, `artifact-type/…`) is the canvas
+editor itself — never fetch it.
 
 **When the two disagree, the mockups win on looks and the wireframes win on behaviour.**
 The wireframes carry annotations the mockups drop — e.g. on search, that picking a result opens
 that task's project board with the card highlighted, and on project settings, that any lane
-with Agents ticked makes the project AI-managed. Read the annotations on the wireframe of
-whatever screen you are building.
+with Agents ticked makes the project AI-managed, and on task details, that Delete task asks for
+confirmation first. They are the Caveat-script lines inside the frame, usually at its foot. Read
+the annotations on the wireframe of whatever screen you are building.
 
-## Reading a canvas file
+## Reading an artboard file
 
-Each `.dc.html` is one self-contained page. Every screen is a `<div class="dv-opt" id="…">`
-whose `id` is the screen number, with a human label in the sibling `.dv-olabel`. Find a screen
-by its label; the ids are renumbered as the canvas is reworked. Screen markup
-uses **inline styles only**, so the exact values are right there.
+Each `.dc.html` is one self-contained page holding one screen. The screen is the `<div>` inside
+`<x-dc>`, and its markup uses **inline styles only**, so the exact values are right there.
 
-**Trap: `dv-*` classes are canvas furniture, not app styles.** `.dv-turn`, `.dv-card`,
-`.dv-opt`, `.dv-oid`, and everything in the `<helmet>` block belong to the Claude Design canvas
-chrome — the card frame, the id badges, the page background. They are not part of Taskavista.
-Copying them produces a design that looks subtly wrong. Take only what is inside a screen's
-inline styles.
+**Trap: the rest of the file is canvas furniture, not app styles.** The `<helmet>` block (font
+links for several unused families, `body{margin:0}`, the `a` colours), the `support.js` script,
+and the `<script type="text/x-dc">` block with its `$preview` size belong to the canvas, not to
+Taskavista. The `@keyframes` in the helmet are the exception: they are the motion the screens
+use (`tvBorderWave` for a working card's border, `tvPulse` for the agents strip's dot). Take
+only the screen's inline styles and those keyframes.
+
+A few artboards are interactive (`is_interactive` in the index): their `<sc-if>` branches and
+`{{…}}` holes show the states the screen moves between, such as the agents strip's
+Pause / Resume.
 
 ## Mapping a design into the app
 
@@ -137,12 +143,6 @@ identity to show and nothing to sign out of. The avatar was removed from the hea
 out of date on this point and the code is correct.** Revisit only if multi-user lands.
 (The avatar's `--accent-ink` token has since come back, as the text on accent buttons.)
 
-
-## Do not run `/design-sync`
-
-It pushes a *component library* up to Claude Design. It is the opposite direction and this repo
-has no component library to push. Fetching designs is the `DesignSync` tool used directly, as
-above.
 
 ## Verifying a screen
 

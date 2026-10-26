@@ -1,7 +1,7 @@
 # The wordmark
 
 The "taskavista" logotype in the top bar is `dashboard/public/wordmark.svg`, drawn from the
-"Taskavista Wordmark" canvas in the Claude Design project (see the `taskavista-designs` skill).
+"Wordmark" artboard on the designs canvas's Brand page (see the `taskavista-designs` skill).
 
 ## The design
 
