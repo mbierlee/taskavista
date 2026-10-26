@@ -17,7 +17,9 @@ import vibe.core.log : logError;
 import vibe.http.fileserver : HTTPFileServerSettings, serveStaticFiles;
 import vibe.http.server : HTTPServerRequest, HTTPServerResponse;
 
-import std.file : exists, isDir, isFile, mkdir;
+import core.stdc.errno : ENOENT, ENOTDIR;
+
+import std.file : FileException, getAttributes, isDir, isFile, mkdir;
 import std.path : buildPath, dirName, expandTilde;
 import std.uuid : UUID;
 
@@ -54,21 +56,21 @@ class ProjectWorkingDirs
      * Params:
      *   workingDir = The project's working directory, as stored.
      *
-     * Returns: The working directory's path, or null when the directory it goes in is not there or
-     *   it cannot be made, which is logged.
+     * Returns: The working directory's path, or null when the directory it goes in is not there,
+     *   or when it cannot be reached or made, which is logged.
      */
     public string ensure(string workingDir) nothrow
     {
         try
         {
             auto dir = expandTilde(workingDir);
-            if (exists(dir))
+            if (present(dir))
             {
                 return dir;
             }
 
             const parent = dirName(dir);
-            if (!exists(parent) || !isDir(parent))
+            if (!present(parent) || !isDir(parent))
             {
                 return null;
             }
@@ -78,7 +80,7 @@ class ProjectWorkingDirs
         }
         catch (Exception exception)
         {
-            logError("Could not create the working directory %s: %s", workingDir, exception.msg);
+            logError("Could not reach or create the working directory %s: %s", workingDir, exception.msg);
             return null;
         }
     }
@@ -92,12 +94,32 @@ class ProjectWorkingDirs
         try
         {
             auto page = buildPath(expandTilde(workingDir), "index.html");
-            return exists(page) && isFile(page);
+            return present(page) && isFile(page);
         }
         catch (Exception exception)
         {
             logError("Could not look for the index.html in %s: %s", workingDir, exception.msg);
             return false;
+        }
+    }
+
+    // Unlike std.file.exists, which takes any error for a missing path, this throws when the path
+    // cannot be looked at, such as when the server is not allowed into a directory on the way.
+    private static bool present(string path)
+    {
+        try
+        {
+            getAttributes(path);
+            return true;
+        }
+        catch (FileException exception)
+        {
+            if (exception.errno == ENOENT || exception.errno == ENOTDIR)
+            {
+                return false;
+            }
+
+            throw exception;
         }
     }
 }
