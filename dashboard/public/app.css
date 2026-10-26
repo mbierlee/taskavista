@@ -70,9 +70,12 @@
   --accent-outline: rgba(143, 166, 255, 0.45);
   --accent-tint-hover: rgba(143, 166, 255, 0.1);
   --danger-tint: rgba(224, 121, 107, 0.08);
-  /* Around a borderless danger button while hovered, such as "Delete task"
-     or "Delete project". */
-  --danger-border: rgba(224, 121, 107, 0.35);
+  /* A borderless danger button, such as "Delete task" or the lane's
+     "Clear": softer than --danger, since it sits at rest among the rest of
+     the screen, and its outline and tint while hovered. */
+  --danger-subtle: #f08a80;
+  --danger-subtle-border: rgba(240, 138, 128, 0.35);
+  --danger-subtle-tint: rgba(240, 138, 128, 0.1);
   --count-bg: rgba(255, 255, 255, 0.06);
   --backdrop: rgba(22, 24, 28, 0.7);
   --focus-ring: 0 0 0 3px rgba(143, 166, 255, 0.18);

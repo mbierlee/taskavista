@@ -74,17 +74,7 @@
   }
 
   .toggle {
-    gap: 7px;
-    padding: 4px 11px;
-    border-color: var(--border);
-    border-radius: 6px;
-    background: var(--surface-input);
-    font-size: 13px;
     user-select: none;
-  }
-  .toggle:hover:not(:disabled) {
-    border-color: var(--muted-2);
-    background: var(--surface-hover);
   }
   :host([paused]) .toggle {
     border-color: var(--accent);
@@ -121,6 +111,6 @@
 <p class="status" role="status">
   <span class="light"></span><span class="text"></span>
 </p>
-<button class="btn toggle" type="button">
+<button class="btn neutral toggle" type="button">
   <span class="icon" aria-hidden="true"></span><span class="label-text"></span>
 </button>

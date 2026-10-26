@@ -37,21 +37,6 @@
   /* Opens the page an agent made in the project's working directory. */
   .open {
     flex: none;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 7px 14px;
-    border: 1px solid var(--accent-outline);
-    border-radius: 999px;
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--accent);
-    text-decoration: none;
-    white-space: nowrap;
-  }
-  .open:hover {
-    border-color: var(--accent);
-    background: var(--accent-tint-hover);
   }
   .open[hidden] {
     display: none;
@@ -149,7 +134,7 @@
   <img class="wordmark" src="/wordmark.svg" alt="Taskavista" />
   <tv-project-switcher></tv-project-switcher>
   <a
-    class="open"
+    class="btn outline open"
     target="_blank"
     rel="noopener"
     title="Opens index.html from the project's working dir"

@@ -84,34 +84,12 @@
     display: flex;
     gap: 8px;
   }
-  .disable-all {
-    gap: 7px;
-    padding: 7px 14px;
-    border-color: var(--border);
-    background: var(--surface-input);
-    font-size: 13px;
-    white-space: nowrap;
-  }
-  .disable-all:hover:not(:disabled) {
-    border-color: var(--muted-2);
-    background: var(--surface-hover);
-  }
-  .disable-all:disabled {
-    border-color: var(--border-soft);
-    background: var(--disabled-bg);
-    color: var(--disabled-ink);
-  }
   .disable-all .icon {
     font-size: 9px;
     letter-spacing: 1px;
   }
   .add {
-    padding: 7px 14px;
-    font-size: 13px;
     font-weight: 600;
-  }
-  .add:hover:not(:disabled) {
-    background: var(--accent-hover);
   }
 
   .status {
@@ -158,16 +136,6 @@
   .edit,
   .enable {
     flex: none;
-    padding: 3px 10px;
-    border-color: var(--border);
-    border-radius: 6px;
-    background: var(--surface-input);
-    font-size: 12px;
-  }
-  .edit:hover:not(:disabled),
-  .enable:hover:not(:disabled) {
-    border-color: var(--muted-2);
-    background: var(--surface-hover);
   }
 
   /* A disabled agent is drawn as an outline, with "Enable" in the accent,
@@ -206,19 +174,6 @@
   }
   .disabled-head h2 {
     margin: 0;
-  }
-  .enable-all {
-    gap: 7px;
-    padding: 6px 13px;
-    border-color: var(--accent-outline);
-    background: transparent;
-    font-size: 13px;
-    color: var(--accent);
-    white-space: nowrap;
-  }
-  .enable-all:hover:not(:disabled) {
-    border-color: var(--accent);
-    background: var(--accent-tint-hover);
   }
   .enable-all .icon {
     font-size: 9px;
@@ -317,13 +272,7 @@
   .generate {
     align-self: flex-end;
     gap: 6px;
-    padding: 5px 12px;
-    border-radius: 7px;
-    font-size: 13px;
     font-weight: 600;
-  }
-  .generate:hover:not(:disabled) {
-    background: var(--accent-hover);
   }
 
   /* After a failed draft: the box outlined and the reason under it, and
@@ -401,7 +350,7 @@
     <div class="section-head">
       <h2 class="label" id="agents-heading">AI agents</h2>
       <div class="head-actions">
-        <button class="btn disable-all" type="button" disabled>
+        <button class="btn neutral disable-all" type="button" disabled>
           <span class="icon" aria-hidden="true">❚❚</span>Disable all
         </button>
         <button class="btn primary add" type="button" disabled>
@@ -413,7 +362,7 @@
     <ul class="agents"></ul>
     <div class="disabled-head" hidden>
       <h2 class="label disabled-heading"></h2>
-      <button class="btn enable-all" type="button">
+      <button class="btn outline enable-all" type="button">
         <span class="icon" aria-hidden="true">▶</span>Re-enable all
       </button>
     </div>
@@ -428,8 +377,8 @@
     <div class="agent-head">
       <span class="agent-name"></span>
       <div class="agent-actions">
-        <button class="btn enable" type="button"></button>
-        <button class="btn edit" type="button">Edit</button>
+        <button class="btn neutral compact enable" type="button"></button>
+        <button class="btn neutral compact edit" type="button">Edit</button>
       </div>
     </div>
     <div class="tags">

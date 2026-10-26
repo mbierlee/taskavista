@@ -38,13 +38,11 @@
     color: var(--lane-color, var(--accent));
   }
 
-  /* Sized down from the shared button to sit in the heading without
-     making it taller. */
+  /* Pulled into the heading's padding so as not to make it taller. */
   .clear {
     margin: -4px 0 -4px auto;
     gap: 5px;
-    padding: 3px 8px;
-    font-size: 12px;
+    padding-inline: 8px;
   }
   :host(:not([marks-done])) .clear {
     display: none;
@@ -80,7 +78,7 @@
   <span class="name"></span>
   <span class="count">0</span>
   <button
-    class="btn danger-subtle clear"
+    class="btn danger-subtle compact clear"
     type="button"
     title="Delete all done tasks"
     hidden

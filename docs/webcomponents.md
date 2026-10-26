@@ -167,7 +167,8 @@ Styling comes from three places:
   |---|---|
   | `btn primary` / `secondary` / `danger` | A form's main action, its Cancel (a link works too), a destructive action |
   | `btn danger-subtle` | A destructive action at the foot of a screen or panel, with a trash glyph before its text ("Delete project", "Delete task") |
-  | `btn small` | Added to the above inside a popover |
+  | `btn neutral` / `btn outline` | An action that is neither a form's main one nor its Cancel ("Pause agents", "Disable all") / one in the accent that hands something to the agents or brings it back ("Schedule for AI", "Re-enable all") |
+  | `btn compact` | Added to the above inside a card or a heading (an agent's "Edit", a lane's "Clear"); every other button with a label is 32px high |
   | `btn quiet` | A full-width "+ Add …" row |
   | `btn ghost` / `btn icon` | A bare glyph in a row (handle, remove) / a glyph with a hover square (a panel's ✕) |
   | `link` | A link in running text, such as "← Back to board" |

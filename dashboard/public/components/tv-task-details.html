@@ -144,20 +144,8 @@
     align-items: center;
   }
 
-  /* A pill, as the mockup has it, rather than one of the shared buttons. */
   .schedule {
     flex: none;
-    gap: 7px;
-    padding: 7px 14px;
-    border-color: var(--accent-outline);
-    border-radius: 999px;
-    font-size: 13px;
-    color: var(--accent);
-    white-space: nowrap;
-  }
-  .schedule:hover:not(:disabled) {
-    border-color: var(--accent);
-    background: var(--accent-tint-hover);
   }
   .schedule:disabled {
     opacity: 0.6;
@@ -212,7 +200,7 @@
           </svg>
           Delete task
         </button>
-        <button class="btn schedule" type="button" hidden>
+        <button class="btn outline schedule" type="button" hidden>
           <span aria-hidden="true">✦</span> Schedule for AI
         </button>
       </div>
