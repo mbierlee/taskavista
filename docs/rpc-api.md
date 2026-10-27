@@ -107,7 +107,8 @@ single `lane-cleared` rather than an event per task (see `docs/event-stream.md`)
 `sendChatMessage` starts a session on the agent's runtime (`AgentChat` in `agent.d`). Its system
 prompt is two prompts, each filled in by `PromptParser`, joined by `AgentPrompt`:
 `dashboard/prompts/system/agent.txt`, which every interaction with an agent starts with and which tells
-the agent its own name, id and labels and gives it the API help in `dashboard/public/agent-help.txt`,
+the agent its own name, id and labels and gives it the API help in `dashboard/public/agent-help.txt`
+(all but the task scheduler, which runs without tools and so is told nothing of the API),
 then `dashboard/prompts/system/new-agent-chat.txt`, which tells it a person has opened a chat, the
 project the person is in, with its description when it has one, and how to write its replies. Every message, the first included, is passed on unchanged. Any failure
 there, including an unknown runtime or a `sessionId` the runtime does not have, is a 502: only

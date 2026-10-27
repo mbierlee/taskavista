@@ -16,6 +16,7 @@ Your own instructions, which say what you do and how you should work:
 <agent instructions>
 </agent-instructions>
 [end]
+[if api]
 
 You can read and change Taskavista's projects, lanes and tasks through its API, which
 the help below explains. Only claim to have changed something once the API has confirmed it,
@@ -26,3 +27,4 @@ could not be done through it.
 <api-help>
 <agent help>
 </api-help>
+[end]

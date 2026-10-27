@@ -34,7 +34,7 @@ stopped task waits to be taken up again on resume. The topbar's chat button open
 every screen with a tab per chat with an agent. A chat is a session on the agent's runtime, started
 with a system prompt of two parts, each filled in by `PromptParser`: `dashboard/prompts/system/agent.txt`,
 which starts every interaction with an agent and gives it the API help in
-`dashboard/public/agent-help.txt` (which agents can also fetch from the server), then
+`dashboard/public/agent-help.txt` (which agents can also fetch from the server; the task scheduler, which runs without tools, is not given it), then
 `dashboard/prompts/system/new-agent-chat.txt`, the chat's own part; the tabs last as long as the page.
 A project can have a working directory for its files, kept in `projects.working_dir`: a new project's is
 named after its slug under `projectWorkingDirRoot` in `config.json`, unless another is given, and stays

@@ -79,9 +79,7 @@ next step:
 - When several fit equally well, choose any one of them.
 Where your own instructions say how to choose, follow them over these rules.
 
-If the description and notes alone do not make clear what the task is about, you may read the
-project's tasks through the API. Do not change anything, and do not start on the task: the
-server moves it and gives it to the agent you choose.
+Do not start on the task: the server moves it and gives it to the agent you choose.
 
 Answer with a single JSON object, and nothing else: no explanation, and no code fence or
 other markup around it. It holds:

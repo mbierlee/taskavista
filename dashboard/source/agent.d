@@ -81,6 +81,10 @@ interface IRuntime
      *     too. A session is continued in the directory it started in.
      *   stop = What the run can be stopped with while it is going, or null for
      *     a run that is never stopped.
+     *   withTools = Whether the agent gets its tools. Without them it can only
+     *     answer, and the system prompt takes the place of the runtime's own
+     *     rather than being added to it, since the runtime's mostly explains
+     *     tools the agent then does not have.
      *
      * Returns: The agent's answer, with leading and trailing whitespace stripped.
      *
@@ -90,7 +94,7 @@ interface IRuntime
      */
     public string prompt(Agent agent, string prompt, bool createSession, ref string sessionId,
         string systemPrompt = null, string workingDir = null, string scratchSpace = null,
-        RunIn runIn = RunIn.workingDir, RunStop stop = null);
+        RunIn runIn = RunIn.workingDir, RunStop stop = null, bool withTools = true);
 
     public string runTimeType();
 }
@@ -163,6 +167,20 @@ class RunStoppedException : Exception
 string createAgentScratchSpace(UUID agentId, UUID runId)
 {
     auto scratchSpace = agentScratchSpace(agentId, runId);
+    mkdirRecurse(scratchSpace);
+
+    return scratchSpace;
+}
+
+/**
+ * Creates the scratch space every scheduling run of a task scheduler agent runs in, if it is not
+ * there yet, and returns its path. One for all of them rather than one per run, since a scheduler
+ * runs without tools and leaves nothing in it, so there is nothing to keep apart or clean up after
+ * each run. It goes with the agent's other scratch spaces.
+ */
+string createSchedulingScratchSpace(UUID agentId)
+{
+    auto scratchSpace = buildPath(scratchSpaceRoot(), format("%s-scheduling", scratchSpacePrefix(agentId)));
     mkdirRecurse(scratchSpace);
 
     return scratchSpace;
@@ -306,6 +324,7 @@ class RuntimeExecutor
      *     the runtime makes.
      *   runIn = Which of the two the agent runs in.
      *   stop = What the run can be stopped with, or null for none.
+     *   withTools = Whether the agent gets its tools, or only answers.
      *
      * Returns: The agent's answer.
      *
@@ -315,7 +334,7 @@ class RuntimeExecutor
      */
     public string prompt(string agentId, string prompt, bool createSession, ref string sessionId,
         string systemPrompt = null, string workingDir = null, string scratchSpace = null,
-        RunIn runIn = RunIn.workingDir, RunStop stop = null)
+        RunIn runIn = RunIn.workingDir, RunStop stop = null, bool withTools = true)
     {
         auto agent = agents.find(UUID(agentId));
         if (agent.isNull)
@@ -331,7 +350,7 @@ class RuntimeExecutor
                 Nullable!string.init));
 
         auto result = runtime.prompt(agent.get, prompt, createSession, sessionId, systemPrompt, workingDir,
-            scratchSpace, runIn, stop);
+            scratchSpace, runIn, stop, withTools);
         log.setResult(entry.id, result);
 
         return result;
@@ -430,7 +449,7 @@ class ClaudeCodeRuntime : IRuntime
      */
     public string prompt(Agent agent, string prompt, bool createSession, ref string sessionId,
         string systemPrompt = null, string workingDir = null, string scratchSpace = null,
-        RunIn runIn = RunIn.workingDir, RunStop stop = null)
+        RunIn runIn = RunIn.workingDir, RunStop stop = null, bool withTools = true)
     {
         // Claude Code lets an agent write only in the directory it runs in and
         // the ones added to it.
@@ -443,12 +462,13 @@ class ClaudeCodeRuntime : IRuntime
         {
             if (runIn == RunIn.workingDir && workingDir !is null)
             {
-                return run(agent, prompt, systemPrompt, workingDir, addDir(scratchSpace) ~ sessionArgs, stop);
+                return run(agent, prompt, systemPrompt, workingDir, addDir(scratchSpace) ~ sessionArgs, stop,
+                    withTools);
             }
 
             auto scratch = scratchSpace is null ? createAgentScratchSpace(agent.id, runId)
                 : scratchSpace;
-            return run(agent, prompt, systemPrompt, scratch, addDir(workingDir) ~ sessionArgs, stop);
+            return run(agent, prompt, systemPrompt, scratch, addDir(workingDir) ~ sessionArgs, stop, withTools);
         }
 
         // The scratch spaces removed here are only those runAs makes: a one-off's, which nothing runs
@@ -517,28 +537,32 @@ class ClaudeCodeRuntime : IRuntime
      * and `Exception` when it exits with an error.
      */
     private string run(Agent agent, string prompt, string systemPrompt, string dir, string[] runArgs,
-        RunStop stop)
+        RunStop stop, bool withTools)
     {
         if (stop !is null && stop.isRequested)
         {
             throw new RunStoppedException("Claude Code was stopped before it started.");
         }
 
-        // Appended to Claude Code's own system prompt, since replacing that
-        // would take away its instructions for using its tools. Claude Code
-        // records the one a session starts with and reuses it on resume. Given
-        // in a file rather than as an argument, which the kernel caps at 128 KiB
-        // and cuts off at the first NUL. The file is kept out of the directory
-        // the agent runs in, so nothing of the dashboard's is left among the
-        // project's files.
+        // Appended to Claude Code's own system prompt when the agent has its
+        // tools, since replacing that would take away its instructions for
+        // using them. Claude Code records the one a session starts with and
+        // reuses it on resume. Given in a file rather than as an argument,
+        // which the kernel caps at 128 KiB and cuts off at the first NUL. The
+        // file is kept out of the directory the agent runs in, so nothing of
+        // the dashboard's is left among the project's files.
         string[] systemPromptArgs;
         if (systemPrompt !is null)
         {
             systemPromptArgs = [
-                "--append-system-prompt-file",
+                withTools ? "--append-system-prompt-file" : "--system-prompt-file",
                 createSystemPromptFile(systemPrompt)
             ];
         }
+
+        // Without tools, Claude Code's own system prompt and tool definitions
+        // are left out, which are most of what a run sends.
+        auto toolArgs = withTools ? ["--allowedTools"] ~ allowedTools : ["--tools", ""];
 
         // Not std.process, which would block the event loop, and with it every
         // other request, for as long as Claude Code takes. stderr is not read,
@@ -550,9 +574,8 @@ class ClaudeCodeRuntime : IRuntime
             "claude",
             "--print",
             "--strict-mcp-config",
-            "--permission-mode", claudeCodePermissionMode,
-            "--allowedTools"
-        ] ~ allowedTools ~ [
+            "--permission-mode", claudeCodePermissionMode
+        ] ~ toolArgs ~ [
             // Right after the rules, since --allowedTools takes every argument
             // up to the next option.
             "--model", agent.model
@@ -680,7 +703,7 @@ class AgentHelp
 /**
  * The part of a system prompt that every interaction with an agent starts
  * with, whatever the interaction is: who the agent is, its own instructions,
- * and the API help.
+ * and the API help, for an agent with the tools to call the API.
  */
 class AgentPrompt
 {
@@ -699,10 +722,11 @@ class AgentPrompt
      * Params:
      *   agent = The agent the system prompt is for.
      *   interactionPrompt = The interaction's own prompt, filled in already.
+     *   withApi = Whether the agent is told about the API, which it needs tools to call.
      *
      * Returns: The whole system prompt.
      */
-    public string systemPrompt(Agent agent, string interactionPrompt)
+    public string systemPrompt(Agent agent, string interactionPrompt, bool withApi = true)
     {
         string[string] placeholders = [
             "<agent name>": agent.name,
@@ -714,7 +738,8 @@ class AgentPrompt
 
         const conditions = [
             "labels": agent.labels.length > 0,
-            "instructions": agent.instructions.strip.length > 0
+            "instructions": agent.instructions.strip.length > 0,
+            "api": withApi
         ];
 
         return parser.parse(agentPromptTemplate, placeholders, conditions)
@@ -1265,15 +1290,17 @@ class TaskScheduler
         run.agentId = scheduler.id;
         run.agentName = scheduler.name;
         auto prompt = parser.parse(schedulePrompt, placeholders, conditions);
-        auto systemPrompt = agentPrompt.systemPrompt(scheduler, "").strip;
+        // Without the API, since the prompt holds all the scheduler chooses from, and without tools,
+        // which would cost far more than the answer does.
+        auto systemPrompt = agentPrompt.systemPrompt(scheduler, "", false).strip;
 
         // Caught here rather than by the caller, so the log says which scheduler failed.
         string answer;
         try
         {
             string noSession;
-            answer = executor.prompt(scheduler.id.toString, prompt, false, noSession, systemPrompt, null, null,
-                RunIn.workingDir, run.stop).strip;
+            answer = executor.prompt(scheduler.id.toString, prompt, false, noSession, systemPrompt, null,
+                createSchedulingScratchSpace(scheduler.id), RunIn.scratchSpace, run.stop, false).strip;
         }
         catch (RunStoppedException e)
         {
