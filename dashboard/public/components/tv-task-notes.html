@@ -53,9 +53,11 @@
     border: 2px solid var(--muted);
     background: var(--surface-1);
   }
+  /* As written, since an agent's result is often several lines or indented. */
   .note {
     font-size: 14px;
     color: var(--text-2);
+    white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
   .when {
