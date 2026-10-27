@@ -1942,6 +1942,16 @@ store.watch(
   },
 );
 
+/* The tab is named after the selected project, and follows it when renamed. */
+store.watch(
+  (state) =>
+    state.projects.list.find((p) => p.slug === state.currentProjectSlug)
+      ?.name ?? null,
+  (name) => {
+    document.title = name === null ? "Taskavista" : `${name} - Taskavista`;
+  },
+);
+
 /* A project made elsewhere, such as by an agent in the chat or in another
    window, ends the first run: the root goes to it. */
 store.watch(
