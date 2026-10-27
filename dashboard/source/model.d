@@ -347,6 +347,17 @@ class Agent
     }
 }
 
+/// What a run on a runtime used and cost, summed over every model it called.
+struct RunUsage
+{
+    long inputTokens;
+    long outputTokens;
+    long cacheCreationInputTokens;
+    long cacheReadInputTokens;
+    /// What the runtime reckons the run cost at list prices, whatever the agent is billed.
+    double costUsd;
+}
+
 /// A row of the agent_log table: one prompt an agent was given, and its answer.
 class AgentLogEntry
 {
@@ -358,18 +369,22 @@ class AgentLogEntry
     string prompt;
     /// Null until the agent has answered, and for good when it failed to.
     Nullable!string result;
+    /// Null until the run has ended, and for good when the runtime reported none, as for a stopped run.
+    Nullable!RunUsage usage;
 
     this() @safe
     {
     }
 
-    this(UUID id, UUID agentId, SysTime createdAt, string prompt, Nullable!string result) @safe
+    this(UUID id, UUID agentId, SysTime createdAt, string prompt, Nullable!string result,
+        Nullable!RunUsage usage = Nullable!RunUsage.init) @safe
     {
         this.id = id;
         this.agentId = agentId;
         this.createdAt = createdAt;
         this.prompt = prompt;
         this.result = result;
+        this.usage = usage;
     }
 }
 

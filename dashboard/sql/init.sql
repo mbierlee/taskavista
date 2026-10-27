@@ -91,7 +91,16 @@ create table if not exists agent_log (
 	created_at timestamptz not null default now(),
 	prompt     text not null check (length(trim(prompt)) > 0),
 	-- Null until the agent has finished.
-	result     text
+	result     text,
+	-- What the run used and cost, summed over every model it called. Null until it has ended,
+	-- and for good when the runtime reports nothing, as for a run that was stopped.
+	input_tokens                bigint check (input_tokens >= 0),
+	output_tokens               bigint check (output_tokens >= 0),
+	cache_creation_input_tokens bigint check (cache_creation_input_tokens >= 0),
+	cache_read_input_tokens     bigint check (cache_read_input_tokens >= 0),
+	cost_usd                    numeric check (cost_usd >= 0),
+	check (num_nulls(input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
+		cost_usd) in (0, 5))
 );
 
 create index if not exists agent_log_agent_id on agent_log (agent_id, created_at);

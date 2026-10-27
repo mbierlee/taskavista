@@ -17,7 +17,7 @@ module repository;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
-import model : Agent, AgentLogEntry, AgentStatus, Default, Lane, Model, Project, Runtime, Task, TaskNote;
+import model : Agent, AgentLogEntry, AgentStatus, Default, Lane, Model, Project, RunUsage, Runtime, Task, TaskNote;
 
 /**
  * Runs a service's checks and the writes that rely on them as one transaction, so that no other
@@ -851,6 +851,17 @@ interface IAgentLogRepository
      * Returns: False when no row has that id, in which case nothing was written.
      */
     bool setResult(UUID id, string result);
+
+    /**
+     * Records what the run behind a log entry used and cost, once it has ended.
+     *
+     * Params:
+     *   id = The entry's id.
+     *   usage = What the run used and cost.
+     *
+     * Returns: False when no row has that id, in which case nothing was written.
+     */
+    bool setUsage(UUID id, RunUsage usage);
 }
 
 /**

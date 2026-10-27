@@ -23,8 +23,8 @@ import std.format : format;
 import std.typecons : Nullable, nullable;
 import std.uuid : UUID;
 
-import model : Agent, AgentLogEntry, AgentStatus, Default, EffortLevel, Lane, Model, Project, Runtime, Task, TaskNote,
-    toAgentStatus;
+import model : Agent, AgentLogEntry, AgentStatus, Default, EffortLevel, Lane, Model, Project, RunUsage, Runtime, Task,
+    TaskNote, toAgentStatus;
 import repository : Deadlock, ForeignKeyViolation, IAgentLogRepository, IAgentRepository, IDefaultRepository,
     ILaneRepository, IProjectRepository, IRuntimeRepository, ITaskRepository, ITransactional, PositionConflict,
     UniqueViolation;
@@ -1506,8 +1506,10 @@ class PostgresAgentLogRepository : IAgentLogRepository
     AgentLogEntry[] ofAgent(UUID agentId)
     {
         QueryParams query;
-        query.sqlCommand = "select id, agent_id, created_at, prompt, result from agent_log"
-            ~ " where agent_id = $1 order by created_at desc";
+        // The cost as a double, since dpq2 reads a numeric only as text.
+        query.sqlCommand = "select id, agent_id, created_at, prompt, result, input_tokens, output_tokens,"
+            ~ " cache_creation_input_tokens, cache_read_input_tokens, cost_usd::float8 as cost_usd"
+            ~ " from agent_log where agent_id = $1 order by created_at desc";
         query.argsVariadic(agentId);
 
         return connections.use((scope connection) {
@@ -1520,12 +1522,21 @@ class PostgresAgentLogRepository : IAgentLogRepository
             {
                 auto row = answer[index];
                 auto result = row["result"];
+                // The usage columns are null together, which the table checks.
+                auto usage = row["cost_usd"].isNull ? Nullable!RunUsage.init : RunUsage(
+                    row["input_tokens"].as!long,
+                    row["output_tokens"].as!long,
+                    row["cache_creation_input_tokens"].as!long,
+                    row["cache_read_input_tokens"].as!long,
+                    row["cost_usd"].as!double
+                ).nullable;
                 entries ~= new AgentLogEntry(
                     row["id"].as!UUID,
                     row["agent_id"].as!UUID,
                     row["created_at"].as!SysTime,
                     row["prompt"].as!string,
-                    result.isNull ? Nullable!string.init : result.as!string.nullable
+                    result.isNull ? Nullable!string.init : result.as!string.nullable,
+                    usage
                 );
             }
 
@@ -1553,6 +1564,20 @@ class PostgresAgentLogRepository : IAgentLogRepository
         QueryParams query;
         query.sqlCommand = "update agent_log set result = $2 where id = $1 returning id";
         query.argsVariadic(id, result);
+
+        return connections.use((scope connection) {
+            return connection.execParams(query).length > 0;
+        });
+    }
+
+    bool setUsage(UUID id, RunUsage usage)
+    {
+        QueryParams query;
+        query.sqlCommand = "update agent_log set input_tokens = $2, output_tokens = $3,"
+            ~ " cache_creation_input_tokens = $4, cache_read_input_tokens = $5, cost_usd = $6"
+            ~ " where id = $1 returning id";
+        query.argsVariadic(id, usage.inputTokens, usage.outputTokens, usage.cacheCreationInputTokens,
+            usage.cacheReadInputTokens, usage.costUsd);
 
         return connections.use((scope connection) {
             return connection.execParams(query).length > 0;

@@ -41,8 +41,8 @@ import std.uuid : UUID, randomUUID;
 
 import eventing : Event, IEventPublisher;
 import config : Config, apiUrl;
-import model : Agent, AgentLogEntry, AgentStatus, EffortLevel, Lane, Model, Project, Runtime, Task,
-    TaskNote, defaultEffort;
+import model : Agent, AgentLogEntry, AgentStatus, EffortLevel, Lane, Model, Project, RunUsage, Runtime,
+    Task, TaskNote, defaultEffort;
 import prompt : PromptParser;
 import repository : IAgentLogRepository, IAgentRepository, IDefaultRepository, ILaneRepository, IProjectRepository,
     IRuntimeRepository, ITaskRepository, ITransactional;
@@ -70,6 +70,9 @@ interface IRuntime
      *     not read.
      *   sessionId = The session to continue, or null to start a new one, whose
      *     id it is set to.
+     *   usage = Set to what the run used and cost once it has ended, also when
+     *     it failed, and left null when the runtime cannot tell, as for a run
+     *     that was stopped.
      *   systemPrompt = Instructions that frame the conversation, or null for
      *     none. Given with the prompt that starts a session, the runtime keeps
      *     them for the rest of it where it can.
@@ -93,8 +96,8 @@ interface IRuntime
      *   fails.
      */
     public string prompt(Agent agent, string prompt, bool createSession, ref string sessionId,
-        string systemPrompt = null, string workingDir = null, string scratchSpace = null,
-        RunIn runIn = RunIn.workingDir, RunStop stop = null, bool withTools = true);
+        out Nullable!RunUsage usage, string systemPrompt = null, string workingDir = null,
+        string scratchSpace = null, RunIn runIn = RunIn.workingDir, RunStop stop = null, bool withTools = true);
 
     public string runTimeType();
 }
@@ -287,8 +290,8 @@ string createSystemPromptFile(string systemPrompt)
 
 /**
  * Runs a prompt on whichever runtime the agent runs on, and records the
- * prompt and its answer in the agent's log, so no runtime has to look up the
- * agent or do its own logging.
+ * prompt, its answer and what the run used and cost in the agent's log, so no
+ * runtime has to look up the agent or do its own logging.
  */
 class RuntimeExecutor
 {
@@ -349,11 +352,39 @@ class RuntimeExecutor
         auto entry = log.add(new AgentLogEntry(UUID.init, agent.get.id, SysTime.init, prompt,
                 Nullable!string.init));
 
-        auto result = runtime.prompt(agent.get, prompt, createSession, sessionId, systemPrompt, workingDir,
-            scratchSpace, runIn, stop, withTools);
+        Nullable!RunUsage usage;
+        string result;
+        try
+        {
+            result = runtime.prompt(agent.get, prompt, createSession, sessionId, usage, systemPrompt, workingDir,
+                scratchSpace, runIn, stop, withTools);
+        }
+        finally
+        {
+            // Also for a failed run, which costs whatever it used before it failed.
+            recordUsage(entry.id, usage);
+        }
         log.setResult(entry.id, result);
 
         return result;
+    }
+
+    /// Logged rather than thrown, so that it does not hide how the run went.
+    private void recordUsage(UUID entryId, Nullable!RunUsage usage) nothrow
+    {
+        if (usage.isNull)
+        {
+            return;
+        }
+
+        try
+        {
+            log.setUsage(entryId, usage.get);
+        }
+        catch (Exception e)
+        {
+            logError("What run %s used could not be logged: %s", entryId, e.msg);
+        }
     }
 
     /**
@@ -448,8 +479,8 @@ class ClaudeCodeRuntime : IRuntime
      * agent from resuming another's session.
      */
     public string prompt(Agent agent, string prompt, bool createSession, ref string sessionId,
-        string systemPrompt = null, string workingDir = null, string scratchSpace = null,
-        RunIn runIn = RunIn.workingDir, RunStop stop = null, bool withTools = true)
+        out Nullable!RunUsage usage, string systemPrompt = null, string workingDir = null,
+        string scratchSpace = null, RunIn runIn = RunIn.workingDir, RunStop stop = null, bool withTools = true)
     {
         // Claude Code lets an agent write only in the directory it runs in and
         // the ones added to it.
@@ -463,12 +494,13 @@ class ClaudeCodeRuntime : IRuntime
             if (runIn == RunIn.workingDir && workingDir !is null)
             {
                 return run(agent, prompt, systemPrompt, workingDir, addDir(scratchSpace) ~ sessionArgs, stop,
-                    withTools);
+                    withTools, usage);
             }
 
             auto scratch = scratchSpace is null ? createAgentScratchSpace(agent.id, runId)
                 : scratchSpace;
-            return run(agent, prompt, systemPrompt, scratch, addDir(workingDir) ~ sessionArgs, stop, withTools);
+            return run(agent, prompt, systemPrompt, scratch, addDir(workingDir) ~ sessionArgs, stop, withTools,
+                usage);
         }
 
         // The scratch spaces removed here are only those runAs makes: a one-off's, which nothing runs
@@ -533,11 +565,12 @@ class ClaudeCodeRuntime : IRuntime
     }
 
     /**
-     * Returns Claude Code's answer. Throws `RunStoppedException` when it was stopped through `stop`,
+     * Returns Claude Code's answer, and sets `usage` to what the run used and cost once it has
+     * ended, also when it failed. Throws `RunStoppedException` when it was stopped through `stop`,
      * and `Exception` when it exits with an error.
      */
     private string run(Agent agent, string prompt, string systemPrompt, string dir, string[] runArgs,
-        RunStop stop, bool withTools)
+        RunStop stop, bool withTools, ref Nullable!RunUsage usage)
     {
         if (stop !is null && stop.isRequested)
         {
@@ -573,6 +606,8 @@ class ClaudeCodeRuntime : IRuntime
         auto claude = pipeProcess([
             "claude",
             "--print",
+            // For what the run used and cost, which plain text leaves out.
+            "--output-format", "json",
             "--strict-mcp-config",
             "--permission-mode", claudeCodePermissionMode
         ] ~ toolArgs ~ [
@@ -597,14 +632,14 @@ class ClaudeCodeRuntime : IRuntime
             }
         }
 
-        string answer;
+        string output;
         int status;
         try
         {
             claude.stdin.write(prompt);
             claude.stdin.close();
 
-            answer = claude.stdout.collectOutput();
+            output = claude.stdout.collectOutput();
             status = process.wait();
         }
         catch (Exception e)
@@ -621,12 +656,57 @@ class ClaudeCodeRuntime : IRuntime
             throw new RunStoppedException("Claude Code was stopped.");
         }
 
-        if (status != 0)
+        Json result;
+        try
+        {
+            result = parseJsonString(output);
+        }
+        catch (Exception e)
+        {
+            // Such as when it fails before it starts, which it reports on stderr alone.
+            if (status != 0)
+            {
+                throw new Exception(format("Claude Code exited with status %s: %s", status, output));
+            }
+
+            throw new Exception(format("Claude Code answered with something other than JSON: %s", output));
+        }
+
+        usage = readUsage(result);
+        auto answer = result["result"].opt!string;
+        if (status != 0 || result["is_error"].opt!bool)
         {
             throw new Exception(format("Claude Code exited with status %s: %s", status, answer));
         }
 
         return answer.strip;
+    }
+
+    /**
+     * What a run used and cost, from Claude Code's JSON answer, or null when it does not say. The
+     * tokens are summed over the models in `modelUsage`, since the `usage` beside it only counts
+     * the run's last request.
+     */
+    private static Nullable!RunUsage readUsage(Json result)
+    {
+        auto models = result["modelUsage"];
+        auto cost = result["total_cost_usd"];
+        if (models.type != Json.Type.object || !cost.type.among(Json.Type.int_, Json.Type.float_))
+        {
+            return Nullable!RunUsage.init;
+        }
+
+        RunUsage usage;
+        usage.costUsd = cost.to!double;
+        foreach (model; models.byValue)
+        {
+            usage.inputTokens += model["inputTokens"].opt!long;
+            usage.outputTokens += model["outputTokens"].opt!long;
+            usage.cacheCreationInputTokens += model["cacheCreationInputTokens"].opt!long;
+            usage.cacheReadInputTokens += model["cacheReadInputTokens"].opt!long;
+        }
+
+        return usage.nullable;
     }
 
     /**
